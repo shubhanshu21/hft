@@ -1,0 +1,10 @@
+upstox-python-sdk==2.28.0
+requests==2.34.2
+pandas==2.2.3
+python-dotenv==1.2.2
+selenium==4.46.0
+pyotp==2.10.0
+pandas-ta-classic==0.6.52
+lightgbm==4.5.0
+scikit-learn==1.9.0
+matplotlib==3.11.1
