@@ -2,26 +2,29 @@
 
 An institutional-grade, 100% configurable **Multi-Asset Quantitative Trading Framework** built for Indian markets, supporting **Futures** (MCX Energy & NSE Index/Stock Futures), **Options** (NSE & MCX Options with Black-Scholes Greeks, Option Chain management, and Directional/Spread strategies), and **Equities** (NSE Cash/MIS).
 
+![Quantitative Algorithmic Trading Framework Architecture](./docs/images/system_architecture.jpg)
+
 ---
 
 ## Table of Contents
 
 1. [Framework Overview](#framework-overview)
-2. [Directory & Architecture Structure](#directory--architecture-structure)
-3. [Zero-Hardcoded Dynamic Configuration](#zero-hardcoded-dynamic-configuration)
-4. [Supported Asset Classes & Trading Profiles](#supported-asset-classes--trading-profiles)
+2. [System Architecture Flow](#system-architecture-flow)
+3. [Directory & Codebase Structure](#directory--codebase-structure)
+4. [Zero-Hardcoded Dynamic Configuration](#zero-hardcoded-dynamic-configuration)
+5. [Supported Asset Classes & Trading Profiles](#supported-asset-classes--trading-profiles)
    - [1. MCX Commodity Futures (`CRUDEOILM` Focus)](#1-mcx-commodity-futures-crudeoilm-focus)
    - [2. Crude Oil vs. Natural Gas Scalping Microstructure](#2-crude-oil-vs-natural-gas-scalping-microstructure)
    - [3. Options Analytical & Greeks Engine](#3-options-analytical--greeks-engine)
    - [4. Equities (NSE Cash / MIS)](#4-equities-nse-cash--mis)
-5. [Dynamic Position Sizing & Margin Budgeting](#dynamic-position-sizing--margin-budgeting)
-6. [Dynamic Instrument Master Resolution](#dynamic-instrument-master-resolution)
-7. [Unified CLI Cheat Sheet](#unified-cli-cheat-sheet)
-8. [Statutory Taxation & Friction Schedule](#statutory-taxation--friction-schedule)
-9. [Machine Learning & Microstructure Feature Pipeline](#machine-learning--microstructure-feature-pipeline)
-10. [SQLite Paper-Trading Database Schema](#sqlite-paper-trading-database-schema)
-11. [Walk-Forward Backtest Performance](#walk-forward-backtest-performance)
-12. [Automated Testing Suite](#automated-testing-suite)
+6. [Dynamic Position Sizing & Margin Budgeting](#dynamic-position-sizing--margin-budgeting)
+7. [Dynamic Instrument Master Resolution](#dynamic-instrument-master-resolution)
+8. [Unified CLI Cheat Sheet](#unified-cli-cheat-sheet)
+9. [Statutory Taxation & Friction Schedule](#statutory-taxation--friction-schedule)
+10. [Machine Learning & Microstructure Feature Pipeline](#machine-learning--microstructure-feature-pipeline)
+11. [SQLite Paper-Trading Database Schema](#sqlite-paper-trading-database-schema)
+12. [Walk-Forward Backtest Performance](#walk-forward-backtest-performance)
+13. [Automated Testing Suite](#automated-testing-suite)
 
 ---
 
@@ -36,7 +39,20 @@ The framework provides an end-to-end quantitative trading infrastructure:
 
 ---
 
-## Directory & Architecture Structure
+## System Architecture Flow
+
+![HFT Trading System Architecture & Execution Flowchart](./docs/images/flowchart_trading_system.jpg)
+
+The framework is architected into 5 modular, loosely-coupled layers:
+1. **Data Layer**: Ingests real-time 5-minute bar feeds via Upstox WebSockets and parses official daily master contracts for NSE & MCX.
+2. **Feature Engine**: Computes high-frequency microstructure volatility, Parkinson volatility, volume surge ratios, EMA slopes, and Black-Scholes Greeks.
+3. **Strategy & ML Core**: Evaluates directional LightGBM momentum expansion models and multi-leg option spread signals.
+4. **Risk Management**: Dynamically budgets lot sizes against capital risk % and SEBI/Upstox MIS margin leverage, managing trailing stops and breakeven locks.
+5. **Execution & Audit**: Coordinates walk-forward backtests, virtual paper execution, SQLite audit logging, and performance dashboard metrics.
+
+---
+
+## Directory & Codebase Structure
 
 ```
 backend/
