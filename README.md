@@ -184,18 +184,46 @@ python3 backtest_commodity.py --symbols CRUDEOILM NATGASMINI --capital 100000 --
 python3 backtest_commodity.py --symbols CRUDEOILM --capital 100000 --risk-pct 10.0 --size-mode risk --from 2026-01-01 --to 2026-09-07
 ```
 
-### 2. Live Paper-Trading Dryrun (`live_dryrun.py`)
+### 2. NSE Equity Scalper (`backtest_scalper.py`)
 
 ```bash
-# Live Upstox WebSocket Paper Trading for MCX Commodities
-python3 live_dryrun.py --commodity --capital 100000 --risk-pct 5.0 --leverage 5.0 --interval 30
+# 1. Backtest Specific Liquid NIFTY Stocks
+python3 backtest_scalper.py --symbols RELIANCE HDFCBANK TCS INFY --capital 100000 --risk-pct 2.5 --leverage 4.0
+
+# 2. Backtest with Dynamic Top-N High-Beta Stock Screener
+python3 backtest_scalper.py --screener --top-n 5 --capital 100000 --risk-pct 2.5 --leverage 4.0
+
+# 3. Backtest a Specific Year / Date Range
+python3 backtest_scalper.py --symbols RELIANCE ICICIBANK --year 2025 --capital 100000 --risk-pct 2.5
+
+# 4. Long-Only Equity Momentum Mode
+python3 backtest_scalper.py --screener --top-n 5 --long-only --capital 100000 --risk-pct 2.5
 ```
 
-### 3. Unified Framework CLI (`cli.py`)
+### 3. Live Paper-Trading Dryrun (`live_dryrun.py`)
 
 ```bash
-# Backtest Futures
+# 1. Live Paper Trading for NSE Equities (Market hours: 09:15-15:30 IST)
+python3 live_dryrun.py --capital 100000 --risk-pct 2.5 --leverage 4.0 --interval 30
+
+# 2. Live Paper Trading for MCX Commodities (Evening hours: 18:30-23:30 IST)
+python3 live_dryrun.py --commodity --capital 100000 --risk-pct 5.0 --leverage 5.0 --interval 30
+
+# 3. View Current Paper-Trading Report & Open Positions
+python3 live_dryrun.py --report
+
+# 4. Reset Paper-Trading Virtual Account Capital
+python3 live_dryrun.py --reset-db --capital 100000
+```
+
+### 4. Master Unified CLI (`cli.py`)
+
+```bash
+# Backtest MCX Commodities
 python3 cli.py backtest --asset futures --symbols CRUDEOILM --from 2026-01-01 --to 2026-09-07
+
+# Backtest NSE Equities
+python3 cli.py backtest --asset equity --symbols RELIANCE INFY TCS
 
 # View Performance Reports from SQLite DB
 python3 cli.py report
