@@ -2,8 +2,6 @@
 
 An institutional-grade, 100% configurable **Multi-Asset Quantitative Trading Framework** built for Indian markets, supporting **Futures** (MCX Energy & NSE Index/Stock Futures), **Options** (NSE & MCX Options with Black-Scholes Greeks, Option Chain management, and Directional/Spread strategies), and **Equities** (NSE Cash/MIS).
 
-![Quantitative Algorithmic Trading Framework Architecture](./docs/images/system_architecture.jpg)
-
 ---
 
 ## Table of Contents
@@ -41,7 +39,7 @@ The framework provides an end-to-end quantitative trading infrastructure:
 
 ## System Architecture Flow
 
-![HFT Trading System Architecture & Execution Flowchart](./docs/images/flowchart_trading_system.jpg)
+![HFT Trading System Architecture & Execution Flowchart](docs/images/system_architecture.png)
 
 The framework is architected into 5 modular, loosely-coupled layers:
 1. **Data Layer**: Ingests real-time 5-minute bar feeds via Upstox WebSockets and parses official daily master contracts for NSE & MCX.
