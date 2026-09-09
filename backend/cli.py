@@ -75,7 +75,42 @@ def cmd_backtest(args):
             risk_pct=args.risk_pct,
             leverage=args.leverage,
             top_n=args.top_n or 15,
+            from_date=args.from_date,
+            to_date=args.to_date,
         )
+    elif asset_str in ("options", "option"):
+        from data.local_5min_archive import _load, available_symbols
+        target_symbols = symbols or ["NIFTY 50", "NIFTY BANK"]
+        data_by_symbol = {}
+        for sym in target_symbols:
+            df = _load(sym)
+            if df is not None and not df.empty:
+                data_by_symbol[sym] = df
+
+        if not data_by_symbol:
+            print(f"\033[91mNo candle data found for options symbols: {target_symbols}\033[0m")
+            return
+
+        strat = DirectionalOptionBuyer(symbols=list(data_by_symbol.keys()))
+        engine = MultiAssetBacktester(
+            strategy=strat,
+            initial_capital=args.capital,
+            from_date=args.from_date,
+            to_date=args.to_date,
+        )
+        res = engine.run(data_by_symbol)
+
+        print(f"\n\033[1m\033[96m{'='*85}\033[0m")
+        print(f"\033[1m\033[97m  ⚡ DIRECTIONAL OPTIONS BUYING — WALK-FORWARD BACKTEST RESULTS\033[0m")
+        print(f"  \033[90mPeriod:\033[0m {args.from_date or 'All'} to {args.to_date or 'All'} | \033[90mCapital:\033[0m ₹{args.capital:,.0f} | \033[90mSymbols:\033[0m {', '.join(data_by_symbol.keys())}")
+        print(f"\033[1m\033[96m{'='*85}\033[0m")
+        pnl_color = "\033[92m" if res["total_net_pnl"] > 0 else "\033[91m"
+        print(f"  \033[90mTotal Executed Trades:\033[0m {res['total_trades']} ({res['wins']}W / {res['losses']}L)")
+        print(f"  \033[90mOverall Win Rate:\033[0m      {res['win_rate_pct']:.1f}%")
+        print(f"  \033[90mProfit Factor:\033[0m         {res['profit_factor']:.2f}")
+        print(f"  \033[90mMax Drawdown:\033[0m          {res['max_drawdown_pct']:.2f}%")
+        print(f"  \033[90mNet Realized PnL:\033[0m      {pnl_color}₹{res['total_net_pnl']:+,.2f} ({res['roi_pct']:+.2f}%)\033[0m")
+        print(f"\033[1m\033[96m{'='*85}\033[0m\n")
     else:
         print(f"Asset class '{args.asset}' backtest running via unified engine...")
 

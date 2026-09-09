@@ -184,8 +184,8 @@ class MCXCommodityScalper(BaseStrategy):
         if (bar_idx - position.entry_bar_idx) >= self.config.risk.max_hold_bars:
             return close, ExitReason.TIMEOUT
 
-        # 4. Mandatory EOD MIS Square-off at 23:15 IST
-        if now.hour == 23 and now.minute >= 15:
+        # 4. Mandatory EOD MIS Square-off at 22:45 IST (5 mins before Upstox 22:50 RMS auto-squareoff)
+        if (now.hour == 22 and now.minute >= 45) or now.hour >= 23:
             return close, ExitReason.EOD_SQUAREOFF
 
         # 5. Breakeven Arming & Trailing Stop

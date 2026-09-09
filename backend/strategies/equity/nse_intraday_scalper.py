@@ -131,8 +131,8 @@ class NSEIntradayScalper(BaseStrategy):
         if (bar_idx - position.entry_bar_idx) >= (self.hold_minutes // 5):
             return close, ExitReason.TIMEOUT
 
-        # EOD Square-off at 15:15 IST
-        if now.hour == 15 and now.minute >= 15:
+        # EOD Square-off at 15:20 IST (5 mins before Upstox 15:25 RMS auto-squareoff)
+        if now.hour == 15 and now.minute >= 20:
             return close, ExitReason.EOD_SQUAREOFF
 
         # Breakeven & Trailing Stop update

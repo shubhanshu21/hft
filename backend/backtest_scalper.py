@@ -35,94 +35,77 @@ from utils.logger import get_logger, setup_logger
 CACHE_DIR = Path(__file__).resolve().parent / "cache"
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Backtest the LightGBM direction-scalper.")
-    parser.add_argument("--symbols", nargs="+", default=None, help="Fixed symbol list — overrides the daily screener if given")
-    parser.add_argument("--no-screener", action="store_true", help="Use the fixed curated list instead of the daily 'stocks in play' screener")
-    parser.add_argument("--top-n", type=int, default=DEFAULT_TOP_N, help="How many symbols the daily screener picks per day")
-    parser.add_argument("--capital", type=float, default=STARTING_CAPITAL, help="Starting capital (₹) for the capital-aware position-sizing pass")
-    parser.add_argument("--risk-pct", type=float, default=DEFAULT_RISK_PCT, help="Risk percentage of capital per trade (e.g. 4.0 for 4%% risk per trade)")
-    parser.add_argument("--leverage", type=float, default=DEFAULT_LEVERAGE, help="Intraday leverage multiplier (e.g. 1.0 for pure cash / zero leverage, or 4.0 for MIS margin)")
-    parser.add_argument("--from", "--start-date", dest="start_date", default=None, help="Start date for backtesting, e.g. 2023-01-01")
-    parser.add_argument("--to", "--end-date", dest="end_date", default=None, help="End date for backtesting, e.g. 2025-12-31")
-    parser.add_argument("--target-mult", type=float, default=1.0, help="Take profit target multiple of stop distance (e.g. 1.0 for 1:1, 1.5 for 1:1.5)")
-    parser.add_argument("--be-mult", type=float, default=0.35, help="Breakeven trigger multiple of stop distance (e.g. 0.35 for +0.35R)")
-    parser.add_argument("--no-meta-label", action="store_true", help="Skip the meta-labeling filter stage — recommended for high-frequency micro-scalping to capture small rapid intraday moves")
-    parser.add_argument("--long-only", action="store_true", help="Take LONG trades only (skip all short setups)")
-    parser.add_argument("--direction", choices=["both", "long", "short"], default="both", help="Trade direction filter: both, long, or short")
-    parser.add_argument("--trade-only", nargs="+", default=None, help="Train on --symbols (pooled, for enough data) but only ever take trades on this subset — e.g. --symbols HDFCBANK ICICIBANK AXISBANK SBIN --trade-only HDFCBANK")
-    args = parser.parse_args()
-
-    # Configure the ROOT logger so every module's get_logger(__name__)
-    # (broker/, data/, backtest/, ml/, strategy/) propagates up to these
-    # handlers — those modules never call setup_logger themselves.
+def run_scalper_backtest(
+    symbols: list[str] | None = None,
+    capital: float = STARTING_CAPITAL,
+    risk_pct: float = DEFAULT_RISK_PCT,
+    leverage: float = DEFAULT_LEVERAGE,
+    top_n: int = DEFAULT_TOP_N,
+    no_screener: bool = False,
+    from_date: str | None = None,
+    to_date: str | None = None,
+    target_mult: float = 1.0,
+    be_mult: float = 0.35,
+    no_meta_label: bool = False,
+    long_only: bool = False,
+    direction: str = "both",
+    trade_only: list[str] | None = None,
+) -> dict:
     setup_logger("", log_file=str(Path(__file__).resolve().parent / "logs" / "backtest_scalper.log"))
     log = get_logger(__name__)
-    # Harmless per-day noise: a handful of short trading sessions (e.g.
-    # early-close days) have fewer bars than the 14-period intraday RSI
-    # needs — pandas_ta_classic logs a warning and returns None, which
-    # strategy.features.build_bar_features already detects (NaN check)
-    # and correctly skips. Silence it so real warnings aren't buried.
     logging.getLogger("pandas_ta_classic").setLevel(logging.ERROR)
 
-    if args.symbols is not None:
-        symbols, daily_universe = args.symbols, None
-        # Warn immediately if any requested symbol has no archive data —
-        # the engine will silently produce zero trades for it otherwise.
-        # Common cause: demerged tickers (e.g. TATAMOTORS split into
-        # TMPV/TMCV in 2025 — the original symbol's candle series is no
-        # longer continuous) or typos.
+    if symbols is not None:
+        target_symbols, daily_universe = symbols, None
         archived = available_symbols()
-        missing_from_archive = sorted(s for s in symbols if s not in archived)
+        missing_from_archive = sorted(s for s in target_symbols if s not in archived)
         if missing_from_archive:
             log.warning(
-                "--symbols contains symbol(s) with no local archive data \u2014 they will produce zero trades: %s. "
+                "--symbols contains symbol(s) with no local archive data — they will produce zero trades: %s. "
                 "Run update_archive.py to top up, or check for demerged/renamed tickers.",
                 missing_from_archive,
             )
-    elif args.no_screener:
-        symbols, daily_universe = CURATED_SYMBOLS, None
+    elif no_screener:
+        target_symbols, daily_universe = CURATED_SYMBOLS, None
     else:
-        # Default: score the WHOLE archive (~103 symbols) and pick the
-        # top-N "in play" names fresh each day (strategy/screener.py) —
-        # real scalpers trade whichever stocks have unusual volume/gap
-        # TODAY, not the same fixed list every day.
         all_symbols = sorted(available_symbols())
-        log.info("Building daily 'stocks in play' universe from %d archive symbols (top %d/day)...", len(all_symbols), args.top_n)
-        daily_universe = build_daily_universe(all_symbols, top_n=args.top_n)
-        symbols = sorted({s for day_symbols in daily_universe.values() for s in day_symbols})
-        log.info("Screener selected %d distinct symbols across the whole history.", len(symbols))
+        log.info("Building daily 'stocks in play' universe from %d archive symbols (top %d/day)...", len(all_symbols), top_n)
+        daily_universe = build_daily_universe(all_symbols, top_n=top_n)
+        target_symbols = sorted({s for day_symbols in daily_universe.values() for s in day_symbols})
+        log.info("Screener selected %d distinct symbols across the whole history.", len(target_symbols))
 
-    direction_filter = "long" if args.long_only else args.direction
+    direction_filter = "long" if long_only else direction
+    trade_only_symbols = set(trade_only) if trade_only else None
 
-    trade_only_symbols = set(args.trade_only) if args.trade_only else None
-    trade_log, dataset = run_backtest(symbols, daily_universe, use_meta_label=not args.no_meta_label, trade_only_symbols=trade_only_symbols)
+    trade_log, dataset = run_backtest(
+        target_symbols,
+        daily_universe,
+        use_meta_label=not no_meta_label,
+        trade_only_symbols=trade_only_symbols,
+    )
     if trade_log.empty:
         log.warning("No trades produced — check date range / universe resolution / instrument history availability.")
-        return
+        return {}
 
-    # Apply direction filter (long-only or short-only) if requested
     if direction_filter != "both":
         log.info("Filtering trade log to direction: %s", direction_filter.upper())
         trade_log = trade_log[trade_log["direction"] == direction_filter]
 
-    # Filter trade_log to user-requested time window if specified
-    if args.start_date:
-        start_str = str(args.start_date)[:10]
+    if from_date:
+        start_str = str(from_date)[:10]
         trade_log = trade_log[trade_log["entry_dt"].astype(str) >= start_str]
-    if args.end_date:
-        end_str = str(args.end_date)[:10] + " 23:59:59"
+    if to_date:
+        end_str = str(to_date)[:10] + " 23:59:59"
         trade_log = trade_log[trade_log["entry_dt"].astype(str) <= end_str]
 
     if trade_log.empty:
         log.warning("No trades found within specified criteria.")
-        return
+        return {}
 
     CACHE_DIR.mkdir(exist_ok=True)
     charts_dir = CACHE_DIR / "charts"
     charts_dir.mkdir(exist_ok=True)
 
-    # Clean up any stale per-symbol JSON files and old charts from prior runs
     for old_json in CACHE_DIR.glob("backtest_*.json"):
         try:
             old_json.unlink()
@@ -134,11 +117,6 @@ def main() -> None:
         except OSError:
             pass
 
-    # Persist the pooled dataset (with each row's out-of-sample p_up and
-    # the raw fields needed to resimulate a trade) and the trade log
-    # itself, so a later robustness/sensitivity pass (different
-    # thresholds, excluding a symbol) can reuse them without rebuilding
-    # years of history.
     with open(CACHE_DIR / "backtest_dataset.pkl", "wb") as f:
         pickle.dump(dataset, f)
     trade_log.to_csv(CACHE_DIR / "backtest_trades.csv", index=False)
@@ -149,16 +127,11 @@ def main() -> None:
 
     aggregate = summarize(trade_log)
 
-    # Capital-aware pass: replay the same decided trades against one real
-    # account (see backtest/portfolio.py) — position-sized by available
-    # capital and risk %, capped concurrency — so the headline numbers
-    # also answer "would this account have survived", not just "what R
-    # multiple did each independent trade produce".
-    executed, equity_curve = simulate_portfolio(trade_log, starting_capital=args.capital, risk_pct=args.risk_pct, leverage=args.leverage)
-    portfolio_stats = summarize_portfolio(executed, equity_curve, starting_capital=args.capital)
+    executed, equity_curve = simulate_portfolio(trade_log, starting_capital=capital, risk_pct=risk_pct, leverage=leverage)
+    portfolio_stats = summarize_portfolio(executed, equity_curve, starting_capital=capital)
     portfolio_stats["trades_skipped_capital_or_concurrency"] = len(trade_log) - len(executed)
-    portfolio_stats["leverage_used"] = args.leverage
-    portfolio_stats["risk_pct_used"] = args.risk_pct
+    portfolio_stats["leverage_used"] = leverage
+    portfolio_stats["risk_pct_used"] = risk_pct
     equity_curve.to_csv(CACHE_DIR / "backtest_equity_curve.csv", index=False)
 
     (CACHE_DIR / "backtest_summary.json").write_text(json.dumps(
@@ -191,7 +164,7 @@ def main() -> None:
         return f"{color}{pf:5.2f}{C_RESET}"
 
     t_period = portfolio_stats.get("time_period", "N/A")
-    final_cap = portfolio_stats.get("final_capital", args.capital)
+    final_cap = portfolio_stats.get("final_capital", capital)
     tot_ret = portfolio_stats.get("total_return_pct", 0.0)
     max_dd = portfolio_stats.get("max_drawdown_pct", 0.0)
     trades_taken = portfolio_stats.get("trades_taken", 0)
@@ -200,15 +173,15 @@ def main() -> None:
     # Header Banner
     print(f"\n{C_BOLD}{C_CYAN}{'='*85}{C_RESET}")
     print(f"{C_BOLD}{C_WHITE}  ⚡ 5-MINUTE INTRADAY SCALPER — WALK-FORWARD BACKTEST RESULTS{C_RESET}")
-    print(f"  {C_GRAY}📅 Period:{C_RESET} {C_YELLOW}{t_period}{C_RESET} | {C_GRAY}💰 Capital:{C_RESET} {C_WHITE}₹{args.capital:,.0f}{C_RESET} | {C_GRAY}⚙️ Leverage:{C_RESET} {C_MAGENTA}{args.leverage:.1f}x{C_RESET}")
+    print(f"  {C_GRAY}📅 Period:{C_RESET} {C_YELLOW}{t_period}{C_RESET} | {C_GRAY}💰 Capital:{C_RESET} {C_WHITE}₹{capital:,.0f}{C_RESET} | {C_GRAY}⚙️ Leverage:{C_RESET} {C_MAGENTA}{leverage:.1f}x{C_RESET}")
     print(f"{C_BOLD}{C_CYAN}{'='*85}{C_RESET}")
 
     # Portfolio Summary Card
     cap_color = C_GREEN if tot_ret > 0 else C_RED
     print(f"\n{C_BOLD}{C_WHITE}┌── 📊 PORTFOLIO EXECUTIVE SUMMARY ──────────────────────────────────────────────────┐{C_RESET}")
-    print(f"│  {C_GRAY}Starting Capital:{C_RESET}  {C_WHITE}₹{args.capital:,.2f}{C_RESET}          {C_GRAY}Final Capital:{C_RESET}    {cap_color}₹{final_cap:,.2f} ({tot_ret:+.2f}%){C_RESET}")
+    print(f"│  {C_GRAY}Starting Capital:{C_RESET}  {C_WHITE}₹{capital:,.2f}{C_RESET}          {C_GRAY}Final Capital:{C_RESET}    {cap_color}₹{final_cap:,.2f} ({tot_ret:+.2f}%){C_RESET}")
     print(f"│  {C_GRAY}Executed Trades:{C_RESET}   {C_WHITE}{trades_taken:,}{C_RESET}                {C_GRAY}Skipped (Cap/Slot):{C_RESET} {C_YELLOW}{skipped:,}{C_RESET}")
-    print(f"│  {C_GRAY}Max Drawdown:{C_RESET}      {C_RED}{max_dd:.2f}%{C_RESET}               {C_GRAY}Leverage Multiplier:{C_RESET}{C_MAGENTA}{args.leverage:.1f}x (SEBI MIS){C_RESET}")
+    print(f"│  {C_GRAY}Max Drawdown:{C_RESET}      {C_RED}{max_dd:.2f}%{C_RESET}               {C_GRAY}Leverage Multiplier:{C_RESET}{C_MAGENTA}{leverage:.1f}x (SEBI MIS){C_RESET}")
     print(f"{C_BOLD}{C_WHITE}└───{'─'*79}┘{C_RESET}")
 
     # Itemized Brokerage, Taxes & Friction Breakdown Table
@@ -283,10 +256,54 @@ def main() -> None:
         print(f"{C_BOLD}{C_WHITE}└───{'─'*79}┘{C_RESET}")
 
     charts_dir = CACHE_DIR / "charts"
-    chart_paths = generate_all_charts(trade_log, per_symbol, equity_curve, args.capital, charts_dir)
+    chart_paths = generate_all_charts(trade_log, per_symbol, equity_curve, capital, charts_dir)
     print(f"\n{C_BOLD}{C_MAGENTA}🎨 Generated Charts ({charts_dir}/):{C_RESET}")
     for p in chart_paths:
         print(f"  {C_GREEN}✔{C_RESET} {C_WHITE}{p.name}{C_RESET}")
+
+    return {
+        "aggregate": aggregate,
+        "per_symbol": per_symbol,
+        "portfolio": portfolio_stats,
+        "executed": executed,
+        "equity_curve": equity_curve,
+    }
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Backtest the LightGBM direction-scalper.")
+    parser.add_argument("--symbols", nargs="+", default=None, help="Fixed symbol list — overrides the daily screener if given")
+    parser.add_argument("--no-screener", action="store_true", help="Use the fixed curated list instead of the daily 'stocks in play' screener")
+    parser.add_argument("--top-n", type=int, default=DEFAULT_TOP_N, help="How many symbols the daily screener picks per day")
+    parser.add_argument("--capital", type=float, default=STARTING_CAPITAL, help="Starting capital (₹) for the capital-aware position-sizing pass")
+    parser.add_argument("--risk-pct", type=float, default=DEFAULT_RISK_PCT, help="Risk percentage of capital per trade (e.g. 4.0 for 4%% risk per trade)")
+    parser.add_argument("--leverage", type=float, default=DEFAULT_LEVERAGE, help="Intraday leverage multiplier (e.g. 1.0 for pure cash / zero leverage, or 4.0 for MIS margin)")
+    parser.add_argument("--from", "--start-date", dest="start_date", default=None, help="Start date for backtesting, e.g. 2023-01-01")
+    parser.add_argument("--to", "--end-date", dest="end_date", default=None, help="End date for backtesting, e.g. 2025-12-31")
+    parser.add_argument("--target-mult", type=float, default=1.0, help="Take profit target multiple of stop distance (e.g. 1.0 for 1:1, 1.5 for 1:1.5)")
+    parser.add_argument("--be-mult", type=float, default=0.35, help="Breakeven trigger multiple of stop distance (e.g. 0.35 for +0.35R)")
+    parser.add_argument("--no-meta-label", action="store_true", help="Skip the meta-labeling filter stage — recommended for high-frequency micro-scalping to capture small rapid intraday moves")
+    parser.add_argument("--long-only", action="store_true", help="Take LONG trades only (skip all short setups)")
+    parser.add_argument("--direction", choices=["both", "long", "short"], default="both", help="Trade direction filter: both, long, or short")
+    parser.add_argument("--trade-only", nargs="+", default=None, help="Train on --symbols (pooled, for enough data) but only ever take trades on this subset — e.g. --symbols HDFCBANK ICICIBANK AXISBANK SBIN --trade-only HDFCBANK")
+    args = parser.parse_args()
+
+    run_scalper_backtest(
+        symbols=args.symbols,
+        capital=args.capital,
+        risk_pct=args.risk_pct,
+        leverage=args.leverage,
+        top_n=args.top_n,
+        no_screener=args.no_screener,
+        from_date=args.start_date,
+        to_date=args.end_date,
+        target_mult=args.target_mult,
+        be_mult=args.be_mult,
+        no_meta_label=args.no_meta_label,
+        long_only=args.long_only,
+        direction=args.direction,
+        trade_only=args.trade_only,
+    )
 
 
 if __name__ == "__main__":

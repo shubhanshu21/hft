@@ -15,6 +15,9 @@ from features.technical import compute_technical_indicators
 from features.microstructure import compute_microstructure_features
 
 
+from framework.greeks import black_scholes_price, compute_greeks
+
+
 class DirectionalOptionBuyer(BaseStrategy):
     """
     Momentum-driven Directional Option Buyer.
@@ -56,7 +59,7 @@ class DirectionalOptionBuyer(BaseStrategy):
         quote: Optional[Quote] = None,
         option_chain: Optional[OptionChainSnapshot] = None,
     ) -> Optional[dict]:
-        if bar_idx < 25 or option_chain is None:
+        if bar_idx < 25:
             return None
 
         # Underlying breakout analysis
@@ -65,46 +68,96 @@ class DirectionalOptionBuyer(BaseStrategy):
         vwap_d = float(current_bar.get("vwap_dist_pct", 0.0))
         adx = float(current_bar.get("adx", 25.0))
 
-        underlying_direction = None
         opt_type = None
 
         if adx >= 20.0 and ema_s > 0.015 and vwap_d > 0.05 and 52 <= rsi <= 75:
-            underlying_direction = Direction.LONG
             opt_type = OptionType.CALL
         elif adx >= 20.0 and ema_s < -0.015 and vwap_d < -0.05 and 25 <= rsi <= 48:
-            underlying_direction = Direction.SHORT
             opt_type = OptionType.PUT
 
         if not opt_type:
             return None
 
-        # Select strike from OptionChain
-        selected_contract: Optional[OptionContract] = None
-        # Look in option_chain.contracts
-        strikes = sorted(option_chain.contracts.keys())
-        if not strikes:
+        spot_price = float(current_bar["close"])
+
+        # 1. If OptionChain provided
+        if option_chain is not None:
+            strikes = sorted(option_chain.contracts.keys())
+            if not strikes:
+                return None
+
+            atm_strike = min(strikes, key=lambda s: abs(s - option_chain.underlying_price))
+            atm_idx = strikes.index(atm_strike)
+            target_idx = atm_idx + (self.strike_offset if opt_type == OptionType.CALL else -self.strike_offset)
+            target_idx = max(0, min(len(strikes) - 1, target_idx))
+            target_strike = strikes[target_idx]
+
+            selected_contract = option_chain.contracts.get(target_strike, {}).get(opt_type)
+            if not selected_contract or selected_contract.ltp <= 0:
+                return None
+
+            opt_price = selected_contract.ltp
+            sl_price = round(opt_price * (1.0 - self.stop_loss_pct / 100.0), 2)
+            tp_price = round(opt_price * (1.0 + self.profit_target_pct / 100.0), 2)
+            sdist = abs(opt_price - sl_price)
+
+            return {
+                "symbol": selected_contract.symbol,
+                "underlying_symbol": symbol,
+                "direction": Direction.LONG,  # Buying option (Long CE or Long PE)
+                "option_type": opt_type.value,
+                "strike": target_strike,
+                "entry_price": opt_price,
+                "stop_loss": sl_price,
+                "take_profit": tp_price,
+                "breakeven": round(opt_price * 1.05, 2),
+                "stop_distance": sdist,
+                "lot_size": selected_contract.lot_size,
+                "score": round(adx, 1),
+                "metadata": {
+                    "underlying_price": option_chain.underlying_price,
+                    "strike": target_strike,
+                    "expiry": selected_contract.expiry,
+                    "delta": selected_contract.greeks.delta if selected_contract.greeks else 0.50,
+                },
+            }
+
+        # 2. Black-Scholes Greeks Simulation Fallback for historical bar data
+        strike_step = 50.0 if "NIFTY" in symbol else (100.0 if "BANK" in symbol else max(1.0, round(spot_price * 0.02)))
+        target_strike = round(spot_price / strike_step) * strike_step
+        time_to_exp = 5.0 / 365.0
+        iv = 0.16
+
+        opt_price = black_scholes_price(
+            spot=spot_price,
+            strike=target_strike,
+            time_to_expiry_years=time_to_exp,
+            volatility=iv,
+            option_type=opt_type,
+        )
+        if opt_price <= 1.0:
             return None
 
-        atm_strike = min(strikes, key=lambda s: abs(s - option_chain.underlying_price))
-        atm_idx = strikes.index(atm_strike)
+        greeks = compute_greeks(
+            spot=spot_price,
+            strike=target_strike,
+            time_to_expiry_years=time_to_exp,
+            volatility=iv,
+            option_type=opt_type,
+        )
 
-        target_idx = atm_idx + (self.strike_offset if opt_type == OptionType.CALL else -self.strike_offset)
-        target_idx = max(0, min(len(strikes) - 1, target_idx))
-        target_strike = strikes[target_idx]
-
-        selected_contract = option_chain.contracts.get(target_strike, {}).get(opt_type)
-        if not selected_contract or selected_contract.ltp <= 0:
-            return None
-
-        opt_price = selected_contract.ltp
+        opt_price = round(opt_price, 2)
         sl_price = round(opt_price * (1.0 - self.stop_loss_pct / 100.0), 2)
         tp_price = round(opt_price * (1.0 + self.profit_target_pct / 100.0), 2)
         sdist = abs(opt_price - sl_price)
+        lot_size = 25 if "NIFTY" in symbol else (15 if "BANK" in symbol else 100)
+
+        opt_sym = f"{symbol}_{int(target_strike)}_{opt_type.value}"
 
         return {
-            "symbol": selected_contract.symbol,
+            "symbol": opt_sym,
             "underlying_symbol": symbol,
-            "direction": Direction.LONG,  # Buying option (Long CE or Long PE)
+            "direction": Direction.LONG,
             "option_type": opt_type.value,
             "strike": target_strike,
             "entry_price": opt_price,
@@ -112,13 +165,15 @@ class DirectionalOptionBuyer(BaseStrategy):
             "take_profit": tp_price,
             "breakeven": round(opt_price * 1.05, 2),
             "stop_distance": sdist,
-            "lot_size": selected_contract.lot_size,
+            "lot_size": lot_size,
             "score": round(adx, 1),
             "metadata": {
-                "underlying_price": option_chain.underlying_price,
+                "underlying_price": spot_price,
                 "strike": target_strike,
-                "expiry": selected_contract.expiry,
-                "delta": selected_contract.greeks.delta if selected_contract.greeks else 0.50,
+                "delta": greeks.delta,
+                "gamma": greeks.gamma,
+                "theta": greeks.theta,
+                "iv": greeks.iv,
             },
         }
 
@@ -144,8 +199,8 @@ class DirectionalOptionBuyer(BaseStrategy):
         if (bar_idx - position.entry_bar_idx) >= 6:
             return current_price, ExitReason.TIMEOUT
 
-        # EOD Square-off at 15:15 IST
-        if now.hour == 15 and now.minute >= 15:
+        # EOD Square-off at 15:20 IST (5 mins before Upstox 15:25 RMS auto-squareoff)
+        if now.hour == 15 and now.minute >= 20:
             return current_price, ExitReason.EOD_SQUAREOFF
 
         return None, None

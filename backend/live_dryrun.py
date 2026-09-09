@@ -560,8 +560,11 @@ class DryRunner:
         fav = high if d == 1 else low
         adv = low  if d == 1 else high
 
-        market_close = datetime.now(IST).replace(hour=23 if self.is_commodity else 15,
-                                                 minute=15, second=0, microsecond=0)
+        # Upstox RMS auto-squareoff: 15:25 IST for Non-CAS & F&O, 22:50 IST for MCX Commodities.
+        # Set algorithmic square-off 5 mins prior (15:20 IST for NSE, 22:45 IST for MCX) to avoid RMS broker penalty charges.
+        close_h = 22 if self.is_commodity else 15
+        close_m = 45 if self.is_commodity else 20
+        market_close = datetime.now(IST).replace(hour=close_h, minute=close_m, second=0, microsecond=0)
 
         exit_p = None; reason = None
         if (fav >= pos["tp"] if d == 1 else fav <= pos["tp"]):

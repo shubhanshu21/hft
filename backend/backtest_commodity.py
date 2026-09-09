@@ -166,7 +166,7 @@ def run_commodity_backtest(
                     exit_p = pos["current_stop"]; reason = "be_stop" if pos["armed_be"] else "initial_stop"
                 elif (i - pos["entry_idx"]) >= HOLD_BARS:
                     exit_p = c_price; reason = "timeout_exit"
-                elif m_open >= 840:  # 23:00 IST square-off
+                elif m_open >= 825:  # 22:45 IST square-off (ahead of Upstox 22:50 RMS cut-off)
                     exit_p = c_price; reason = "eod_squareoff"
 
                 if exit_p is not None:

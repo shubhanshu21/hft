@@ -55,14 +55,14 @@ class RiskBudgetConfig:
 @dataclass
 class SessionConfig:
     # IST 24-hour minute offsets (from 00:00 IST)
-    # NSE Cash/FO: 09:15 to 15:30 IST (MIS auto-squareoff at 15:15)
+    # NSE Cash/FO: 09:15 to 15:30 IST (Upstox RMS auto-squareoff at 15:25 for Non-CAS & F&O, 15:10 for CAS; algo exit at 15:20)
     nse_open_minutes: int = 9 * 60 + 15
     nse_close_minutes: int = 15 * 60 + 30
-    nse_mis_cutoff_minutes: int = 15 * 60 + 15
-    # MCX Commodities: 09:00 to 23:30 IST (MIS auto-squareoff at 23:15)
+    nse_mis_cutoff_minutes: int = 15 * 60 + 20
+    # MCX Commodities: 09:00 to 23:30 IST (Upstox RMS auto-squareoff at 22:50 IST; algo exit at 22:45)
     mcx_open_minutes: int = 9 * 60 + 0
     mcx_close_minutes: int = 23 * 60 + 30
-    mcx_mis_cutoff_minutes: int = 23 * 60 + 15
+    mcx_mis_cutoff_minutes: int = 22 * 60 + 45
     # High-Momentum Session Windows (e.g. US Session 18:30 to 22:00 IST)
     us_session_start_minutes: int = 18 * 60 + 30
     us_session_end_minutes: int = 22 * 60 + 0
