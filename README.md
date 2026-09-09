@@ -108,7 +108,9 @@ backend/
 
 ## Zero-Hardcoded Dynamic Configuration
 
-All aspects of the framework can be customized programmatically or via JSON configuration files:
+> **Scope note:** this `FrameworkConfig`/`GLOBAL_CONFIG` dataclass system belongs to the newer unified `engine/` module (`MultiAssetBacktester` / `MultiAssetLiveRunner`), which today is only exercised by `cli.py backtest --asset options`. It is **not** read by the commodity/equity paths (`backtest_commodity.py`, `backtest_scalper.py`, `live_dryrun.py`) that `cli.py backtest`/`dryrun --asset commodity|equity` actually run — those are governed by [`.env`](#environment-configuration-env) instead, plus their own module-level constants (`TAKE_PROFIT_MULT`, `STOP_VOL_MULT`, etc.) for the parameters this class doesn't expose. If you're configuring the live commodity/equity dry run, edit `.env`, not this class.
+
+All aspects of the `engine/`-based framework can be customized programmatically or via JSON configuration files:
 
 ```python
 from framework import FrameworkConfig, StatutoryCostConfig, RiskBudgetConfig, SessionConfig, OptionsConfig
