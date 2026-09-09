@@ -71,6 +71,7 @@ from backtest.engine import (
 )
 from broker.instruments import build_nifty50_map, build_mcx_commodity_map, ensure_master, get_instrument_key
 from utils.logger import get_logger
+from utils import telegram
 
 log = get_logger("live_dryrun")
 
@@ -367,7 +368,7 @@ class DryRunner:
                 if self.direction_filter != "both" and direction != self.direction_filter:
                     continue
 
-                lots = size_commodity_lots(sym, self.capital, entry, sdist, self.risk_pct, self.leverage)
+                lots = size_commodity_lots(self.capital, entry, sdist, self.risk_pct, sym, self.leverage)
                 if lots == 0:
                     continue
 
@@ -646,6 +647,7 @@ class DryRunner:
             print(f"  {BOLD}EXIT{R}  {WH}{sym:12s}{R} {pos['direction']:5s} "
                   f"@ {YL}₹{exit_p:.2f}{R}  [{reason}]  "
                   f"Net: {col}₹{net_pnl:+,.2f}{R} (Fees: ₹{cost_info['total']:.2f})  Cap: ₹{self.capital:,.2f}")
+            telegram.alert_exit(sym, pos, exit_p, reason, net_pnl, self.capital)
 
             rec = {**pos, "exit_price": exit_p, "exit_reason": reason,
                    "net_pnl": round(net_pnl, 2), "gross_pnl": round(gross_pnl, 2),
@@ -702,6 +704,7 @@ def _print_sig(sig: dict, cap: float):
     print(f"     VWAP: {sig['vwap_dist_pct']:+.3f}%  EMA: {sig['ema_slope_pct']:+.4f}%  "
           f"Cap now: ₹{cap:,.2f}")
     print(f"     {GY}[VIRTUAL EXECUTION -> RECORDED IN SQLITE DB - NO REAL BROKER ORDER]{R}")
+    telegram.alert_entry(sig)
 
 
 def main():
@@ -778,6 +781,13 @@ def main():
     print(f"  {GY}Log:{R} {WH}{runner.log_path}{R}")
     print(f"{BOLD}{CY}{'='*75}{R}\n")
 
+    telegram.send(
+        f"🚀 <b>DRY RUN STARTED</b> — {market_mode}\n"
+        f"Capital: ₹{runner.capital:,.0f}  Risk: {args.risk_pct}%  Leverage: {args.leverage}x  "
+        f"Direction: {direction_mode.upper()}\n"
+        f"Symbols: {', '.join(symbols)}"
+    )
+
     if now < mopen:
         wait = int((mopen - now).total_seconds())
         print(f"  {YL}Market opens in {wait//60}m {wait%60}s — waiting...{R}")
@@ -805,6 +815,7 @@ def main():
             break
         except Exception as exc:
             log.error("Scan error: %s", exc, exc_info=True)
+            telegram.alert_error(f"Scan #{scan_n} ({market_mode})", exc)
 
         nxt = datetime.now(IST) + timedelta(seconds=args.interval)
         if nxt > mclose:
@@ -818,6 +829,13 @@ def main():
     print(f"{BOLD}{WH}  DRY RUN COMPLETED — DATABASE SUMMARY{R}")
     db.print_dashboard(args.account)
     runner._save()
+
+    total_pnl = sum(t.get("net_pnl", 0) for t in runner.trades)
+    telegram.send(
+        f"🏁 <b>DRY RUN COMPLETED</b> — {market_mode}\n"
+        f"Trades: {len(runner.trades)}  Total PnL: ₹{total_pnl:+,.2f}\n"
+        f"Final Balance: ₹{runner.capital:,.2f}"
+    )
 
 
 if __name__ == "__main__":
