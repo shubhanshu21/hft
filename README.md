@@ -208,7 +208,7 @@ Everything the CLI needs to run with **zero flags** lives in `backend/.env` (cop
 | `BACKTEST_ASSET` | `commodity` | `futures`/`commodity`/`commodities` → MCX; `equity`/`equities`/`cash` → NSE; `options` → `DirectionalOptionBuyer`. |
 | `BACKTEST_SYMBOLS` | *(blank)* | Space-separated symbol override, e.g. `CRUDEOILM NATGASMINI`. Blank = asset's own default list. |
 | `BACKTEST_RISK_PCT` | `5.0` | Risk % per trade. |
-| `BACKTEST_LEVERAGE` | *(blank)* | Margin leverage for backtests specifically. Blank = fall back to `INTRADAY_LEVERAGE`. |
+| `BACKTEST_LEVERAGE` | `4.0` | Margin leverage for backtests specifically. Blank = fall back to `INTRADAY_LEVERAGE`. |
 | `BACKTEST_FROM` / `BACKTEST_TO` | *(blank)* | `YYYY-MM-DD` date range. Blank = full available history. |
 | `BACKTEST_EQUITY_TOP_N` | `15` | Screener size when `--asset equity` and no explicit symbols. |
 | `BACKTEST_FULL_SESSION` | `false` | Commodity only: `false` = evening US-overlap window (18:30–22:00 IST, what the validated results were produced with); `true` = full 09:00–23:30 IST session. |
@@ -218,7 +218,7 @@ Everything the CLI needs to run with **zero flags** lives in `backend/.env` (cop
 |---|---|---|
 | `DRYRUN_ASSET` | `commodity` | `commodity` and `equity` are fully wired for live paper trading. **`options` is not** — see [Unified CLI Cheat Sheet](#unified-cli-cheat-sheet) below. |
 | `DRYRUN_RISK_PCT` | `5.0` | Risk % per trade. |
-| `DRYRUN_LEVERAGE` | *(blank)* | Margin leverage for live dry run specifically. Blank = fall back to `INTRADAY_LEVERAGE`. |
+| `DRYRUN_LEVERAGE` | `4.0` | Margin leverage for live dry run specifically. Blank = fall back to `INTRADAY_LEVERAGE`. |
 | `DRYRUN_INTERVAL` | `30` | Scan interval, seconds. |
 | `DRYRUN_EQUITY_TOP_N` | `15` | Screener size for `--asset equity`. Ignored for commodity. |
 | `DRYRUN_SYMBOLS` | *(blank)* | Space-separated symbol override. Blank = asset default (`CRUDEOILM NATGASMINI` for commodity, top-N screener for equity). |
