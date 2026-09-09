@@ -321,8 +321,8 @@ class DryRunner:
                 row = feat_df.iloc[t]
                 mins = int(row.get("minutes_since_open", 0))
 
-                # Allow full MCX hours (09:00 - 23:15 IST) or prime evening session (18:30 - 22:00 IST)
-                if mins < 30 or mins > 840:
+                # Allow full MCX hours (09:00 - 22:45 IST) or prime evening session (18:30 - 22:00 IST)
+                if mins < 30 or mins > 825:
                     continue
 
                 # Model probability
