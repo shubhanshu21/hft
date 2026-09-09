@@ -170,10 +170,13 @@ class DirectionalOptionBuyer(BaseStrategy):
             "metadata": {
                 "underlying_price": spot_price,
                 "strike": target_strike,
+                "option_type": opt_type.value,
                 "delta": greeks.delta,
                 "gamma": greeks.gamma,
                 "theta": greeks.theta,
                 "iv": greeks.iv,
+                "simulated": True,
+                "time_to_expiry_years": time_to_exp,
             },
         }
 
@@ -185,7 +188,23 @@ class DirectionalOptionBuyer(BaseStrategy):
         bar_idx: int,
         quote: Optional[Quote] = None,
     ) -> tuple[Optional[float], Optional[ExitReason]]:
-        current_price = quote.ltp if quote else float(latest_bar["close"])
+        if quote:
+            current_price = quote.ltp
+        elif position.metadata.get("simulated"):
+            # Reprice the simulated option premium off the current underlying
+            # spot — latest_bar["close"] is the underlying's price, not the
+            # option's, so it can't be compared against target/stop directly.
+            elapsed_years = ((bar_idx - position.entry_bar_idx) * 5.0) / (60.0 * 24.0 * 365.0)
+            remaining_t = max(1e-5, position.metadata["time_to_expiry_years"] - elapsed_years)
+            current_price = round(black_scholes_price(
+                spot=float(latest_bar["close"]),
+                strike=position.metadata["strike"],
+                time_to_expiry_years=remaining_t,
+                volatility=position.metadata.get("iv", 0.16),
+                option_type=position.metadata["option_type"],
+            ), 2)
+        else:
+            current_price = float(latest_bar["close"])
 
         # Take Profit (+30% gain)
         if current_price >= position.target_price:

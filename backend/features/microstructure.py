@@ -12,6 +12,8 @@ def compute_microstructure_features(df: pd.DataFrame, orb_bars: int = 6) -> pd.D
     Computes microstructure price location, volume surges, Parkinson volatility, and ORB levels.
     """
     out = df.copy()
+    if "timestamp" not in out.columns and "date" in out.columns:
+        out["timestamp"] = out["date"]
 
     # Bar internal price location [0.0 = low, 1.0 = high]
     bar_range = (out["high"] - out["low"]).replace(0, np.nan)

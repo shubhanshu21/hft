@@ -22,6 +22,8 @@ def compute_technical_indicators(
     Computes standard parametric technical indicators on OHLCV bar data.
     """
     out = df.copy()
+    if "timestamp" not in out.columns and "date" in out.columns:
+        out["timestamp"] = out["date"]
 
     # EMA
     out["ema_fast"] = ta.ema(out["close"], length=ema_fast_length)
@@ -68,11 +70,19 @@ def compute_technical_indicators(
     if "timestamp" in out.columns:
         dt_s = pd.to_datetime(out["timestamp"])
         out["_date"] = dt_s.dt.date
-        out["cum_vol"] = out.groupby("_date")["volume"].cumsum()
-        out["cum_pv"] = out.groupby("_date").apply(lambda g: (g["close"] * g["volume"]).cumsum()).reset_index(level=0, drop=True)
-        out["vwap"] = (out["cum_pv"] / out["cum_vol"]).fillna(out["close"])
+        if out["volume"].sum() > 0:
+            out["cum_vol"] = out.groupby("_date")["volume"].cumsum()
+            out["cum_pv"] = out.groupby("_date").apply(lambda g: (g["close"] * g["volume"]).cumsum()).reset_index(level=0, drop=True)
+            out["vwap"] = (out["cum_pv"] / out["cum_vol"]).fillna(out["close"])
+            out.drop(columns=["cum_vol", "cum_pv"], inplace=True, errors="ignore")
+        else:
+            # No real traded volume (e.g. index series like NIFTY 50 /
+            # NIFTY BANK) — a volume-weighted VWAP degenerates to close.
+            # Fall back to the cumulative intraday average price instead.
+            day_pos = out.groupby("_date").cumcount() + 1
+            out["vwap"] = out.groupby("_date")["close"].cumsum() / day_pos
         out["vwap_dist_pct"] = (out["close"] - out["vwap"]) / out["vwap"] * 100.0
-        out.drop(columns=["_date", "cum_vol", "cum_pv"], inplace=True, errors="ignore")
+        out.drop(columns=["_date"], inplace=True, errors="ignore")
     else:
         out["vwap"] = out["close"]
         out["vwap_dist_pct"] = 0.0

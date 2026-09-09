@@ -62,7 +62,12 @@ class MultiAssetBacktester:
             open_pos: Optional[Position] = None
             last_trade_day: Optional[str] = None
 
-            timestamps = feat_df["timestamp"].values if "timestamp" in feat_df.columns else feat_df.index.values
+            if "timestamp" in feat_df.columns:
+                timestamps = feat_df["timestamp"].values
+            elif "date" in feat_df.columns:
+                timestamps = feat_df["date"].values
+            else:
+                timestamps = feat_df.index.values
 
             for i in range(25, n):
                 row = feat_df.iloc[i]
@@ -178,6 +183,7 @@ class MultiAssetBacktester:
                             armed_be=False,
                             entry_bar_idx=i,
                             p_score=sig.get("score", 0.5),
+                            metadata=sig.get("metadata", {}),
                         )
 
         # Performance summary metrics
