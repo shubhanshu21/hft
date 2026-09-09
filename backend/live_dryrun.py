@@ -36,6 +36,7 @@ if _venv_py.exists() and sys.executable != str(_venv_py):
 
 import argparse
 import csv
+import fcntl
 import math
 import time
 from datetime import date, datetime, timedelta
@@ -46,7 +47,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from broker.upstox_broker import UpstoxBroker
+from broker.upstox_broker import UpstoxBroker, token_invalid_event
 import pandas_ta_classic as ta
 from database import TradingDB
 from strategy.costs import (
@@ -113,6 +114,29 @@ CY = "\033[96m"; WH = "\033[97m"; MG = "\033[95m"; GY = "\033[90m"
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _acquire_process_lock(account_id: str):
+    """
+    Prevents two dryrun/live processes from trading the same account at once
+    (e.g. a stray nohup'd process someone forgot about, or a re-run before
+    the old one exited) -- with real orders that could double-size or
+    double-enter positions. Holds the lock (via an inherited open fd) for
+    the life of the process; released automatically on exit/crash.
+    """
+    lock_dir = Path(__file__).parent / "data"
+    lock_dir.mkdir(exist_ok=True)
+    lock_path = lock_dir / f".{account_id}.lock"
+    fh = open(lock_path, "w")
+    try:
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        print(f"{RED}ERROR: Another dryrun process is already running for account "
+              f"'{account_id}' (lock: {lock_path}). Refusing to start a second one.{R}")
+        sys.exit(1)
+    fh.write(f"{os.getpid()}\n")
+    fh.flush()
+    return fh  # caller must keep this referenced so the fd (and lock) stays alive
+
 
 def _load_token() -> str:
     # 1. Check if token already loaded in UpstoxConfig
@@ -292,7 +316,26 @@ class DryRunner:
             }
 
         self.trades: list[dict] = []
+        self.last_trade_day: dict[str, str] = {}
         self.today = date.today().isoformat()
+
+        # Daily-loss kill switch: halts new entries (existing positions are
+        # still managed/exited normally) once today's realized loss hits
+        # MAX_DAILY_LOSS_PCT of the capital this process started the day with.
+        self.max_daily_loss_pct = float(os.environ.get("MAX_DAILY_LOSS_PCT", "5.0"))
+        self.trading_day = self.today
+        self.day_start_capital = self.capital
+        self.kill_switch_active = False
+        if self.is_commodity:
+            # Seed the 1-trade-per-day-per-symbol gate from what's already in the
+            # DB, so a restart mid-day doesn't forget a quota already used today.
+            for t in self.db.get_trades(limit=200, account_id=self.account_id):
+                exit_dt = t.get("exit_dt", "") or ""
+                if exit_dt[:10] == self.today:
+                    self.last_trade_day[t["symbol"]] = self.today
+            for sym, p in self.positions.items():
+                if p["entry_time"].strftime("%Y-%m-%d") == self.today:
+                    self.last_trade_day[sym] = self.today
         logs_dir = Path(__file__).parent / "logs"
         logs_dir.mkdir(exist_ok=True)
         self.log_path = logs_dir / f"dryrun_{self.today}.csv"
@@ -300,10 +343,31 @@ class DryRunner:
     # ---- scan ---------------------------------------------------------------
     def scan(self) -> list[dict]:
         now = datetime.now(IST)
+        today_str = now.strftime("%Y-%m-%d")
+        if today_str != self.trading_day:
+            self.trading_day = today_str
+            self.day_start_capital = self.capital
+            self.kill_switch_active = False
+
+        if self.day_start_capital > 0:
+            daily_loss_pct = (self.day_start_capital - self.capital) / self.day_start_capital * 100
+        else:
+            daily_loss_pct = 0.0
+        if not self.kill_switch_active and daily_loss_pct >= self.max_daily_loss_pct:
+            self.kill_switch_active = True
+            print(f"\n{BOLD}{RED}!! DAILY LOSS LIMIT HIT ({daily_loss_pct:.2f}% >= {self.max_daily_loss_pct}%) "
+                  f"-- new entries halted for today. Open positions still managed. !!{R}\n")
+            telegram.send(
+                f"🛑 <b>DAILY LOSS LIMIT HIT</b> — {daily_loss_pct:.2f}% (limit {self.max_daily_loss_pct}%)\n"
+                f"New entries halted for the rest of today. Existing open positions are still managed/exited normally."
+            )
+
         signals = []
         for sym in self.symbols:
             if sym in self.positions:
                 self._maybe_exit(sym, now)
+                continue
+            if self.kill_switch_active:
                 continue
             candles = _fetch_candles(self.broker, sym, self.today)
             if not candles or len(candles) < 25:
@@ -322,8 +386,13 @@ class DryRunner:
                 row = feat_df.iloc[t]
                 mins = int(row.get("minutes_since_open", 0))
 
-                # Allow full MCX hours (09:00 - 22:45 IST) or prime evening session (18:30 - 22:00 IST)
-                if mins < 30 or mins > 825:
+                # US/Evening overlap session only (18:30-22:00 IST) -- matches
+                # backtest_commodity.py's us_session_only=True default, which is
+                # what the validated backtest results were produced with.
+                if mins < 570 or mins > 780:
+                    continue
+
+                if self.last_trade_day.get(sym) == today_str:
                     continue
 
                 # Model probability
@@ -349,17 +418,25 @@ class DryRunner:
                 entry = float(row["close"])
                 atr = float(row.get("atr", 0.005 * entry))
 
-                sdist = max(1.4 * atr, 0.0035 * entry)
+                # Asset-calibrated parameter profiles (matches backtest_commodity.py)
+                is_natgas = "NATGAS" in sym.upper() or "NATURALGAS" in sym.upper()
+                min_ml_l = 0.55 if is_natgas else 0.54
+                max_ml_s = 0.43 if is_natgas else 0.44
+                min_adx = 24.0 if is_natgas else 20.0
+                min_vol = 1.40 if is_natgas else 1.10
+                min_orb = 0.08 if is_natgas else 0.05
+                min_vwap = 0.08 if is_natgas else 0.05
+                min_stop_pct = 0.0050 if is_natgas else 0.0035
+
+                sdist = max(1.4 * atr, min_stop_pct * entry)
                 if sdist <= 0 or entry <= 0:
                     continue
 
                 direction = None
-                # Calibrated 70%+ Win Rate Rules:
-                # Long: ML Prob >= 0.54, ADX >= 20, +DI > -DI, EMA slope > 0.01%, ORB breakout >= 0.05%, VWAP >= 0.05%, Vol Surge >= 1.10x
-                if p_up >= 0.54 and adx >= 20 and dmp > dmn and ema_s > 0.010 and orb_h_dist >= 0.05 and vwap_d >= 0.05 and vol_s >= 1.10:
+                # Calibrated 70%+ Win Rate Rules (asset-calibrated, matches backtest):
+                if p_up >= min_ml_l and adx >= min_adx and dmp > dmn and ema_s > 0.010 and orb_h_dist >= min_orb and vwap_d >= min_vwap and vol_s >= min_vol:
                     direction = "long"
-                # Short: ML Prob <= 0.44, ADX >= 20, -DI > +DI, EMA slope < -0.01%, ORB breakdown <= -0.05%, VWAP <= -0.05%, Vol Surge >= 1.10x
-                elif self.direction_filter != "long" and p_up <= 0.44 and adx >= 20 and dmn > dmp and ema_s < -0.010 and orb_l_dist <= -0.05 and vwap_d <= -0.05 and vol_s >= 1.10:
+                elif self.direction_filter != "long" and p_up <= max_ml_s and adx >= min_adx and dmn > dmp and ema_s < -0.010 and orb_l_dist <= -min_orb and vwap_d <= -min_vwap and vol_s >= min_vol:
                     direction = "short"
 
                 if not direction:
@@ -371,6 +448,8 @@ class DryRunner:
                 lots = size_commodity_lots(self.capital, entry, sdist, self.risk_pct, sym, self.leverage)
                 if lots == 0:
                     continue
+
+                self.last_trade_day[sym] = today_str
 
                 multiplier = get_contract_multiplier(sym)
                 qty = lots
@@ -666,7 +745,7 @@ class DryRunner:
                 pos["current_stop"] = pos["entry_price"] + lock_buffer * pos["entry_price"] * d
             if pos["armed_be"]:
                 pos["best_price"] = max(pos["best_price"], fav) if d == 1 else min(pos["best_price"], fav)
-                trail_mult = 0.40 if self.is_commodity else TRAIL_DIST_MULT
+                trail_mult = 0.30 if self.is_commodity else TRAIL_DIST_MULT
                 trail = pos["best_price"] - trail_mult * pos["stop_dist"] * d
                 pos["current_stop"] = (max(pos["current_stop"], trail) if d == 1
                                        else min(pos["current_stop"], trail))
@@ -736,7 +815,16 @@ def main():
 
     if args.report:
         db.print_dashboard(args.account)
+        from utils.chart import generate_equity_curve
+        chart_path = generate_equity_curve(
+            db.get_snapshots(args.account), args.account,
+            Path(__file__).parent / "logs" / f"equity_{args.account}.png",
+        )
+        if chart_path:
+            print(f"{GY}Equity curve chart saved: {WH}{chart_path}{R}")
         return
+
+    _lock_fh = _acquire_process_lock(args.account)  # held for process lifetime; see _acquire_process_lock
 
     token = args.token or _load_token()
     if not token:
@@ -760,83 +848,167 @@ def main():
                        is_commodity=args.commodity)
 
 
-    now = datetime.now(IST)
-    if args.commodity:
-        mopen  = now.replace(hour=9,  minute=0,  second=0, microsecond=0)
-        mclose = now.replace(hour=23, minute=30, second=0, microsecond=0)
-    else:
-        mopen  = now.replace(hour=9,  minute=15, second=0, microsecond=0)
-        mclose = now.replace(hour=15, minute=30, second=0, microsecond=0)
-
     print(f"\n{BOLD}{CY}{'='*75}{R}")
-    print(f"{BOLD}{WH}  LIVE PAPER-TRADING DRY RUN  --  {market_mode}{R}")
+    print(f"{BOLD}{WH}  LIVE PAPER-TRADING DRY RUN (24/7 DAEMON)  --  {market_mode}{R}")
     print(f"  {GY}Capital:{R} {WH}₹{runner.capital:,.0f}{R}  "
           f"{GY}Risk:{R} {WH}{args.risk_pct}%{R}  "
           f"{GY}Leverage:{R} {MG}{args.leverage}x{R}  "
           f"{GY}Direction:{R} {CY}{direction_mode.upper()}{R}  "
-          f"{GY}Interval:{R} {YL}{args.interval}s{R}  "
-          f"{GY}Hours:{R} {WH}{mopen.strftime('%H:%M')}–{mclose.strftime('%H:%M')} IST{R}")
+          f"{GY}Interval:{R} {YL}{args.interval}s{R}"
+          + (f"  {GY}Hours:{R} {WH}09:00–23:30 IST{R}" if args.commodity else f"  {GY}Hours:{R} {WH}09:15–15:30 IST{R}"))
     print(f"  {GY}Database:{R} {WH}{db.db_path}{R}")
     print(f"  {GY}Symbols ({len(symbols)}):{R} {WH}{', '.join(symbols[:8])}{'...' if len(symbols)>8 else ''}{R}")
-    print(f"  {GY}Log:{R} {WH}{runner.log_path}{R}")
     print(f"{BOLD}{CY}{'='*75}{R}\n")
 
     telegram.send(
-        f"🚀 <b>DRY RUN STARTED</b> — {market_mode}\n"
+        f"🟢 <b>DRYRUN DAEMON STARTED</b> — {market_mode}\n"
         f"Capital: ₹{runner.capital:,.0f}  Risk: {args.risk_pct}%  Leverage: {args.leverage}x  "
         f"Direction: {direction_mode.upper()}\n"
         f"Symbols: {', '.join(symbols)}"
     )
 
-    if now < mopen:
-        wait = int((mopen - now).total_seconds())
-        print(f"  {YL}Market opens in {wait//60}m {wait%60}s — waiting...{R}")
-        time.sleep(wait)
+    from config import UpstoxConfig
+    token_check_interval_sec = int(os.environ.get("TOKEN_CHECK_INTERVAL_MIN", "15")) * 60
+    last_token_check = time.monotonic()
 
-    scan_n = 0
-    while datetime.now(IST) <= mclose:
-        scan_n += 1
+    # Treat SIGTERM (systemctl stop / systemd restart) the same as Ctrl-C: a
+    # clean, alerted shutdown -- instead of an unhandled-exception crash that
+    # would exit non-zero and fight the stop command via Restart=on-failure.
+    import signal
+    def _handle_sigterm(signum, frame):
+        raise KeyboardInterrupt()
+    signal.signal(signal.SIGTERM, _handle_sigterm)
+
+    # 24/7 outer loop: market-hours gating lives entirely in this code (not in
+    # the process supervisor) -- the process itself waits out nights/weekends
+    # and rolls into the next trading day rather than exiting, so systemd (or
+    # any supervisor) just needs to keep one long-running process alive.
+    stopped_by_user = False
+    while not stopped_by_user:
         now = datetime.now(IST)
-        print(f"\n{GY}-- Scan #{scan_n} @ {now.strftime('%H:%M:%S')} IST  "
-              f"| Paper Balance: {WH}₹{runner.capital:,.2f}{GY} --{R}", flush=True)
-        try:
-            sigs = runner.scan()
-            if sigs:
-                for s in sigs:
-                    _print_sig(s, runner.capital)
-            else:
-                open_s = list(runner.positions.keys())
-                if open_s:
-                    print(f"  {GY}No new signals. Open Positions: {YL}{', '.join(open_s)}{R}", flush=True)
+        if args.commodity:
+            mopen  = now.replace(hour=9,  minute=0,  second=0, microsecond=0)
+            mclose = now.replace(hour=23, minute=30, second=0, microsecond=0)
+        else:
+            mopen  = now.replace(hour=9,  minute=15, second=0, microsecond=0)
+            mclose = now.replace(hour=15, minute=30, second=0, microsecond=0)
+
+        if now > mclose:
+            # Today's session is already over -- roll to the next trading day.
+            next_day = now + timedelta(days=1)
+            while next_day.weekday() == 6:  # Sunday -- Indian markets are shut; NOT a full holiday calendar (Sat/holidays aren't handled -- see runner.scan()'s own session gate as the real safety net)
+                next_day += timedelta(days=1)
+            mopen  = mopen.replace(year=next_day.year, month=next_day.month, day=next_day.day)
+            mclose = mclose.replace(year=next_day.year, month=next_day.month, day=next_day.day)
+
+        runner.today = mopen.strftime("%Y-%m-%d")
+        runner.log_path = Path(__file__).parent / "logs" / f"dryrun_{runner.today}.csv"
+
+        now = datetime.now(IST)
+        if now < mopen:
+            wait = int((mopen - now).total_seconds())
+            print(f"  {YL}Market opens {mopen.strftime('%Y-%m-%d %H:%M')} IST "
+                  f"(in {wait//3600}h {(wait%3600)//60}m) — sleeping...{R}", flush=True)
+            try:
+                time.sleep(wait)
+            except KeyboardInterrupt:
+                print(f"\n{YL}Stopped by user (during overnight wait).{R}", flush=True)
+                stopped_by_user = True
+                continue
+
+        scan_n = 0
+        while datetime.now(IST) <= mclose:
+            scan_n += 1
+            now = datetime.now(IST)
+            print(f"\n{GY}-- Scan #{scan_n} @ {now.strftime('%Y-%m-%d %H:%M:%S')} IST  "
+                  f"| Paper Balance: {WH}₹{runner.capital:,.2f}{GY} --{R}", flush=True)
+
+            # Token refresh: proactively every TOKEN_CHECK_INTERVAL_MIN, or
+            # immediately if the broker's 401 circuit breaker trips. A 24/7
+            # process would otherwise never notice its daily token expired.
+            if token_invalid_event.is_set() or (time.monotonic() - last_token_check) >= token_check_interval_sec:
+                last_token_check = time.monotonic()
+                token_invalid_event.clear()
+                if UpstoxConfig.auto_login_configured():
+                    try:
+                        from auth.upstox_auto_login import ensure_fresh_upstox_token
+                        new_token = ensure_fresh_upstox_token(on_token_refreshed=broker.set_access_token)
+                        if new_token is None:
+                            log.error("Token refresh failed — trading may be blind until fixed.")
+                            telegram.send("🔴 <b>TOKEN REFRESH FAILED</b> — auto-login attempt failed. "
+                                          "Run `python3 -m auth.upstox_auth` manually or check credentials.")
+                    except Exception as exc:
+                        log.error("Token refresh raised: %s", exc, exc_info=True)
+                        telegram.alert_error("Token refresh", exc)
+                elif not UpstoxConfig.ACCESS_TOKEN:
+                    telegram.send("🔴 <b>TOKEN INVALID</b> — auto-login not configured. "
+                                   "Run `python3 -m auth.upstox_auth` manually.")
+
+            try:
+                sigs = runner.scan()
+                if sigs:
+                    for s in sigs:
+                        _print_sig(s, runner.capital)
                 else:
-                    print(f"  {GY}No signals. Watching {len(symbols)} symbols...{R}", flush=True)
-        except KeyboardInterrupt:
-            print(f"\n{YL}Stopped by user.{R}", flush=True)
-            break
-        except Exception as exc:
-            log.error("Scan error: %s", exc, exc_info=True)
-            telegram.alert_error(f"Scan #{scan_n} ({market_mode})", exc)
+                    open_s = list(runner.positions.keys())
+                    if open_s:
+                        print(f"  {GY}No new signals. Open Positions: {YL}{', '.join(open_s)}{R}", flush=True)
+                    else:
+                        print(f"  {GY}No signals. Watching {len(symbols)} symbols...{R}", flush=True)
+            except KeyboardInterrupt:
+                print(f"\n{YL}Stopped by user.{R}", flush=True)
+                stopped_by_user = True
+                break
+            except Exception as exc:
+                log.error("Scan error: %s", exc, exc_info=True)
+                telegram.alert_error(f"Scan #{scan_n} ({market_mode})", exc)
 
-        nxt = datetime.now(IST) + timedelta(seconds=args.interval)
-        if nxt > mclose:
-            break
-        secs = max(1, (nxt - datetime.now(IST)).total_seconds())
-        print(f"  {GY}Next scan in {secs:.0f}s...{R}", flush=True)
-        time.sleep(secs)
+            nxt = datetime.now(IST) + timedelta(seconds=args.interval)
+            if nxt > mclose:
+                break
+            secs = max(1, (nxt - datetime.now(IST)).total_seconds())
+            print(f"  {GY}Next scan in {secs:.0f}s...{R}", flush=True)
+            time.sleep(secs)
 
-    # EOD summary
-    print(f"\n{BOLD}{CY}{'='*75}{R}")
-    print(f"{BOLD}{WH}  DRY RUN COMPLETED — DATABASE SUMMARY{R}")
-    db.print_dashboard(args.account)
-    runner._save()
+        # EOD summary for the day just finished
+        print(f"\n{BOLD}{CY}{'='*75}{R}")
+        print(f"{BOLD}{WH}  SESSION COMPLETE ({runner.today}) — DATABASE SUMMARY{R}")
+        db.print_dashboard(args.account)
+        runner._save()
 
-    total_pnl = sum(t.get("net_pnl", 0) for t in runner.trades)
-    telegram.send(
-        f"🏁 <b>DRY RUN COMPLETED</b> — {market_mode}\n"
-        f"Trades: {len(runner.trades)}  Total PnL: ₹{total_pnl:+,.2f}\n"
-        f"Final Balance: ₹{runner.capital:,.2f}"
-    )
+        total_pnl = sum(t.get("net_pnl", 0) for t in runner.trades)
+        telegram.send(
+            f"🏁 <b>SESSION COMPLETE</b> ({runner.today}) — {market_mode}\n"
+            f"Trades today: {len(runner.trades)}  Total PnL: ₹{total_pnl:+,.2f}\n"
+            f"Balance: ₹{runner.capital:,.2f}"
+        )
+
+        from utils.chart import generate_equity_curve
+        chart_path = generate_equity_curve(
+            db.get_snapshots(args.account), args.account,
+            Path(__file__).parent / "logs" / f"equity_{args.account}.png",
+        )
+        if chart_path:
+            telegram.send_photo(chart_path, caption=f"📈 Equity Curve — {args.account} ({runner.today})")
+
+        runner.trades = []  # reset for the next trading day's CSV/summary
+
+    telegram.send(f"🔴 <b>DRYRUN DAEMON STOPPED</b> — {market_mode} (manual stop)")
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        # Top-level safety net: SIGTERM (systemctl stop) raises KeyboardInterrupt
+        # from _handle_sigterm and it can land anywhere, including inside a
+        # Telegram network call that only catches Exception (KeyboardInterrupt
+        # is a BaseException, so it isn't swallowed there) -- without this,
+        # that produces an ugly uncaught traceback instead of a clean exit.
+        # The shutdown is still correct either way; this just makes it tidy.
+        print(f"\n{YL}Shutting down.{R}", flush=True)
+        try:
+            telegram.send("🔴 <b>DRYRUN DAEMON STOPPED</b> (shutdown signal)")
+        except Exception:
+            pass
+        sys.exit(0)

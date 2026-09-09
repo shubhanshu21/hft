@@ -376,6 +376,14 @@ class TradingDB:
                 open_pos, total_trades, win_count, loss_count, win_rate
             ))
 
+    def get_snapshots(self, account_id: str = "DRYRUN_ACCOUNT", limit: int = 2000) -> List[dict]:
+        """Portfolio equity curve points, oldest first -- one row per trade close (see record_snapshot)."""
+        with self._get_conn() as conn:
+            rows = conn.execute("""
+            SELECT * FROM portfolio_snapshots WHERE account_id = ? ORDER BY id ASC LIMIT ?
+            """, (account_id, limit)).fetchall()
+            return [dict(r) for r in rows]
+
     def get_trades(self, limit: int = 50, account_id: str = "DRYRUN_ACCOUNT") -> List[dict]:
         with self._get_conn() as conn:
             rows = conn.execute("""

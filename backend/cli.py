@@ -37,6 +37,14 @@ if _venv_py.exists() and sys.executable != str(_venv_py):
 import argparse
 from datetime import datetime
 import pandas as pd
+from dotenv import load_dotenv
+
+load_dotenv(dotenv_path=Path(__file__).parent / ".env")
+
+
+def _env(key: str, default: str) -> str:
+    return os.environ.get(key, default)
+
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -119,6 +127,18 @@ def cmd_dryrun(args):
     asset_str = args.asset.lower()
     is_comm = asset_str in ("futures", "commodity", "commodities")
 
+    if asset_str in ("options", "option"):
+        # live_dryrun.py / engine.MultiAssetLiveRunner have no options signal
+        # path wired up -- DirectionalOptionBuyer only runs inside the
+        # backtest engine today. Silently falling through to the equity
+        # scalper here would trade options-shaped symbols with equity logic,
+        # so refuse instead of doing the wrong thing quietly.
+        print(f"\033[91mERROR: 'dryrun --asset options' isn't implemented yet -- "
+              f"there is no live/paper options strategy wired up (only "
+              f"'backtest --asset options' exists). Use --asset commodity or "
+              f"--asset equity for dryrun.\033[0m")
+        sys.exit(1)
+
     # Delegate to live_dryrun runner
     import subprocess
     cmd = [
@@ -131,6 +151,8 @@ def cmd_dryrun(args):
     ]
     if is_comm:
         cmd.append("--commodity")
+    elif args.top_n:
+        cmd.extend(["--top-n", str(args.top_n)])
     if args.symbols:
         cmd.extend(["--symbols"] + args.symbols)
     if args.direction:
@@ -157,28 +179,53 @@ def main():
     parser = argparse.ArgumentParser(description="Multi-Asset Quantitative Trading Framework Master CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    # Backtest Subcommand
+    # Backtest Subcommand -- defaults come from backend/.env (BACKTEST_* /
+    # TRADING_* vars) so `python3 cli.py backtest` needs no flags at all;
+    # passing a flag still overrides the .env value for that one run.
     p_bt = subparsers.add_parser("backtest", help="Run walk-forward backtest on historical data")
-    p_bt.add_argument("--asset", choices=["futures", "equity", "options", "commodity"], default="futures")
-    p_bt.add_argument("--symbols", nargs="+", default=None, help="Symbols to backtest")
-    p_bt.add_argument("--capital", type=float, default=100_000.0, help="Initial capital in INR")
-    p_bt.add_argument("--risk-pct", type=float, default=5.0, help="Risk %% per trade")
-    p_bt.add_argument("--leverage", type=float, default=4.0, help="Margin leverage")
-    p_bt.add_argument("--from", "--from-date", dest="from_date", default=None, help="Start date YYYY-MM-DD")
-    p_bt.add_argument("--to", "--to-date", dest="to_date", default=None, help="End date YYYY-MM-DD")
-    p_bt.add_argument("--top-n", type=int, default=None, help="Equity screener top N")
-    p_bt.add_argument("--full-session", action="store_true", help="Include full session bars")
+    p_bt.add_argument("--asset", choices=["futures", "equity", "options", "commodity"],
+                       default=_env("BACKTEST_ASSET", "futures"))
+    p_bt.add_argument("--symbols", nargs="+", default=_env("BACKTEST_SYMBOLS", "").split() or None,
+                       help="Symbols to backtest")
+    p_bt.add_argument("--capital", type=float, default=float(_env("TRADING_CAPITAL", "100000.0")),
+                       help="Initial capital in INR")
+    p_bt.add_argument("--risk-pct", type=float, default=float(_env("BACKTEST_RISK_PCT", "5.0")),
+                       help="Risk %% per trade")
+    p_bt.add_argument("--leverage", type=float,
+                       default=float(_env("BACKTEST_LEVERAGE", "") or _env("INTRADAY_LEVERAGE", "4.0")),
+                       help="Margin leverage")
+    p_bt.add_argument("--from", "--from-date", dest="from_date", default=_env("BACKTEST_FROM", "") or None,
+                       help="Start date YYYY-MM-DD")
+    p_bt.add_argument("--to", "--to-date", dest="to_date", default=_env("BACKTEST_TO", "") or None,
+                       help="End date YYYY-MM-DD")
+    p_bt.add_argument("--top-n", type=int, default=int(_env("BACKTEST_EQUITY_TOP_N", "15")),
+                       help="Equity screener top N")
+    p_bt.add_argument("--full-session", action="store_true",
+                       default=_env("BACKTEST_FULL_SESSION", "false").lower() in ("1", "true", "yes"),
+                       help="Include full session bars (or set BACKTEST_FULL_SESSION=true in .env)")
     p_bt.set_defaults(func=cmd_backtest)
 
-    # Dryrun Subcommand
+    # Dryrun Subcommand -- defaults come from backend/.env (DRYRUN_* / TRADING_*
+    # vars) so `python3 cli.py dryrun` needs no flags at all; passing a flag
+    # still overrides the .env value for that one run.
     p_dr = subparsers.add_parser("dryrun", help="Run live paper-trading dryrun")
-    p_dr.add_argument("--asset", choices=["futures", "equity", "options", "commodity"], default="futures")
-    p_dr.add_argument("--symbols", nargs="+", default=None, help="Symbols to watch")
-    p_dr.add_argument("--capital", type=float, default=100_000.0, help="Paper capital in INR")
-    p_dr.add_argument("--risk-pct", type=float, default=5.0, help="Risk %% per trade")
-    p_dr.add_argument("--leverage", type=float, default=4.0, help="Margin leverage")
-    p_dr.add_argument("--interval", type=int, default=30, help="Scan interval seconds")
-    p_dr.add_argument("--direction", choices=["both", "long", "short"], default="both")
+    p_dr.add_argument("--asset", choices=["futures", "equity", "options", "commodity"],
+                       default=_env("DRYRUN_ASSET", "futures"))
+    p_dr.add_argument("--symbols", nargs="+", default=_env("DRYRUN_SYMBOLS", "").split() or None,
+                       help="Symbols to watch")
+    p_dr.add_argument("--capital", type=float, default=float(_env("TRADING_CAPITAL", "100000.0")),
+                       help="Paper capital in INR")
+    p_dr.add_argument("--risk-pct", type=float, default=float(_env("DRYRUN_RISK_PCT", "5.0")),
+                       help="Risk %% per trade")
+    p_dr.add_argument("--leverage", type=float,
+                       default=float(_env("DRYRUN_LEVERAGE", "") or _env("INTRADAY_LEVERAGE", "4.0")),
+                       help="Margin leverage")
+    p_dr.add_argument("--interval", type=int, default=int(_env("DRYRUN_INTERVAL", "30")),
+                       help="Scan interval seconds")
+    p_dr.add_argument("--direction", choices=["both", "long", "short"],
+                       default=_env("TRADING_DIRECTION", "both"))
+    p_dr.add_argument("--top-n", type=int, default=int(_env("DRYRUN_EQUITY_TOP_N", "15")),
+                       help="Equity screener top N (--asset equity only, ignored for commodity)")
     p_dr.set_defaults(func=cmd_dryrun)
 
     # Report Subcommand
@@ -191,9 +238,9 @@ def main():
     p_rst = subparsers.add_parser("reset-db", help="Reset paper trading database")
     p_rst.add_argument("--db", default=None, help="SQLite DB path")
     p_rst.add_argument("--account", default="DRYRUN_ACCOUNT", help="Account ID")
-    p_rst.add_argument("--capital", type=float, default=100_000.0, help="Initial capital in INR")
-    p_rst.add_argument("--risk-pct", type=float, default=5.0, help="Risk %% per trade")
-    p_rst.add_argument("--leverage", type=float, default=4.0, help="Margin leverage")
+    p_rst.add_argument("--capital", type=float, default=float(_env("TRADING_CAPITAL", "100000.0")), help="Initial capital in INR")
+    p_rst.add_argument("--risk-pct", type=float, default=float(_env("DRYRUN_RISK_PCT", "5.0")), help="Risk %% per trade")
+    p_rst.add_argument("--leverage", type=float, default=float(_env("INTRADAY_LEVERAGE", "4.0")), help="Margin leverage")
     p_rst.set_defaults(func=cmd_reset_db)
 
     args = parser.parse_args()

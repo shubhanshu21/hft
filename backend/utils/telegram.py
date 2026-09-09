@@ -21,6 +21,7 @@ load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env")
 _BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 _CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 _API_URL = f"https://api.telegram.org/bot{_BOT_TOKEN}/sendMessage" if _BOT_TOKEN else ""
+_PHOTO_API_URL = f"https://api.telegram.org/bot{_BOT_TOKEN}/sendPhoto" if _BOT_TOKEN else ""
 
 _log = logging.getLogger("telegram")
 
@@ -43,6 +44,27 @@ def send(text: str, parse_mode: str = "HTML") -> bool:
         return True
     except Exception as exc:
         _log.warning("Telegram send raised: %s", exc)
+        return False
+
+
+def send_photo(path, caption: str = "") -> bool:
+    """Send a local image file (e.g. the equity curve PNG). Returns False (and logs) on any failure or if unconfigured."""
+    if not ENABLED:
+        return False
+    try:
+        with open(path, "rb") as f:
+            resp = requests.post(
+                _PHOTO_API_URL,
+                data={"chat_id": _CHAT_ID, "caption": caption, "parse_mode": "HTML"},
+                files={"photo": f},
+                timeout=30,
+            )
+        if resp.status_code != 200:
+            _log.warning("Telegram send_photo failed: HTTP %s %s", resp.status_code, resp.text[:200])
+            return False
+        return True
+    except Exception as exc:
+        _log.warning("Telegram send_photo raised: %s", exc)
         return False
 
 

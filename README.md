@@ -17,12 +17,16 @@ An institutional-grade, 100% configurable **Multi-Asset Quantitative Trading Fra
    - [4. Equities (NSE Cash / MIS)](#4-equities-nse-cash--mis)
 6. [Dynamic Position Sizing & Margin Budgeting](#dynamic-position-sizing--margin-budgeting)
 7. [Dynamic Instrument Master Resolution](#dynamic-instrument-master-resolution)
-8. [Unified CLI Cheat Sheet](#unified-cli-cheat-sheet)
-9. [Statutory Taxation & Friction Schedule](#statutory-taxation--friction-schedule)
-10. [Machine Learning & Microstructure Feature Pipeline](#machine-learning--microstructure-feature-pipeline)
-11. [SQLite Paper-Trading Database Schema](#sqlite-paper-trading-database-schema)
-12. [Walk-Forward Backtest Performance](#walk-forward-backtest-performance)
-13. [Automated Testing Suite](#automated-testing-suite)
+8. [Environment Configuration (`.env`)](#environment-configuration-env)
+9. [Unified CLI Cheat Sheet](#unified-cli-cheat-sheet)
+10. [Running 24/7 as a systemd Service](#running-247-as-a-systemd-service)
+11. [Safety Features (Dry Run)](#safety-features-dry-run)
+12. [Telegram Alerts & Equity Curve Chart](#telegram-alerts--equity-curve-chart)
+13. [Statutory Taxation & Friction Schedule](#statutory-taxation--friction-schedule)
+14. [Machine Learning & Microstructure Feature Pipeline](#machine-learning--microstructure-feature-pipeline)
+15. [SQLite Paper-Trading Database Schema](#sqlite-paper-trading-database-schema)
+16. [Walk-Forward Backtest Performance](#walk-forward-backtest-performance)
+17. [Automated Testing Suite](#automated-testing-suite)
 
 ---
 
@@ -180,70 +184,307 @@ $$\text{Executed Lots} = \max(1, \min(\text{Lots by Risk}, \text{Lots by Margin}
 
 ---
 
+## Environment Configuration (`.env`)
+
+Everything the CLI needs to run with **zero flags** lives in `backend/.env` (copy `backend/.env.example` to start). Any CLI flag you *do* pass overrides its `.env` value for that one run only — `.env` is the default, flags are the override.
+
+### Broker Credentials
+| Variable | Purpose |
+|---|---|
+| `UPSTOX_API_KEY` / `UPSTOX_API_SECRET` | OAuth2 app credentials from [developer.upstox.com](https://developer.upstox.com/). |
+| `UPSTOX_REDIRECT_URI` | OAuth2 redirect URL registered with your Upstox app. |
+| `UPSTOX_USERNAME` / `UPSTOX_PIN` / `UPSTOX_TOTP_SECRET` | Optional — enables `auth/upstox_auto_login.py`'s headless daily token refresh (Selenium). Leave all three blank to do the manual `python3 -m auth.upstox_auth` refresh instead. **`TOTP_SECRET` is your 2FA seed — combined with `PIN` it's permanent full login access to the real account, treat it like a password.** `ACCESS_TOKEN` itself is *not* stored in `.env` — it's cached at `cache/upstox_token.json` and rewritten daily by the auth flow. |
+
+### Shared Trading Parameters
+| Variable | Default | Used by |
+|---|---|---|
+| `TRADING_CAPITAL` | `100000.0` | `--capital` default for `backtest`, `dryrun`, `reset-db`. |
+| `INTRADAY_LEVERAGE` | `4.0` | `--leverage` fallback for all three — used whenever the command-specific `BACKTEST_LEVERAGE`/`DRYRUN_LEVERAGE` below is blank. |
+| `TRADING_DIRECTION` | `both` | `--direction` default for `dryrun` (`both` / `long` / `short`). |
+
+### Backtest Defaults (`cli.py backtest`)
+| Variable | Default | Meaning |
+|---|---|---|
+| `BACKTEST_ASSET` | `commodity` | `futures`/`commodity`/`commodities` → MCX; `equity`/`equities`/`cash` → NSE; `options` → `DirectionalOptionBuyer`. |
+| `BACKTEST_SYMBOLS` | *(blank)* | Space-separated symbol override, e.g. `CRUDEOILM NATGASMINI`. Blank = asset's own default list. |
+| `BACKTEST_RISK_PCT` | `5.0` | Risk % per trade. |
+| `BACKTEST_LEVERAGE` | *(blank)* | Margin leverage for backtests specifically. Blank = fall back to `INTRADAY_LEVERAGE`. |
+| `BACKTEST_FROM` / `BACKTEST_TO` | *(blank)* | `YYYY-MM-DD` date range. Blank = full available history. |
+| `BACKTEST_EQUITY_TOP_N` | `15` | Screener size when `--asset equity` and no explicit symbols. |
+| `BACKTEST_FULL_SESSION` | `false` | Commodity only: `false` = evening US-overlap window (18:30–22:00 IST, what the validated results were produced with); `true` = full 09:00–23:30 IST session. |
+
+### Dry Run Defaults (`cli.py dryrun`)
+| Variable | Default | Meaning |
+|---|---|---|
+| `DRYRUN_ASSET` | `commodity` | `commodity` and `equity` are fully wired for live paper trading. **`options` is not** — see [Unified CLI Cheat Sheet](#unified-cli-cheat-sheet) below. |
+| `DRYRUN_RISK_PCT` | `5.0` | Risk % per trade. |
+| `DRYRUN_LEVERAGE` | *(blank)* | Margin leverage for live dry run specifically. Blank = fall back to `INTRADAY_LEVERAGE`. |
+| `DRYRUN_INTERVAL` | `30` | Scan interval, seconds. |
+| `DRYRUN_EQUITY_TOP_N` | `15` | Screener size for `--asset equity`. Ignored for commodity. |
+| `DRYRUN_SYMBOLS` | *(blank)* | Space-separated symbol override. Blank = asset default (`CRUDEOILM NATGASMINI` for commodity, top-N screener for equity). |
+
+### Safety Limits (dry run daemon)
+| Variable | Default | Meaning |
+|---|---|---|
+| `MAX_DAILY_LOSS_PCT` | `5.0` | Halts **new entries** for the rest of the day once realized loss hits this % of the capital the process started the day with. Open positions still exit normally — only new entries stop. Resets automatically at the next trading day. |
+| `TOKEN_CHECK_INTERVAL_MIN` | `15` | How often (minutes) the running daemon proactively re-validates its Upstox token; also re-checked immediately if the broker's 401 circuit breaker trips. Auto-refreshes via headless login if `UPSTOX_USERNAME`/`PIN`/`TOTP_SECRET` are set, otherwise alerts you via Telegram to refresh manually. |
+
+### Telegram Alerts (optional)
+| Variable | Meaning |
+|---|---|
+| `TELEGRAM_BOT_TOKEN` | From [@BotFather](https://t.me/BotFather). |
+| `TELEGRAM_CHAT_ID` | Message your bot once, then `GET https://api.telegram.org/bot<TOKEN>/getUpdates` to find your chat ID. |
+
+Blank = alerts silently disabled, everything else runs fine without them. See [Telegram Alerts & Equity Curve Chart](#telegram-alerts--equity-curve-chart).
+
+---
+
 ## Unified CLI Cheat Sheet
 
-### 1. MCX Commodity Scalper (`backtest_commodity.py`)
+All commands below assume you're in `backend/` with the venv active (or just call `.venv/bin/python3`, which `cli.py` also auto-re-execs into if you run it with the system Python). Every flag shown has an `.env` equivalent from the table above — omit the flag to use whatever's in `.env`.
+
+### 1. `cli.py backtest` — Walk-forward backtest on historical data
 
 ```bash
-# 1. Standard Real-World MIS Run (₹1 Lakh Capital, 5x Leverage, 2026 YTD)
-python3 backtest_commodity.py --symbols CRUDEOILM --capital 100000 --risk-pct 5.0 --leverage 5.0 --from 2026-01-01 --to 2026-09-07
+python3 cli.py backtest [--asset {futures,commodity,equity,options}] [--symbols SYM [SYM ...]]
+                         [--capital N] [--risk-pct N] [--leverage N]
+                         [--from YYYY-MM-DD] [--to YYYY-MM-DD]
+                         [--top-n N] [--full-session]
+```
+| Flag | Meaning |
+|---|---|
+| `--asset` | `futures`/`commodity` → `backtest_commodity.py`'s MCX scalper. `equity`/`cash` → `backtest_scalper.py`'s NSE scalper. `options` → `DirectionalOptionBuyer` via `MultiAssetBacktester` (uses local 5-min archive data, defaults to `NIFTY 50`/`NIFTY BANK` if no symbols given). |
+| `--symbols` | Override the asset's default symbol list. |
+| `--capital` | Starting capital in ₹. |
+| `--risk-pct` | Risk % of capital per trade. |
+| `--leverage` | MIS margin leverage multiplier. |
+| `--from` / `--to` | Date range filter (`--from-date`/`--to-date` also accepted). |
+| `--top-n` | Equity screener size (ignored for commodity/options). |
+| `--full-session` | Commodity only — trade the full 09:00–23:30 IST session instead of just the evening US-overlap window. |
 
-# 2. Multi-Year Compounded Backtest (2025–2026)
-python3 backtest_commodity.py --symbols CRUDEOILM --capital 100000 --risk-pct 5.0 --leverage 5.0 --from 2025-01-01 --to 2026-09-07
-
-# 3. Dual Commodity Run (Crude Oil Mini + NatGas Mini)
-python3 backtest_commodity.py --symbols CRUDEOILM NATGASMINI --capital 100000 --risk-pct 5.0 --leverage 5.0
-
-# 4. Pure Risk-Budgeted Mode (Unconstrained by margin)
-python3 backtest_commodity.py --symbols CRUDEOILM --capital 100000 --risk-pct 10.0 --size-mode risk --from 2026-01-01 --to 2026-09-07
+```bash
+# Examples
+python3 cli.py backtest                                                  # everything from .env
+python3 cli.py backtest --asset futures --symbols CRUDEOILM NATGASMINI --from 2026-01-01 --to 2026-09-07
+python3 cli.py backtest --asset equity --symbols RELIANCE INFY TCS
+python3 cli.py backtest --asset options --symbols "NIFTY 50" "NIFTY BANK"
 ```
 
-### 2. NSE Equity Scalper (`backtest_scalper.py`)
+### 2. `cli.py dryrun` — Live paper-trading (delegates to `live_dryrun.py`)
 
 ```bash
-# 1. Backtest Specific Liquid NIFTY Stocks
-python3 backtest_scalper.py --symbols RELIANCE HDFCBANK TCS INFY --capital 100000 --risk-pct 2.5 --leverage 4.0
+python3 cli.py dryrun [--asset {futures,commodity,equity}] [--symbols SYM [SYM ...]]
+                       [--capital N] [--risk-pct N] [--leverage N]
+                       [--interval N] [--direction {both,long,short}] [--top-n N]
+```
+| Flag | Meaning |
+|---|---|
+| `--asset` | `futures`/`commodity` → MCX 5-min scalper (`CRUDEOILM`/`NATGASMINI`, 09:00–23:30 IST). `equity` → NSE 5-min scalper (screener top-N, 09:15–15:30 IST). **`options` is refused with an explicit error** — there is no live/paper options signal loop implemented yet (only the backtest path exists); don't rely on it silently doing the wrong thing. |
+| `--symbols` | Override the default watchlist. |
+| `--interval` | Scan interval, seconds. |
+| `--direction` | Restrict to `long` or `short` only, or `both`. |
+| `--top-n` | Equity screener size, ignored for commodity. |
 
-# 2. Backtest with Dynamic Top-N High-Beta Stock Screener
-python3 backtest_scalper.py --screener --top-n 5 --capital 100000 --risk-pct 2.5 --leverage 4.0
-
-# 3. Backtest a Specific Year / Date Range
-python3 backtest_scalper.py --symbols RELIANCE ICICIBANK --year 2025 --capital 100000 --risk-pct 2.5
-
-# 4. Long-Only Equity Momentum Mode
-python3 backtest_scalper.py --screener --top-n 5 --long-only --capital 100000 --risk-pct 2.5
+```bash
+# Examples
+python3 cli.py dryrun                                    # everything from .env — this is what the systemd service runs
+python3 cli.py dryrun --asset commodity --interval 30
+python3 cli.py dryrun --asset equity --top-n 10 --direction long
+python3 cli.py dryrun --report                            # dashboard + equity curve chart, no trading
 ```
 
-### 3. Live Paper-Trading Dryrun (`live_dryrun.py`)
+This process is a **24/7 daemon**, not a one-shot script: it waits out nights/weekends/holidays and rolls into the next trading day on its own rather than exiting, so it should be run under the systemd service (below), not `nohup`.
+
+### 3. `cli.py report` / `cli.py reset-db`
 
 ```bash
-# 1. Live Paper Trading for NSE Equities (Market hours: 09:15-15:30 IST)
-python3 live_dryrun.py --capital 100000 --risk-pct 2.5 --leverage 4.0 --interval 30
+python3 cli.py report [--db PATH] [--account ID]                          # dashboard: balance, win rate, open positions, last trades/orders
+python3 cli.py reset-db [--db PATH] [--account ID] [--capital N] [--risk-pct N] [--leverage N]   # wipes the DB and starts a fresh paper account
+```
 
-# 2. Live Paper Trading for MCX Commodities (Evening hours: 18:30-23:30 IST)
-python3 live_dryrun.py --commodity --capital 100000 --risk-pct 5.0 --leverage 5.0 --interval 30
+### 4. `live_dryrun.py` directly (what `cli.py dryrun` calls under the hood)
 
-# 3. View Current Paper-Trading Report & Open Positions
-python3 live_dryrun.py --report
+Useful when you need a flag `cli.py dryrun` doesn't expose yet (`--long-only`, `--db`, `--account`, `--token`):
 
-# 4. Reset Paper-Trading Virtual Account Capital
+```bash
+python3 live_dryrun.py [--token TOKEN] [--capital N] [--risk-pct N] [--leverage N]
+                        [--top-n N] [--symbols SYM [SYM ...]] [--db PATH] [--account ID]
+                        [--commodity] [--long-only] [--direction {both,long,short}]
+                        [--interval N] [--report] [--reset-db]
+```
+| Flag | Meaning |
+|---|---|
+| `--token` | Explicit Upstox access token (otherwise loaded from config/cache/`.env`/auto-login, in that order). |
+| `--commodity` | Switch to MCX mode. Omit for the NSE equity scalper. |
+| `--long-only` | Skip all short setups regardless of `--direction`. |
+| `--db` / `--account` | Point at a specific SQLite file / account ID — useful for running multiple independent paper accounts side by side (each gets its own [process lock](#safety-features-dry-run)). |
+| `--report` | Print the dashboard and save the equity curve chart, then exit — no trading. |
+| `--reset-db` | Wipe and reinitialize the DB before starting. |
+
+```bash
+# Examples
+python3 live_dryrun.py --commodity --capital 100000 --risk-pct 5.0 --leverage 4.0 --interval 30
+python3 live_dryrun.py --report --commodity --account DRYRUN_ACCOUNT
 python3 live_dryrun.py --reset-db --capital 100000
 ```
 
-### 4. Master Unified CLI (`cli.py`)
+### 5. Backtest scripts directly (`backtest_commodity.py`, `backtest_scalper.py`)
+
+Same engines `cli.py backtest` delegates to, callable directly when you want their full native flag set:
 
 ```bash
-# Backtest MCX Commodities
-python3 cli.py backtest --asset futures --symbols CRUDEOILM --from 2026-01-01 --to 2026-09-07
+# MCX Commodity Scalper
+python3 backtest_commodity.py --symbols CRUDEOILM --capital 100000 --risk-pct 5.0 --leverage 5.0 --from 2026-01-01 --to 2026-09-07
+python3 backtest_commodity.py --symbols CRUDEOILM NATGASMINI --capital 100000 --risk-pct 5.0 --leverage 5.0
+python3 backtest_commodity.py --symbols CRUDEOILM --capital 100000 --risk-pct 10.0 --size-mode risk --from 2026-01-01 --to 2026-09-07   # pure risk-budgeted, unconstrained by margin
 
-# Backtest NSE Equities
-python3 cli.py backtest --asset equity --symbols RELIANCE INFY TCS
+# NSE Equity Scalper
+python3 backtest_scalper.py --symbols RELIANCE HDFCBANK TCS INFY --capital 100000 --risk-pct 2.5 --leverage 4.0
+python3 backtest_scalper.py --screener --top-n 5 --capital 100000 --risk-pct 2.5 --leverage 4.0
+python3 backtest_scalper.py --screener --top-n 5 --long-only --capital 100000 --risk-pct 2.5
+python3 backtest_scalper.py --symbols RELIANCE ICICIBANK --year 2025 --capital 100000 --risk-pct 2.5
+```
 
-# View Performance Reports from SQLite DB
-python3 cli.py report
+---
 
-# Reset Virtual Paper-Trading Account
-python3 cli.py reset-db --capital 100000
+## Running 24/7 as a systemd Service
+
+`live_dryrun.py` is a long-running daemon (it loops across trading days on its own, sleeping through nights/weekends), so it's meant to run under a process supervisor — **not** `nohup`. A `systemd --user` service gives you: survives terminal logout, auto-restarts on crash, centralized logs via `journalctl`, and starts on boot.
+
+**Setup** (`~/.config/systemd/user/hft-dryrun.service`):
+```ini
+[Unit]
+Description=HFT Paper-Trading Dry Run (cli.py dryrun)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=/var/www/html/hft/backend
+ExecStart=/var/www/html/hft/backend/.venv/bin/python3 /var/www/html/hft/backend/cli.py dryrun
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
+```
+
+All trading parameters come from `backend/.env` — edit that file and restart the service, no flags needed in the unit file itself. Enable lingering once so user services survive logout/reboot: `loginctl enable-linger $USER`.
+
+**Commands:**
+```bash
+systemctl --user daemon-reload                          # after creating/editing the unit file
+systemctl --user enable hft-dryrun.service               # start automatically on boot/login
+systemctl --user start hft-dryrun.service                 # start now
+systemctl --user stop hft-dryrun.service                  # graceful stop (SIGTERM -> clean shutdown + Telegram alert)
+systemctl --user restart hft-dryrun.service                # e.g. after editing live_dryrun.py or .env
+systemctl --user status hft-dryrun.service --no-pager      # is it running, PID, recent log lines
+journalctl --user -u hft-dryrun.service -f                  # follow logs live
+journalctl --user -u hft-dryrun.service --no-pager -n 100    # last 100 lines
+```
+
+`Restart=always` is safe with `systemctl stop` — systemd doesn't apply the restart policy to an explicit stop request, only to unexpected exits/crashes.
+
+---
+
+## Safety Features (Dry Run)
+
+Built into `live_dryrun.py`'s `DryRunner`/`main()` — all active by default, no flags needed:
+
+- **Process lock** — refuses to start a second dry-run process for the same `--account`, so a forgotten stray process (or a re-run before the old one exited) can't double-trade the same account. Lock file: `data/.<ACCOUNT_ID>.lock`.
+- **Daily-loss kill switch** (`MAX_DAILY_LOSS_PCT`) — halts *new* entries for the rest of the day once realized loss hits the configured % of the day's starting capital. Open positions still get managed/exited normally. Sends a Telegram alert once when tripped, resets automatically the next trading day.
+- **Token refresh loop** (`TOKEN_CHECK_INTERVAL_MIN`) — proactively re-validates the Upstox token on a timer, or immediately if the broker's 401 circuit breaker trips. Auto-refreshes via headless login if `UPSTOX_USERNAME`/`PIN`/`TOTP_SECRET` are configured; otherwise alerts via Telegram that a manual `python3 -m auth.upstox_auth` is needed.
+- **1-trade-per-day-per-symbol cap** (commodity mode) — matches the walk-forward backtest's own rule, seeded from the DB on restart so a mid-day restart doesn't forget a quota already used.
+- **Graceful shutdown** — both Ctrl-C and `systemctl stop` (SIGTERM) trigger a clean exit with a Telegram alert, not an unhandled crash.
+
+> **Note on scope**: this is a paper-trading system end to end — `UpstoxBroker` is always constructed with `dry_run=True`, and no code path currently places real orders. These safety features harden the *paper* daemon (crash alerting, daily-loss discipline, token hygiene); they are prerequisites for eventually going live, not a live-trading switch.
+
+---
+
+## Telegram Alerts & Equity Curve Chart
+
+Set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` in `.env` (see [Environment Configuration](#environment-configuration-env)) to get:
+
+| Event | Alert |
+|---|---|
+| Daemon starts / stops | 🟢/🔴 with capital, risk, leverage, direction, symbols |
+| Position entered | 📥 symbol, direction, price, qty, SL/TP |
+| Position exited | ✅/❌ symbol, direction, exit price, reason, net PnL, balance |
+| Scan error / exception | 🔴 with the exception type and message |
+| Daily-loss kill switch tripped | 🛑 |
+| Token refresh failed | 🔴 |
+| End of trading day | 🏁 trade count, total PnL, balance — **plus the equity curve chart as a photo** |
+
+The equity curve (`utils/chart.py`) is a matplotlib line chart built from `database.py`'s `portfolio_snapshots` table (one row recorded per trade close), aggregated to **one point per calendar day** (that day's end-of-day capital) spanning from the first trading day through today — not a noisy per-trade intraday chart. It's regenerated and sent to Telegram at the end of every trading day, and also saved to `logs/equity_<ACCOUNT_ID>.png` on every `--report` call:
+
+```bash
+python3 live_dryrun.py --report --commodity --account DRYRUN_ACCOUNT
+# -> prints the dashboard AND saves logs/equity_DRYRUN_ACCOUNT.png
+```
+
+---
+
+## Machine Learning & Microstructure Feature Pipeline
+
+The commodity scalper's `p_up` signal comes from a per-symbol LightGBM classifier (`ml/train_commodity.py`), trained on triple-barrier-labeled 5-minute bars from `archive_commodities/*.csv` with the microstructure features in `strategy/commodity_features.py` (ADX/DMI, VWAP distance, EMA slope, ORB breakout distance, volume surge ratio, Parkinson volatility, etc). Trained models are cached at `cache/commodity_models/lgb_<symbol>.pkl` and loaded once at `DryRunner` startup — training/fine-tuning doesn't affect an already-running dry-run process until it's restarted.
+
+### Manual full training
+```bash
+python3 -m ml.train_commodity --symbol CRUDEOILM   # full from-scratch train, one symbol
+python3 -m ml.train_commodity                        # full from-scratch train, CRUDEOILM + NATGASMINI (train_all_commodities())
+python3 update_commodity.py                           # top up archive_commodities/*.csv with fresh candles, THEN full train
+python3 update_commodity.py --no-train                 # top up archives only, skip training
+```
+Every full train writes a `cache/commodity_models/lgb_<symbol>.meta.json` checkpoint recording the timestamp of the last data row used — that's what fine-tuning (below) uses to know which rows are new.
+
+### Fine-tuning (continued training on new data)
+A model trained once and left alone drifts as market microstructure shifts, but re-training from scratch on the full multi-year archive every week is wasteful and throws away everything the model already learned. `ml/train_commodity.py`'s `finetune_commodity_model()` instead **continues training the existing saved model** on only the data added since its last checkpoint — via LightGBM's `init_model` (adds more boosting rounds on top of the existing trees rather than fitting fresh ones). If a symbol has no saved model/checkpoint yet, it transparently falls back to a full train first.
+
+```bash
+python3 -m ml.train_commodity --symbol CRUDEOILM --finetune   # fine-tune one symbol on new data since its last checkpoint
+python3 -m ml.train_commodity --finetune                        # fine-tune CRUDEOILM + NATGASMINI (finetune_all_commodities())
+```
+Skips cleanly (model left untouched) if there are fewer than 100 new labeled rows since the last checkpoint, or if the new data is single-class (no win/loss examples to learn from) — both logged and non-fatal.
+
+### Weekly automated fine-tuning
+`ml/weekly_finetune.py` wraps `update_commodity.py`'s archive-top-up with `finetune_all_commodities()` in one alerted job, scheduled via a `systemd --user` timer to run **Sunday 02:00 IST** (comfortably after Saturday's MCX close, safely before Monday's session — no open positions to worry about):
+
+```bash
+python3 -m ml.weekly_finetune                 # top up archives, fine-tune, restart hft-dryrun.service to load updated models
+python3 -m ml.weekly_finetune --no-restart      # same, but leave the running dryrun daemon on its current models
+```
+
+It sends a Telegram summary (🧠) with duration and which model files actually changed, or a 🔴 error alert if the job fails (in which case the dryrun daemon is left untouched, still running its last-known-good models).
+
+**Setup** (`~/.config/systemd/user/hft-weekly-finetune.timer` + matching `.service`, same pattern as the [dry-run daemon](#running-247-as-a-systemd-service)):
+```ini
+# hft-weekly-finetune.service
+[Unit]
+Description=Weekly MCX commodity archive top-up + LightGBM fine-tuning
+[Service]
+Type=oneshot
+WorkingDirectory=/var/www/html/hft/backend
+ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m ml.weekly_finetune
+```
+```ini
+# hft-weekly-finetune.timer
+[Unit]
+Description=Weekly ML fine-tune schedule (Sunday, markets closed)
+[Timer]
+OnCalendar=Sun *-*-* 02:00:00 Asia/Kolkata
+Persistent=true
+[Install]
+WantedBy=timers.target
+```
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now hft-weekly-finetune.timer
+systemctl --user list-timers hft-weekly-finetune.timer --no-pager    # confirm next scheduled run
+journalctl --user -u hft-weekly-finetune.service --no-pager -n 50     # check the last run's output
+systemctl --user start hft-weekly-finetune.service                    # trigger a run immediately (don't wait for Sunday)
 ```
 
 ---
