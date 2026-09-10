@@ -71,7 +71,7 @@ from backtest.engine import (
     TRAIL_DIST_MULT, SESSION_START_MINUTES, SESSION_CUTOFF_MINUTES,
 )
 from broker.instruments import build_nifty50_map, build_mcx_commodity_map, ensure_master, get_instrument_key
-from utils.logger import get_logger
+from utils.logger import get_logger, setup_logger
 from utils import telegram
 
 log = get_logger("live_dryrun")
@@ -789,6 +789,14 @@ def _print_sig(sig: dict, cap: float):
 
 
 def main():
+    # Wires up the rotating file handler on the ROOT logger (name="") so
+    # every module's get_logger(__name__) call -- live_dryrun's own, plus
+    # broker/upstox_broker.py, auth/upstox_auto_login.py, etc. -- actually
+    # reaches a persistent log file via propagation, not just stdout/stderr
+    # (which is all journalctl captures; nothing was ever written to
+    # logs/ before this, since get_logger() alone never attaches handlers).
+    setup_logger("", log_file=str(Path(__file__).parent / "logs" / "live_dryrun.log"))
+
     ap = argparse.ArgumentParser(description="Live paper-trading dry run with SQLite virtual order & PnL tracking")
     ap.add_argument("--token",     default=None,           help="Upstox access token")
     ap.add_argument("--capital",   type=float, default=100_000, help="Paper capital Rs (default 1,00,000)")

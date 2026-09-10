@@ -76,7 +76,8 @@ def compute_commodity_features(df: pd.DataFrame, symbol: str = "CRUDEOIL") -> pd
     df["parkinson_vol"] = (np.sqrt((log_hl ** 2).rolling(8).mean() / (4 * np.log(2))) * 100).fillna(0.3)
 
     # 5. Fast Intraday RSI (8 periods)
-    df["intraday_rsi"] = ta.rsi(df["close"], length=8).fillna(50.0)
+    rsi = ta.rsi(df["close"], length=8)
+    df["intraday_rsi"] = rsi.fillna(50.0) if rsi is not None else 50.0
 
     # 6. Trend Strength (ADX, +DI, -DI, ATR)
     adx_df = ta.adx(df["high"], df["low"], df["close"], length=14)
@@ -87,7 +88,8 @@ def compute_commodity_features(df: pd.DataFrame, symbol: str = "CRUDEOIL") -> pd
     else:
         df["adx"] = 25.0; df["dmp"] = 25.0; df["dmn"] = 25.0
 
-    df["atr"] = ta.atr(df["high"], df["low"], df["close"], length=14).fillna(hl_range)
+    atr = ta.atr(df["high"], df["low"], df["close"], length=14)
+    df["atr"] = atr.fillna(hl_range) if atr is not None else hl_range
     df["atr_pct"] = (df["atr"] / df["close"] * 100).fillna(0.4)
 
     # 7. Price Action & Candle Microstructure
@@ -111,11 +113,19 @@ def compute_commodity_features(df: pd.DataFrame, symbol: str = "CRUDEOIL") -> pd
     df["is_near_vwap"] = np.where(np.abs(df["vwap_dist_pct"]) <= 0.45, 1.0, 0.0)
 
     # 10. Fast & Slow EMAs + Higher Timeframe (1-hour) Trend
-    df["ema_fast"] = ta.ema(df["close"], length=9).fillna(df["close"])
-    df["ema_slow"] = ta.ema(df["close"], length=21).fillna(df["close"])
+    # ta.ema() (like ta.adx()/ta.bbands() above) returns None -- not a
+    # NaN-filled Series -- when there isn't enough history yet for the given
+    # length (e.g. length=45 early in the trading day, with well under 45
+    # bars available). Falling back to df["close"]/0.0 here mirrors this
+    # file's existing adx/bbands None-handling instead of crashing.
+    ema9 = ta.ema(df["close"], length=9)
+    ema21 = ta.ema(df["close"], length=21)
+    ema45 = ta.ema(df["close"], length=45)
+    df["ema_fast"] = ema9.fillna(df["close"]) if ema9 is not None else df["close"]
+    df["ema_slow"] = ema21.fillna(df["close"]) if ema21 is not None else df["close"]
     df["ema_slope_pct"] = df["ema_fast"].pct_change().fillna(0.0) * 100
     df["is_ema_bullish"] = np.where(df["ema_fast"] > df["ema_slow"], 1.0, 0.0)
-    df["htf_trend_slope"] = ta.ema(df["close"], length=45).pct_change(3).fillna(0.0) * 100
+    df["htf_trend_slope"] = ema45.pct_change(3).fillna(0.0) * 100 if ema45 is not None else 0.0
 
     # 11. Bollinger Bandwidth (Volatility Expansion)
     bb = ta.bbands(df["close"], length=20, std=2.0)

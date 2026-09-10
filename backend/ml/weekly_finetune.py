@@ -29,8 +29,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from utils import telegram
-from utils.logger import get_logger
+from utils.logger import get_logger, setup_logger
 
+setup_logger("", log_file=str(Path(__file__).resolve().parent.parent / "logs" / "weekly_finetune.log"))
 log = get_logger("weekly_finetune")
 
 MODEL_CACHE_DIR = Path(__file__).resolve().parent.parent / "cache" / "commodity_models"
