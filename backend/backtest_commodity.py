@@ -32,8 +32,9 @@ ARCHIVE_DIR = Path(__file__).resolve().parent / "archive_commodities"
 HOLD_BARS = 16
 TAKE_PROFIT_MULT = 1.20
 STOP_VOL_MULT = 1.4
-BE_ACTIVATION_MULT = 0.35
+BE_ACTIVATION_MULT = 0.50  # was 0.35 -- backtested 2026-09-10: delaying arming to 50% of the R-multiple toward TP (vs 29% of actual TP distance before) improved both net return and max drawdown over Jan-Sep 2026, see git history for the comparison
 TRAIL_DIST_MULT = 0.30
+BE_LOCK_BUFFER_PCT = 0.0020  # was 0.0008 -- same backtest: locking a bigger guaranteed profit on arm outperformed the tighter buffer
 
 
 def run_commodity_backtest(
@@ -199,7 +200,7 @@ def run_commodity_backtest(
                     # Trail Stop & Breakeven Arming
                     if not pos["armed_be"] and (fav >= pos["be"] if d == 1 else fav <= pos["be"]):
                         pos["armed_be"] = True
-                        pos["current_stop"] = pos["entry_price"] + 0.0008 * pos["entry_price"] * d
+                        pos["current_stop"] = pos["entry_price"] + BE_LOCK_BUFFER_PCT * pos["entry_price"] * d
                     if pos["armed_be"]:
                         pos["best_price"] = max(pos["best_price"], fav) if d == 1 else min(pos["best_price"], fav)
                         trail = pos["best_price"] - TRAIL_DIST_MULT * pos["stop_dist"] * d

@@ -460,7 +460,7 @@ class DryRunner:
                 d  = 1 if direction == "long" else -1
                 sl = round(entry - sdist * d, 2)
                 tp = round(entry + 1.20 * sdist * d, 2)
-                be = round(entry + 0.35 * sdist * d, 2)
+                be = round(entry + 0.50 * sdist * d, 2)  # was 0.35 -- matches backtest_commodity.py's BE_ACTIVATION_MULT (backtested 2026-09-10 improvement)
 
                 ts_tag = now.strftime('%Y%m%d_%H%M%S')
                 pos_id = f"POS_MCX_{ts_tag}_{sym}"
@@ -743,7 +743,7 @@ class DryRunner:
             stop_before = pos["current_stop"]
             if not pos["armed_be"] and (fav >= pos["be"] if d == 1 else fav <= pos["be"]):
                 pos["armed_be"] = True
-                lock_buffer = 0.0008 if self.is_commodity else 0.0025
+                lock_buffer = 0.0020 if self.is_commodity else 0.0025  # was 0.0008 -- matches backtest_commodity.py's BE_LOCK_BUFFER_PCT (backtested 2026-09-10 improvement)
                 pos["current_stop"] = pos["entry_price"] + lock_buffer * pos["entry_price"] * d
             if pos["armed_be"]:
                 pos["best_price"] = max(pos["best_price"], fav) if d == 1 else min(pos["best_price"], fav)
