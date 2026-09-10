@@ -1,0 +1,7 @@
+[Unit]
+Description=Daily real MCX commodity data top-up (CRUDEOILM/NATGASMINI, via Upstox)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/var/www/html/hft/backend
+ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m real_commodity_data --topup

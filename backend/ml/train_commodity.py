@@ -33,14 +33,27 @@ ARCHIVE_DIR = Path(__file__).resolve().parent.parent / "archive_commodities"
 MODEL_CACHE_DIR = Path(__file__).resolve().parent.parent / "cache" / "commodity_models"
 
 HOLD_BARS = 12          # 60-minute forward evaluation window
-TAKE_PROFIT_MULT = 2.5  # +2.5R target
+TAKE_PROFIT_MULT = 2.5  # +2.5R target (deliberately more extreme than the strategy's own 1.20R TP -- see label_commodity_bars docstring)
 STOP_MULT = 1.0         # -1.0R stop
 
 
-def label_commodity_bars(df: pd.DataFrame) -> pd.DataFrame:
+def label_commodity_bars(df: pd.DataFrame, is_natgas: bool = False) -> pd.DataFrame:
     """
-    Labels each bar using Triple Barrier: Does price hit +2.5R before -1.0R within HOLD_BARS?
-    Uses ATR-scaled dynamic stop distances.
+    Labels each bar with a naive fixed-barrier target: does price hit
+    +2.5R before -1.0R within HOLD_BARS (a shorter, easier-to-separate
+    pattern than the strategy's actual exit rules).
+
+    A version of this function that instead simulated the ACTUAL live/
+    backtest exit rules bar-by-bar (SL/TP/breakeven-arm/trail/timeout) was
+    tried and reverted on 2026-09-10: it's the conceptually more correct
+    target (it's what the strategy actually trades), but on the current
+    ~4k-row REAL archive it produces a severely imbalanced label (~65-74%
+    "win", since breakeven-lock protects most trades into a small positive
+    close) that the model can't learn from (best AUC ~0.58-0.60 after
+    sweeping win-size thresholds, vs ~0.72/0.67 here). Revisit once the
+    real archive (grows ~130 rows/day via the daily top-up job) is large
+    enough for that harder, more balanced-near-noise target to be learnable
+    -- see conversation/git history for the full threshold sweep.
     """
     df = df.copy()
     n = len(df)
@@ -61,7 +74,6 @@ def label_commodity_bars(df: pd.DataFrame) -> pd.DataFrame:
         tp = entry + TAKE_PROFIT_MULT * sdist
         sl = entry - STOP_MULT * sdist
 
-        # Scan forward
         hit = 0
         for j in range(i + 1, min(i + HOLD_BARS + 1, n)):
             if highs[j] >= tp:
@@ -109,8 +121,9 @@ def train_commodity_model(symbol: str = "CRUDEOILM") -> tuple[lgb.LGBMClassifier
     print(f"Loaded {len(raw_df):,} 5-minute bars from {csv_path.name}")
 
     # 1. Feature Engineering
+    is_natgas = "NATGAS" in symbol.upper() or "NATURALGAS" in symbol.upper()
     feat_df = compute_commodity_features(raw_df, symbol=base_sym)
-    labeled_df = label_commodity_bars(feat_df)
+    labeled_df = label_commodity_bars(feat_df, is_natgas=is_natgas)
     print(f"Generated {len(labeled_df):,} labeled decision points.")
 
     # 2. Time-series Walk-forward Split (80% Train, 20% Test)
@@ -125,13 +138,19 @@ def train_commodity_model(symbol: str = "CRUDEOILM") -> tuple[lgb.LGBMClassifier
 
     # 3. LightGBM Classifier
     model = lgb.LGBMClassifier(
-        n_estimators=150,
-        learning_rate=0.03,
-        num_leaves=31,
-        max_depth=5,
-        min_child_samples=40,
-        feature_fraction=0.85,
-        bagging_fraction=0.85,
+        # Deliberately light -- backtested 2026-09-10: the old 150-tree/31-leaf
+        # config (tuned for the 212k-row FAKE archive) massively overfits the
+        # real ~4k-row archive (CRUDEOILM test AUC 0.52, near-random). This
+        # lighter config recovers AUC ~0.72 on the same real data. Revisit
+        # once the real archive is much larger (the daily top-up job grows
+        # it ~130 rows/day) -- more data can support more tree capacity again.
+        n_estimators=20,
+        learning_rate=0.08,
+        num_leaves=4,
+        max_depth=2,
+        min_child_samples=150,
+        feature_fraction=0.7,
+        bagging_fraction=0.7,
         bagging_freq=1,
         class_weight="balanced",
         random_state=42,
@@ -233,8 +252,9 @@ def finetune_commodity_model(symbol: str = "CRUDEOILM") -> tuple[lgb.LGBMClassif
     warmup_cutoff = pd.Timestamp(trained_through) - timedelta(days=FINETUNE_WARMUP_DAYS)
     windowed_df = raw_df[raw_df["timestamp"] >= warmup_cutoff].reset_index(drop=True)
 
+    is_natgas = "NATGAS" in symbol.upper() or "NATURALGAS" in symbol.upper()
     feat_df = compute_commodity_features(windowed_df, symbol=base_sym)
-    labeled_df = label_commodity_bars(feat_df)
+    labeled_df = label_commodity_bars(feat_df, is_natgas=is_natgas)
 
     # Only the rows strictly after the last fine-tune are "new" -- the warmup
     # rows before that exist solely to give rolling features valid history.
@@ -263,13 +283,19 @@ def finetune_commodity_model(symbol: str = "CRUDEOILM") -> tuple[lgb.LGBMClassif
     # a continuation (added boosting rounds on top of existing_model's trees)
     # rather than a from-scratch fit.
     model = lgb.LGBMClassifier(
-        n_estimators=150,
-        learning_rate=0.03,
-        num_leaves=31,
-        max_depth=5,
-        min_child_samples=40,
-        feature_fraction=0.85,
-        bagging_fraction=0.85,
+        # Deliberately light -- backtested 2026-09-10: the old 150-tree/31-leaf
+        # config (tuned for the 212k-row FAKE archive) massively overfits the
+        # real ~4k-row archive (CRUDEOILM test AUC 0.52, near-random). This
+        # lighter config recovers AUC ~0.72 on the same real data. Revisit
+        # once the real archive is much larger (the daily top-up job grows
+        # it ~130 rows/day) -- more data can support more tree capacity again.
+        n_estimators=20,
+        learning_rate=0.08,
+        num_leaves=4,
+        max_depth=2,
+        min_child_samples=150,
+        feature_fraction=0.7,
+        bagging_fraction=0.7,
         bagging_freq=1,
         class_weight="balanced",
         random_state=42,

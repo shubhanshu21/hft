@@ -1,0 +1,14 @@
+[Unit]
+Description=Daily real MCX commodity data top-up schedule
+
+[Timer]
+# 00:30 IST daily -- an hour after MCX's 23:30 IST close (pushed later than
+# an initial 23:45 attempt after finding Upstox hadn't finalized that day's
+# 1-min bars yet right at market close -- see conversation/git history).
+# Harmless no-op on non-trading days (topup_real_commodity_history reports
+# 0 new rows per interval and exits cleanly).
+OnCalendar=*-*-* 00:30:00 Asia/Kolkata
+Persistent=true
+
+[Install]
+WantedBy=timers.target

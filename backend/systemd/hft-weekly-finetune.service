@@ -1,0 +1,7 @@
+[Unit]
+Description=Weekly MCX commodity archive top-up + LightGBM fine-tuning
+
+[Service]
+Type=oneshot
+WorkingDirectory=/var/www/html/hft/backend
+ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m ml.weekly_finetune

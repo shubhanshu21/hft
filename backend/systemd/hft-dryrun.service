@@ -1,0 +1,22 @@
+[Unit]
+Description=HFT Paper-Trading Dry Run (cli.py dryrun) -- 24/7 daemon, market hours are handled inside live_dryrun.py itself
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=/var/www/html/hft/backend
+ExecStart=/var/www/html/hft/backend/.venv/bin/python3 /var/www/html/hft/backend/cli.py dryrun
+# Always restart -- the process is meant to run forever (it loops across
+# trading days/nights/weekends on its own); only a crash or `systemctl stop`
+# should ever end it, and even a clean-but-unexpected exit should come back.
+Restart=always
+RestartSec=10
+
+# All trading params (asset/capital/risk/leverage/interval/symbols) come from
+# backend/.env -- edit that file and restart the service, no flags needed here.
+
+[Install]
+WantedBy=default.target

@@ -16,17 +16,19 @@ NATGASMINI right now that's 2026-08-10, i.e. ~1 month of genuine history,
 not years. Requesting a from_date before the contract's listing date
 returns zero candles (not a partial/clipped result), so this always
 starts from the earliest date that actually returns data rather than
-assuming a fixed lookback window.
+assuming a fixed lookback window. This same ~1-month cap applies to every
+interval below (1min/5min/15min/1day all come from the same underlying
+contract) -- daily bars don't get more history, just fewer, coarser rows.
 
 This module intentionally does NOT try to stitch together older expired
 contracts' instrument_keys into a longer synthetic-feeling history -- that
 data exists on Upstox in principle but each expired contract needs its own
 instrument_key resolved separately, which is out of scope here. Real
 history accumulates naturally, one real trading day at a time, via the
-daily top-up job (see update_archive.py --commodity).
+daily top-up job (hft-daily-data-topup.timer).
 
 Usage:
-    python3 -m real_commodity_data                 # full initial backfill, both symbols, both intervals
+    python3 -m real_commodity_data                 # full initial backfill, both symbols, all intervals
     python3 -m real_commodity_data --topup           # incremental: only fetch days newer than what's archived
 """
 from __future__ import annotations
@@ -54,7 +56,13 @@ SYMBOLS = {
     "NATURALGAS": "NATGASMINI",
 }
 
-INTERVALS = [(5, "5minute"), (1, "1minute")]
+# (Upstox unit, Upstox interval, archive filename suffix)
+INTERVALS = [
+    ("minutes", 1, "1minute"),
+    ("minutes", 5, "5minute"),
+    ("minutes", 15, "15minute"),
+    ("days", 1, "1day"),
+]
 
 _MAX_PROBE_DAYS = 120  # generous upper bound; the real cutoff (contract listing date) is discovered, not assumed
 log = get_logger("real_commodity_data")
@@ -67,7 +75,7 @@ def _get_broker() -> UpstoxBroker:
     return UpstoxBroker(access_token=token, dry_run=True)
 
 
-def _find_earliest_available(broker: UpstoxBroker, instrument_key: str, interval_minutes: int) -> str | None:
+def _find_earliest_available(broker: UpstoxBroker, instrument_key: str, unit: str, interval: int) -> str | None:
     """
     Binary-searches for the earliest from_date that actually returns candles
     (Upstox returns zero candles, not a clipped result, for a from_date
@@ -81,7 +89,7 @@ def _find_earliest_available(broker: UpstoxBroker, instrument_key: str, interval
         mid = (lo + hi) // 2
         frm = (today - timedelta(days=mid)).isoformat()
         to = today.isoformat()
-        candles = broker.get_historical_candles(instrument_key, "minutes", interval_minutes, to, frm)
+        candles = broker.get_historical_candles(instrument_key, unit, interval, to, frm)
         if candles:
             earliest_working = mid
             lo = mid + 1  # try further back
@@ -92,7 +100,7 @@ def _find_earliest_available(broker: UpstoxBroker, instrument_key: str, interval
     return (today - timedelta(days=earliest_working)).isoformat()
 
 
-def download_real_commodity_history(symbol: str, interval_minutes: int, mcx_symbol: str) -> pd.DataFrame | None:
+def download_real_commodity_history(symbol: str, unit: str, interval: int, mcx_symbol: str) -> pd.DataFrame | None:
     """Fetches ALL real history currently available on Upstox for one symbol/interval (full backfill, not incremental)."""
     broker = _get_broker()
     instrument_key = build_mcx_commodity_map().get(mcx_symbol)
@@ -100,28 +108,28 @@ def download_real_commodity_history(symbol: str, interval_minutes: int, mcx_symb
         log.warning("%s: could not resolve MCX instrument_key.", mcx_symbol)
         return None
 
-    earliest = _find_earliest_available(broker, instrument_key, interval_minutes)
+    earliest = _find_earliest_available(broker, instrument_key, unit, interval)
     if earliest is None:
         log.warning("%s: no real history available at all (contract may be unlisted/expired).", mcx_symbol)
         return None
 
     to_date = date.today().isoformat()
-    candles = broker.get_historical_candles(instrument_key, "minutes", interval_minutes, to_date, earliest)
+    candles = broker.get_historical_candles(instrument_key, unit, interval, to_date, earliest)
     if not candles:
         return None
 
     df = pd.DataFrame(candles).sort_values("timestamp").reset_index(drop=True)
-    log.info("%s (%dmin): fetched %d real candles, %s to %s.",
-              mcx_symbol, interval_minutes, len(df), earliest, to_date)
+    log.info("%s (%s/%d): fetched %d real candles, %s to %s.",
+              mcx_symbol, unit, interval, len(df), earliest, to_date)
     return df
 
 
-def topup_real_commodity_history(symbol: str, interval_minutes: int, mcx_symbol: str, suffix: str) -> int:
+def topup_real_commodity_history(symbol: str, unit: str, interval: int, mcx_symbol: str, suffix: str) -> int:
     """Incremental: fetches only candles newer than what's already archived, appends de-duplicated. Returns rows added."""
     out_path = ARCHIVE_DIR / f"{symbol}_{suffix}.csv"
     if not out_path.exists():
         log.info("%s: no existing archive, doing a full backfill instead of a top-up.", symbol)
-        df = download_real_commodity_history(symbol, interval_minutes, mcx_symbol)
+        df = download_real_commodity_history(symbol, unit, interval, mcx_symbol)
         if df is None or df.empty:
             return 0
         ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
@@ -143,7 +151,7 @@ def topup_real_commodity_history(symbol: str, interval_minutes: int, mcx_symbol:
         log.warning("%s: could not resolve MCX instrument_key.", mcx_symbol)
         return 0
 
-    candles = broker.get_historical_candles(instrument_key, "minutes", interval_minutes, to_date, from_date)
+    candles = broker.get_historical_candles(instrument_key, unit, interval, to_date, from_date)
     if not candles:
         log.info("%s: no new candles (%s to %s).", symbol, from_date, to_date)
         return 0
@@ -165,13 +173,13 @@ def build_all_real_commodity_archives(topup: bool = False) -> None:
     print(f"{'='*75}\n")
 
     for symbol, mcx_symbol in SYMBOLS.items():
-        for interval_minutes, suffix in INTERVALS:
-            print(f"  {mcx_symbol} @ {interval_minutes}min...")
+        for unit, interval, suffix in INTERVALS:
+            print(f"  {mcx_symbol} @ {suffix}...")
             if topup:
-                added = topup_real_commodity_history(symbol, interval_minutes, mcx_symbol, suffix)
+                added = topup_real_commodity_history(symbol, unit, interval, mcx_symbol, suffix)
                 print(f"    +{added} new rows")
             else:
-                df = download_real_commodity_history(symbol, interval_minutes, mcx_symbol)
+                df = download_real_commodity_history(symbol, unit, interval, mcx_symbol)
                 if df is None or df.empty:
                     print(f"    No data available.")
                     continue
@@ -182,7 +190,7 @@ def build_all_real_commodity_archives(topup: bool = False) -> None:
 
     # Mini-contract aliases (backtest/train code looks up the base symbol's file via COMMODITY_ALIASES)
     for mini_sym, base_sym in {"CRUDEOILM": "CRUDEOIL", "NATGASMINI": "NATURALGAS"}.items():
-        for _, suffix in INTERVALS:
+        for _, _, suffix in INTERVALS:
             base_file = ARCHIVE_DIR / f"{base_sym}_{suffix}.csv"
             mini_file = ARCHIVE_DIR / f"{mini_sym}_{suffix}.csv"
             if base_file.exists():

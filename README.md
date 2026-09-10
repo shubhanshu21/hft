@@ -22,9 +22,9 @@ An institutional-grade, 100% configurable **Multi-Asset Quantitative Trading Fra
 10. [Running 24/7 as a systemd Service](#running-247-as-a-systemd-service)
 11. [Safety Features (Dry Run)](#safety-features-dry-run)
 12. [Telegram Alerts & Equity Curve Chart](#telegram-alerts--equity-curve-chart)
-13. [Statutory Taxation & Friction Schedule](#statutory-taxation--friction-schedule)
-14. [Machine Learning & Microstructure Feature Pipeline](#machine-learning--microstructure-feature-pipeline)
-15. [SQLite Paper-Trading Database Schema](#sqlite-paper-trading-database-schema)
+13. [Machine Learning & Microstructure Feature Pipeline](#machine-learning--microstructure-feature-pipeline)
+14. [Real MCX Data via Upstox](#real-mcx-data-via-upstox)
+15. [Statutory Taxation & Friction Schedule](#statutory-taxation--friction-schedule)
 16. [Walk-Forward Backtest Performance](#walk-forward-backtest-performance)
 17. [Automated Testing Suite](#automated-testing-suite)
 
@@ -89,11 +89,17 @@ backend/
 │   └── options_features.py          # Put-Call Ratio (PCR), IV Rank, Max Pain, Open Interest Surges
 │
 ├── ml/                              # Machine Learning & AI
-│   └── train_commodity.py           # LightGBM training pipeline for MCX Futures
+│   ├── train_commodity.py           # LightGBM training/fine-tuning pipeline for MCX Futures
+│   └── weekly_finetune.py           # Scheduled job: real-data top-up + incremental fine-tune
 │
 ├── engine/                          # Simulation & Execution Engines
 │   ├── backtester.py                # Universal Walk-Forward Backtester
 │   └── live_runner.py               # Real-Time Live & Paper-Trading Engine
+│
+├── systemd/                         # systemd --user unit files (symlinked from ~/.config/systemd/user/)
+│   ├── hft-dryrun.service           # 24/7 paper-trading daemon
+│   ├── hft-daily-data-topup.service/.timer    # Nightly real MCX data top-up (00:30 IST)
+│   └── hft-weekly-finetune.service/.timer     # Weekly ML fine-tune (Sunday 02:00 IST)
 │
 ├── tests/                           # Unit Testing Suite
 │   └── test_framework.py            # Framework validation tests
@@ -101,7 +107,8 @@ backend/
 ├── cli.py                           # Master Unified Multi-Asset CLI
 ├── backtest_commodity.py            # 5-Minute MCX Commodity Futures Backtest CLI
 ├── backtest_scalper.py              # Equity Momentum Backtest CLI
-└── live_dryrun.py                   # Live WebSocket Candle Streamer & Virtual Paper Engine
+├── live_dryrun.py                   # Live 24/7 Paper-Trading Daemon
+└── real_commodity_data.py           # Real MCX historical data downloader/top-up (via Upstox)
 ```
 
 ---
@@ -353,31 +360,56 @@ python3 backtest_scalper.py --symbols RELIANCE ICICIBANK --year 2025 --capital 1
 
 `live_dryrun.py` is a long-running daemon (it loops across trading days on its own, sleeping through nights/weekends), so it's meant to run under a process supervisor — **not** `nohup`. A `systemd --user` service gives you: survives terminal logout, auto-restarts on crash, centralized logs via `journalctl`, and starts on boot.
 
-**Setup** (`~/.config/systemd/user/hft-dryrun.service`):
-```ini
-[Unit]
-Description=HFT Paper-Trading Dry Run (cli.py dryrun)
-After=network-online.target
-Wants=network-online.target
-StartLimitIntervalSec=300
-StartLimitBurst=5
+### Unit files live in the repo, not just in systemd's directory
 
-[Service]
-Type=simple
-WorkingDirectory=/var/www/html/hft/backend
-ExecStart=/var/www/html/hft/backend/.venv/bin/python3 /var/www/html/hft/backend/cli.py dryrun
-Restart=always
-RestartSec=10
+All 5 unit files are checked into **`backend/systemd/`** — not hidden away in `~/.config/systemd/user/` where they'd be invisible to the repo and easy to lose track of. `~/.config/systemd/user/` holds only **symlinks** pointing back into `backend/systemd/`, so systemd reads the exact file you see and edit in the project — no separate "deploy" step, no copying, no drift between what's committed and what's running.
 
-[Install]
-WantedBy=default.target
+| Unit | Type | Purpose | Schedule |
+|---|---|---|---|
+| `hft-dryrun.service` | persistent daemon | Runs `cli.py dryrun` — the 24/7 paper-trading loop | Always on (`Restart=always`) |
+| `hft-daily-data-topup.service` + `.timer` | oneshot + timer | Runs `real_commodity_data.py --topup` — appends the day's real MCX candles (1min/5min/15min/1day) to `archive_commodities/*.csv` | Daily, 00:30 IST |
+| `hft-weekly-finetune.service` + `.timer` | oneshot + timer | Runs `ml/weekly_finetune.py` — tops up archives, fine-tunes the LightGBM models on new data, restarts the dry-run service to load them | Weekly, Sunday 02:00 IST |
+
+### First-time setup on a new machine
+
+```bash
+cd /var/www/html/hft/backend
+
+# 1. Symlink every unit file from the repo into systemd's user directory
+mkdir -p ~/.config/systemd/user
+for f in systemd/*; do
+    ln -s "$(pwd)/$f" ~/.config/systemd/user/"$(basename "$f")"
+done
+
+# 2. Let user services survive logout/reboot (one-time, machine-wide)
+loginctl enable-linger "$USER"
+
+# 3. Load the units and start everything
+systemctl --user daemon-reload
+systemctl --user enable --now hft-dryrun.service
+systemctl --user enable --now hft-daily-data-topup.timer
+systemctl --user enable --now hft-weekly-finetune.timer
+
+# 4. Confirm
+systemctl --user status hft-dryrun.service --no-pager
+systemctl --user list-timers --all --no-pager
 ```
 
-All trading parameters come from `backend/.env` — edit that file and restart the service, no flags needed in the unit file itself. Enable lingering once so user services survive logout/reboot: `loginctl enable-linger $USER`.
+### Editing a unit
 
-**Commands:**
+Edit the file directly in `backend/systemd/` (same as any other project file — visible in your IDE, tracked by git, no secrets in it so safe to commit). Then:
+
 ```bash
-systemctl --user daemon-reload                          # after creating/editing the unit file
+systemctl --user daemon-reload                # always needed after any unit-file edit
+systemctl --user restart hft-dryrun.service     # only for a persistent service; timers just need daemon-reload to pick up a new schedule
+```
+
+All trading parameters themselves come from `backend/.env`, not the unit files — edit `.env` and restart `hft-dryrun.service`, no unit-file changes needed for a parameter change.
+
+### Commands
+
+```bash
+systemctl --user daemon-reload                          # after creating/editing any unit file
 systemctl --user enable hft-dryrun.service               # start automatically on boot/login
 systemctl --user start hft-dryrun.service                 # start now
 systemctl --user stop hft-dryrun.service                  # graceful stop (SIGTERM -> clean shutdown + Telegram alert)
@@ -385,9 +417,15 @@ systemctl --user restart hft-dryrun.service                # e.g. after editing 
 systemctl --user status hft-dryrun.service --no-pager      # is it running, PID, recent log lines
 journalctl --user -u hft-dryrun.service -f                  # follow logs live
 journalctl --user -u hft-dryrun.service --no-pager -n 100    # last 100 lines
+
+systemctl --user list-timers --all --no-pager                          # next scheduled fire for every timer
+systemctl --user start hft-daily-data-topup.service                     # trigger a data top-up right now (don't wait for 00:30 IST)
+systemctl --user start hft-weekly-finetune.service                      # trigger a fine-tune right now (don't wait for Sunday)
+journalctl --user -u hft-daily-data-topup.service --no-pager -n 50       # last data top-up's output
+journalctl --user -u hft-weekly-finetune.service --no-pager -n 50        # last fine-tune's output
 ```
 
-`Restart=always` is safe with `systemctl stop` — systemd doesn't apply the restart policy to an explicit stop request, only to unexpected exits/crashes.
+`Restart=always` on `hft-dryrun.service` is safe with `systemctl stop` — systemd doesn't apply the restart policy to an explicit stop request, only to unexpected exits/crashes.
 
 ---
 
@@ -432,11 +470,13 @@ python3 live_dryrun.py --report --commodity --account DRYRUN_ACCOUNT
 
 The commodity scalper's `p_up` signal comes from a per-symbol LightGBM classifier (`ml/train_commodity.py`), trained on triple-barrier-labeled 5-minute bars from `archive_commodities/*.csv` with the microstructure features in `strategy/commodity_features.py` (ADX/DMI, VWAP distance, EMA slope, ORB breakout distance, volume surge ratio, Parkinson volatility, etc). Trained models are cached at `cache/commodity_models/lgb_<symbol>.pkl` and loaded once at `DryRunner` startup — training/fine-tuning doesn't affect an already-running dry-run process until it's restarted.
 
+**Data note**: `archive_commodities/*.csv` holds **genuine historical MCX candles fetched from Upstox** (`real_commodity_data.py`), not synthetic data — see [Real MCX Data via Upstox](#real-mcx-data-via-upstox) below. Because MCX commodity futures are monthly-expiry contracts, real history is capped at roughly a month per contract; it grows by one real trading day nightly via the scheduled top-up. `download_commodity_data.py`'s random-walk generator still exists in the codebase but is no longer used for training/backtesting as of 2026-09-10 — don't reach for it.
+
 ### Manual full training
 ```bash
 python3 -m ml.train_commodity --symbol CRUDEOILM   # full from-scratch train, one symbol
 python3 -m ml.train_commodity                        # full from-scratch train, CRUDEOILM + NATGASMINI (train_all_commodities())
-python3 update_commodity.py                           # top up archive_commodities/*.csv with fresh candles, THEN full train
+python3 update_commodity.py                           # top up archive_commodities/*.csv with real Upstox candles, THEN full train
 python3 update_commodity.py --no-train                 # top up archives only, skip training
 ```
 Every full train writes a `cache/commodity_models/lgb_<symbol>.meta.json` checkpoint recording the timestamp of the last data row used — that's what fine-tuning (below) uses to know which rows are new.
@@ -451,43 +491,31 @@ python3 -m ml.train_commodity --finetune                        # fine-tune CRUD
 Skips cleanly (model left untouched) if there are fewer than 100 new labeled rows since the last checkpoint, or if the new data is single-class (no win/loss examples to learn from) — both logged and non-fatal.
 
 ### Weekly automated fine-tuning
-`ml/weekly_finetune.py` wraps `update_commodity.py`'s archive-top-up with `finetune_all_commodities()` in one alerted job, scheduled via a `systemd --user` timer to run **Sunday 02:00 IST** (comfortably after Saturday's MCX close, safely before Monday's session — no open positions to worry about):
+`ml/weekly_finetune.py` wraps a real-data archive top-up with `finetune_all_commodities()` in one alerted job, scheduled via `hft-weekly-finetune.service`/`.timer` (in `backend/systemd/`, see [Running 24/7 as a systemd Service](#running-247-as-a-systemd-service) for the full setup) to run **Sunday 02:00 IST** (comfortably after Saturday's MCX close, safely before Monday's session — no open positions to worry about):
 
 ```bash
-python3 -m ml.weekly_finetune                 # top up archives, fine-tune, restart hft-dryrun.service to load updated models
+python3 -m ml.weekly_finetune                 # top up archives with real data, fine-tune, restart hft-dryrun.service to load updated models
 python3 -m ml.weekly_finetune --no-restart      # same, but leave the running dryrun daemon on its current models
 ```
 
 It sends a Telegram summary (🧠) with duration and which model files actually changed, or a 🔴 error alert if the job fails (in which case the dryrun daemon is left untouched, still running its last-known-good models).
 
-**Setup** (`~/.config/systemd/user/hft-weekly-finetune.timer` + matching `.service`, same pattern as the [dry-run daemon](#running-247-as-a-systemd-service)):
-```ini
-# hft-weekly-finetune.service
-[Unit]
-Description=Weekly MCX commodity archive top-up + LightGBM fine-tuning
-[Service]
-Type=oneshot
-WorkingDirectory=/var/www/html/hft/backend
-ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m ml.weekly_finetune
-```
-```ini
-# hft-weekly-finetune.timer
-[Unit]
-Description=Weekly ML fine-tune schedule (Sunday, markets closed)
-[Timer]
-OnCalendar=Sun *-*-* 02:00:00 Asia/Kolkata
-Persistent=true
-[Install]
-WantedBy=timers.target
-```
+---
+
+## Real MCX Data via Upstox
+
+`archive_commodities/*.csv` is populated from **genuine historical MCX candles**, fetched via `real_commodity_data.py` using the same Upstox broker/account this bot already live-trades through — no separate data vendor or credentials needed. `download_commodity_data.py`'s earlier random-walk generator is no longer used for training or backtesting (see git history 2026-09-10 for why: everything validated against it — win rates, parameter tuning — was fit to synthetic patterns, not real market behavior).
+
+**Hard constraint**: MCX commodity futures are monthly-expiry contracts, not continuously-listed instruments. Upstox's real history for the *current* active contract only reaches back to that contract's own listing date — typically ~1 month, not years. Requesting further back returns zero candles, not a clipped result. Real history accumulates one genuine trading day at a time via the daily top-up job; there's no way to get more than ~1 month at once without a paid data vendor (TrueData, Global Data Feeds, PortaraCQG all carry real MCX intraday history, but pricing is quote-based, not self-serve).
+
+**Four intervals maintained per symbol**: 1-minute, 5-minute (the one the strategy/ML model actually consumes), 15-minute, and 1-day (which Upstox retains for noticeably longer than intraday — often several months back even when intraday is capped at ~1 month).
 
 ```bash
-systemctl --user daemon-reload
-systemctl --user enable --now hft-weekly-finetune.timer
-systemctl --user list-timers hft-weekly-finetune.timer --no-pager    # confirm next scheduled run
-journalctl --user -u hft-weekly-finetune.service --no-pager -n 50     # check the last run's output
-systemctl --user start hft-weekly-finetune.service                    # trigger a run immediately (don't wait for Sunday)
+python3 -m real_commodity_data           # full initial backfill, both symbols, all 4 intervals
+python3 -m real_commodity_data --topup     # incremental: fetch only candles newer than what's archived (what the daily timer runs)
 ```
+
+Symbols covered: `CRUDEOILM`/`CRUDEOIL` and `NATGASMINI`/`NATURALGAS` (base-symbol and mini-contract archive files are kept identical — `train_commodity.py`/`backtest_commodity.py` look up whichever name they're given via `COMMODITY_ALIASES`).
 
 ---
 

@@ -1,0 +1,12 @@
+[Unit]
+Description=Weekly ML fine-tune schedule (Sunday, markets closed)
+
+[Timer]
+# Sunday 02:00 IST -- comfortably after Saturday's MCX close (23:30 IST) and
+# before the dryrun daemon's own Monday activity, so no open positions are at
+# risk when the fine-tune job restarts the dryrun service to load updated models.
+OnCalendar=Sun *-*-* 02:00:00 Asia/Kolkata
+Persistent=true
+
+[Install]
+WantedBy=timers.target
