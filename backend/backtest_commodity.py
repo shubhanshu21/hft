@@ -36,6 +36,19 @@ BE_ACTIVATION_MULT = 0.50  # was 0.35 -- backtested 2026-09-10: delaying arming 
 TRAIL_DIST_MULT = 0.30
 BE_LOCK_BUFFER_PCT = 0.0020  # was 0.0008 -- same backtest: locking a bigger guaranteed profit on arm outperformed the tighter buffer
 
+# Asset-calibrated entry-signal thresholds. NATGAS runs stricter (noisier
+# order book, thinner liquidity outside inventory windows) than crude by
+# default -- see README's Crude vs NatGas microstructure comparison.
+ENTRY_THRESHOLDS = {
+    "crude":  {"min_ml_l": 0.54, "max_ml_s": 0.44, "min_adx": 15.0, "min_vol": 1.10, "min_orb": 0.05, "min_vwap": 0.05, "min_stop_pct": 0.0035},
+    "natgas": {"min_ml_l": 0.55, "max_ml_s": 0.43, "min_adx": 19.0, "min_vol": 1.40, "min_orb": 0.08, "min_vwap": 0.08, "min_stop_pct": 0.0050},
+}
+# min_adx was 20.0/24.0 -- backtested 2026-09-10: lowering by 5 (validated on
+# both Jan-Sep 7 and Jan-Sep 10 ranges, at both 2x and 4x leverage) improved
+# win rate, net profit (+33-58%), and max drawdown simultaneously. Every
+# other lever tried (tighter ML/ADX/volume, TP/stop-distance, hold-bars) was
+# flat-to-worse -- see conversation history / git log for the full sweep.
+
 
 def run_commodity_backtest(
     symbols: list[str] | None = None,
@@ -230,15 +243,16 @@ def run_commodity_backtest(
             orb_l_dist = feat_df["orb_low_dist_pct"].values[i]
             atr = atrs[i]
 
-            # Asset-calibrated parameter profiles
+            # Asset-calibrated parameter profiles (see ENTRY_THRESHOLDS module dict)
             is_natgas = "NATGAS" in sym.upper() or "NATURALGAS" in sym.upper()
-            min_ml_l = 0.55 if is_natgas else 0.54
-            max_ml_s = 0.43 if is_natgas else 0.44
-            min_adx = 24.0 if is_natgas else 20.0
-            min_vol = 1.40 if is_natgas else 1.10
-            min_orb = 0.08 if is_natgas else 0.05
-            min_vwap = 0.08 if is_natgas else 0.05
-            min_stop_pct = 0.0050 if is_natgas else 0.0035
+            _et = ENTRY_THRESHOLDS["natgas"] if is_natgas else ENTRY_THRESHOLDS["crude"]
+            min_ml_l = _et["min_ml_l"]
+            max_ml_s = _et["max_ml_s"]
+            min_adx = _et["min_adx"]
+            min_vol = _et["min_vol"]
+            min_orb = _et["min_orb"]
+            min_vwap = _et["min_vwap"]
+            min_stop_pct = _et["min_stop_pct"]
 
             sdist = max(STOP_VOL_MULT * atr, min_stop_pct * c_price)
             if sdist <= 0 or c_price <= 0:

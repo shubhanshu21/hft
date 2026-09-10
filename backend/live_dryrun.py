@@ -424,7 +424,7 @@ class DryRunner:
                 is_natgas = "NATGAS" in sym.upper() or "NATURALGAS" in sym.upper()
                 min_ml_l = 0.55 if is_natgas else 0.54
                 max_ml_s = 0.43 if is_natgas else 0.44
-                min_adx = 24.0 if is_natgas else 20.0
+                min_adx = 19.0 if is_natgas else 15.0  # was 24.0/20.0 -- matches backtest_commodity.py's ENTRY_THRESHOLDS (backtested 2026-09-10 improvement)
                 min_vol = 1.40 if is_natgas else 1.10
                 min_orb = 0.08 if is_natgas else 0.05
                 min_vwap = 0.08 if is_natgas else 0.05
