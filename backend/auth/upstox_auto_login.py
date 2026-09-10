@@ -208,7 +208,58 @@ def _kill_stray_chrome_for_profile() -> None:
         (_CHROMIUM_PROFILE_DIR / name).unlink(missing_ok=True)
 
 
+def _repair_stale_snap_symlink() -> None:
+    """
+    Snap's per-user ~/snap/chromium/current symlink can go stale after a
+    snap refresh removes the old revision it pointed at -- reproduced on
+    this host (2026-09-09): `current` pointed at a since-removed revision,
+    which crashed `_CHROMIUM_PROFILE_DIR.mkdir(parents=True, exist_ok=True)`
+    in _setup_driver() with FileExistsError (the symlink entry itself
+    exists even though its target doesn't, so exist_ok doesn't save it).
+    Self-heals by repointing `current` at whatever revision the
+    system-wide /snap/chromium/current symlink says is actually active
+    (the same one _SNAP_CHROMIUM_DRIVER above already trusts) -- not just
+    the numerically-highest per-user directory, which can be wrong right
+    after a `snap revert` (the reverted-away-from revision is kept on
+    disk and would sort higher). Only relevant when the snap browser is
+    actually the one in use.
+    """
+    if _CHROMIUM_BINARY != _SNAP_CHROMIUM_BINARY:
+        return
+    try:
+        current = _CHROMIUM_PROFILE_DIR.parent  # ~/snap/chromium/current
+        if not current.is_symlink() or current.exists():
+            return  # not a symlink, or resolves fine -- nothing to repair
+
+        old_target = os.readlink(current)
+        system_current = Path("/snap/chromium/current")
+        latest = (
+            os.readlink(system_current) if system_current.is_symlink()
+            else max((p.name for p in current.parent.iterdir() if p.is_dir() and p.name.isdigit()),
+                      key=int, default=None)
+        )
+        if latest is None:
+            log.warning("Snap symlink %s is broken (was -> %s) and no repair target could be "
+                        "determined -- leaving it broken.", current, old_target)
+            return
+
+        log.warning("Repairing stale snap symlink %s (was -> %s) -> %s", current, old_target, latest)
+        # Atomic swap: build the new link under a temp name, then rename it
+        # over the old one in one filesystem op -- unlink() then
+        # symlink_to() as two separate steps risks leaving `current`
+        # missing entirely (and un-detectable as "was a symlink") if this
+        # process is killed in between.
+        tmp_link = current.with_name(current.name + f".tmp{os.getpid()}")
+        tmp_link.symlink_to(latest)
+        os.replace(tmp_link, current)
+    except PermissionError as exc:
+        log.warning("Could not inspect/repair snap symlink (permission denied): %s", exc)
+    except OSError as exc:
+        log.warning("Could not repair snap symlink: %s", exc)
+
+
 def _setup_driver() -> webdriver.Chrome:
+    _repair_stale_snap_symlink()
     _CHROMIUM_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
     _kill_stray_chrome_for_profile()
 

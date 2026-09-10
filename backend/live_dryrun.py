@@ -132,6 +132,8 @@ def _acquire_process_lock(account_id: str):
     except OSError:
         print(f"{RED}ERROR: Another dryrun process is already running for account "
               f"'{account_id}' (lock: {lock_path}). Refusing to start a second one.{R}")
+        telegram.send(f"🔴 <b>STARTUP REFUSED</b> — another dryrun process is already running for "
+                      f"account '{account_id}'. This attempt was refused to prevent double-trading.")
         sys.exit(1)
     fh.write(f"{os.getpid()}\n")
     fh.flush()
@@ -827,9 +829,34 @@ def main():
     _lock_fh = _acquire_process_lock(args.account)  # held for process lifetime; see _acquire_process_lock
 
     token = args.token or _load_token()
-    if not token:
-        print(f"{RED}ERROR: No ACCESS_TOKEN. Set in backend/.env or pass --token.{R}")
-        sys.exit(1)
+
+    # Startup token validation: a cached/env token being *present* doesn't
+    # mean it's still *valid* (Upstox tokens expire daily) -- this system
+    # trades real money on a schedule, so silently starting with a stale
+    # token and only discovering it hours later via the in-loop check is not
+    # acceptable. Validate now and force a refresh if needed, before the
+    # daemon ever claims to be running.
+    from auth.upstox_auto_login import _token_is_valid, ensure_fresh_upstox_token
+    from config import UpstoxConfig as _UC
+    if not token or not _token_is_valid(token):
+        print(f"{YL}Cached/provided token is missing or invalid -- attempting auto-login refresh...{R}")
+        if _UC.auto_login_configured():
+            try:
+                token = ensure_fresh_upstox_token(force=True) or ""
+            except Exception as exc:
+                log.error("Startup auto-login raised: %s", exc, exc_info=True)
+                telegram.alert_error("Startup auto-login", exc)
+                token = ""
+        if token:
+            print(f"{GR}Auto-login refresh succeeded.{R}")
+            telegram.send("🔑 <b>TOKEN REFRESHED</b> at startup via auto-login -- dry run proceeding.")
+        else:
+            print(f"{RED}ERROR: No valid ACCESS_TOKEN available (cache/.env stale and auto-login "
+                  f"unavailable/failed). Set in backend/.env, pass --token, or run "
+                  f"`python3 -m auth.upstox_auth` manually.{R}")
+            telegram.send("🔴 <b>DRYRUN FAILED TO START</b> — no valid Upstox token and auto-login "
+                          "unavailable/failed. Run `python3 -m auth.upstox_auth` manually.")
+            sys.exit(1)
 
     broker = UpstoxBroker(access_token=token, dry_run=True)
 
@@ -932,11 +959,20 @@ def main():
                 if UpstoxConfig.auto_login_configured():
                     try:
                         from auth.upstox_auto_login import ensure_fresh_upstox_token
+                        old_token = UpstoxConfig.ACCESS_TOKEN
                         new_token = ensure_fresh_upstox_token(on_token_refreshed=broker.set_access_token)
                         if new_token is None:
                             log.error("Token refresh failed — trading may be blind until fixed.")
                             telegram.send("🔴 <b>TOKEN REFRESH FAILED</b> — auto-login attempt failed. "
                                           "Run `python3 -m auth.upstox_auth` manually or check credentials.")
+                        elif new_token != old_token:
+                            # An actual refresh happened (not just a no-op
+                            # echo of an already-valid token) -- worth a
+                            # visibility alert since this system trades real
+                            # money and a silent credential rotation is
+                            # exactly the kind of thing to have a record of.
+                            log.info("Token refreshed via scheduled check.")
+                            telegram.send("🔑 <b>TOKEN REFRESHED</b> (scheduled check) — dry run continuing normally.")
                     except Exception as exc:
                         log.error("Token refresh raised: %s", exc, exc_info=True)
                         telegram.alert_error("Token refresh", exc)
