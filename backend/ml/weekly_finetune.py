@@ -54,11 +54,11 @@ def main() -> int:
     before = _model_mtimes()
 
     try:
-        from download_commodity_data import build_all_commodity_archives
+        from real_commodity_data import build_all_real_commodity_archives
         from ml.train_commodity import finetune_all_commodities
 
-        log.info("Weekly fine-tuning: updating commodity archives...")
-        build_all_commodity_archives()
+        log.info("Weekly fine-tuning: updating commodity archives with REAL Upstox data...")
+        build_all_real_commodity_archives(topup=True)
 
         log.info("Weekly fine-tuning: updating LightGBM models on new data...")
         finetune_all_commodities()
