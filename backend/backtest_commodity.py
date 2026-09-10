@@ -12,15 +12,18 @@ Features:
 from __future__ import annotations
 
 import argparse
+import os
 from datetime import datetime
 from pathlib import Path
 import sys
 
 import numpy as np
 import pandas as pd
+from dotenv import load_dotenv
 
 # Add backend root to path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 
 from strategy.commodity_costs import (
     COMMODITY_SPECS, compute_mcx_commodity_costs, size_commodity_lots, get_contract_multiplier
@@ -60,6 +63,7 @@ def run_commodity_backtest(
     from_date: str | None = None,
     to_date: str | None = None,
     size_mode: str = "margin",
+    no_ml_filter: bool = False,  # diagnostic only: drop the p_up condition, keep every other rule-based filter -- see conversation history for why/when
 ) -> dict:
     target_symbols = symbols or ["CRUDEOILM", "NATGASMINI"]
 
@@ -74,6 +78,7 @@ def run_commodity_backtest(
     print(f"  Capital: ₹{capital:,.0f} | Risk: {risk_pct}% | Leverage: {leverage}x | Long-Only: {long_only}")
     print(f"  Period: {period_str}")
     print(f"  Session: {'US/Evening Overlap (18:30-22:00 IST)' if us_session_only else 'Full Session (09:00-23:30)'}")
+    print(f"  ML Filter: {'DISABLED (rule-based only)' if no_ml_filter else 'enabled'}")
     print(f"  Symbols ({len(target_symbols)}): {', '.join(target_symbols)}")
     print(f"{'='*75}\n")
 
@@ -259,10 +264,12 @@ def run_commodity_backtest(
                 continue
 
             direction = None
+            ml_long_ok = no_ml_filter or (p_up >= min_ml_l)
+            ml_short_ok = no_ml_filter or (p_up <= max_ml_s)
             # High-conviction Trend Expansion Setup
-            if p_up >= min_ml_l and adx >= min_adx and dmp > dmn and ema_s > 0.010 and orb_h_dist >= min_orb and vwap_d >= min_vwap and vol_s >= min_vol:
+            if ml_long_ok and adx >= min_adx and dmp > dmn and ema_s > 0.010 and orb_h_dist >= min_orb and vwap_d >= min_vwap and vol_s >= min_vol:
                 direction = "long"
-            elif not long_only and p_up <= max_ml_s and adx >= min_adx and dmn > dmp and ema_s < -0.010 and orb_l_dist <= -min_orb and vwap_d <= -min_vwap and vol_s >= min_vol:
+            elif not long_only and ml_short_ok and adx >= min_adx and dmn > dmp and ema_s < -0.010 and orb_l_dist <= -min_orb and vwap_d <= -min_vwap and vol_s >= min_vol:
                 direction = "short"
 
 
@@ -437,6 +444,11 @@ def main():
     parser.add_argument("--to", "--to-date", "--end-date", dest="to_date", default=None, help="End date (YYYY-MM-DD), e.g. 2024-12-31")
     parser.add_argument("--year", type=int, default=None, help="Backtest a specific year (e.g. 2024, 2025)")
     parser.add_argument("--size-mode", choices=["risk", "margin"], default="risk", help="Position sizing mode: 'risk' (pure risk budget sizing) or 'margin' (capped by broker margin)")
+    parser.add_argument("--no-ml-filter", dest="no_ml_filter", action="store_true",
+                         default=os.environ.get("BACKTEST_USE_ML_FILTER", "true").lower() not in ("1", "true", "yes"),
+                         help="Drop the ML p_up condition, keep every other rule-based filter (or set BACKTEST_USE_ML_FILTER=false in .env)")
+    parser.add_argument("--use-ml-filter", dest="no_ml_filter", action="store_false",
+                         help="Force the ML p_up condition back on, overriding BACKTEST_USE_ML_FILTER=false in .env")
     args = parser.parse_args()
 
     from_d = args.from_date
@@ -460,6 +472,7 @@ def main():
         from_date=from_d,
         to_date=to_d,
         size_mode=args.size_mode,
+        no_ml_filter=args.no_ml_filter,
     )
 
 

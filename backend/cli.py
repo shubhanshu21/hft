@@ -72,6 +72,7 @@ def cmd_backtest(args):
             from_date=args.from_date,
             to_date=args.to_date,
             us_session_only=not args.full_session,
+            no_ml_filter=args.no_ml_filter,
         )
     elif asset_str in ("equity", "equities", "cash"):
         from backtest_scalper import run_scalper_backtest
@@ -201,6 +202,11 @@ def main():
     p_bt.add_argument("--full-session", action="store_true",
                        default=_env("BACKTEST_FULL_SESSION", "false").lower() in ("1", "true", "yes"),
                        help="Include full session bars (or set BACKTEST_FULL_SESSION=true in .env)")
+    p_bt.add_argument("--no-ml-filter", dest="no_ml_filter", action="store_true",
+                       default=_env("BACKTEST_USE_ML_FILTER", "true").lower() not in ("1", "true", "yes"),
+                       help="Commodity only -- drop the ML p_up condition, keep every other rule-based filter (or set BACKTEST_USE_ML_FILTER=false in .env)")
+    p_bt.add_argument("--use-ml-filter", dest="no_ml_filter", action="store_false",
+                       help="Force the ML p_up condition back on, overriding BACKTEST_USE_ML_FILTER=false in .env")
     p_bt.set_defaults(func=cmd_backtest)
 
     # Dryrun Subcommand -- defaults come from backend/.env (DRYRUN_* / TRADING_*

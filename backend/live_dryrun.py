@@ -271,6 +271,16 @@ class DryRunner:
         self.leverage         = leverage
         self.account_id       = account_id
         self.direction_filter = direction_filter.lower()
+        # Diagnostic finding 2026-09-10: on both the real ~1-month archive AND
+        # a freshly-regenerated copy of the original synthetic dataset (using
+        # the correctly-sized, non-overfit model), dropping the p_up
+        # condition and keeping every other rule-based filter outperformed
+        # keeping it -- consistently, by ~4-5pts of win rate on both. The
+        # model doesn't have enough real data yet to be a net-positive
+        # filter. Toggle via DRYRUN_USE_ML_FILTER in .env once that changes
+        # (e.g. after the real archive has grown substantially) -- see
+        # conversation/git history for the full comparison.
+        self.use_ml_filter = os.environ.get("DRYRUN_USE_ML_FILTER", "true").lower() in ("1", "true", "yes")
         self.is_commodity     = is_commodity
 
         # Load commodity ML models if in commodity mode
@@ -435,10 +445,12 @@ class DryRunner:
                     continue
 
                 direction = None
+                ml_long_ok = (not self.use_ml_filter) or (p_up >= min_ml_l)
+                ml_short_ok = (not self.use_ml_filter) or (p_up <= max_ml_s)
                 # Calibrated 70%+ Win Rate Rules (asset-calibrated, matches backtest):
-                if p_up >= min_ml_l and adx >= min_adx and dmp > dmn and ema_s > 0.010 and orb_h_dist >= min_orb and vwap_d >= min_vwap and vol_s >= min_vol:
+                if ml_long_ok and adx >= min_adx and dmp > dmn and ema_s > 0.010 and orb_h_dist >= min_orb and vwap_d >= min_vwap and vol_s >= min_vol:
                     direction = "long"
-                elif self.direction_filter != "long" and p_up <= max_ml_s and adx >= min_adx and dmn > dmp and ema_s < -0.010 and orb_l_dist <= -min_orb and vwap_d <= -min_vwap and vol_s >= min_vol:
+                elif self.direction_filter != "long" and ml_short_ok and adx >= min_adx and dmn > dmp and ema_s < -0.010 and orb_l_dist <= -min_orb and vwap_d <= -min_vwap and vol_s >= min_vol:
                     direction = "short"
 
                 if not direction:
