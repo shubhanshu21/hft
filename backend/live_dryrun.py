@@ -37,6 +37,7 @@ if _venv_py.exists() and sys.executable != str(_venv_py):
 import argparse
 import csv
 import fcntl
+import json
 import math
 import time
 from datetime import date, datetime, timedelta
@@ -337,6 +338,11 @@ class DryRunner:
         self.trading_day = self.today
         self.day_start_capital = self.capital
         self.kill_switch_active = False
+
+        # Manual Telegram kill switch -- separate from the automatic daily-loss
+        # one above. Loaded from disk so a "stop" sent before a restart is
+        # still honored after it.
+        self.trading_enabled = self._load_trading_enabled()
         logs_dir = Path(__file__).parent / "logs"
         logs_dir.mkdir(exist_ok=True)
         self.log_path = logs_dir / f"dryrun_{self.today}.csv"
@@ -368,7 +374,7 @@ class DryRunner:
             if sym in self.positions:
                 self._maybe_exit(sym, now)
                 continue
-            if self.kill_switch_active:
+            if self.kill_switch_active or not self.trading_enabled:
                 continue
             candles = _fetch_candles(self.broker, sym, self.today)
             if not candles or len(candles) < 25:
@@ -655,84 +661,7 @@ class DryRunner:
             exit_p = float(latest["close"]); reason = "eod_squareoff"
 
         if exit_p is not None:
-            # 1. Calculate Exact Itemized Costs
-            if self.is_commodity:
-                cost_info = compute_mcx_commodity_costs(sym, pos["direction"], pos["entry_price"], exit_p, pos.get("lots", pos.get("qty", 1)))
-            else:
-                cost_info = compute_itemized_costs(pos["direction"], pos["entry_price"], exit_p, pos["qty"])
-
-            net_pnl = cost_info["net"]
-            gross_pnl = cost_info["gross"]
-            self.capital += net_pnl
-
-            # 2. Record Virtual Exit Order in DB
-            ts_tag = now.strftime('%Y%m%d_%H%M%S')
-            exit_order_id = f"ORD_X_{ts_tag}_{sym}"
-            exit_side = "SELL" if pos["direction"] == "long" else "BUY"
-            self.db.place_order(
-                order_id=exit_order_id,
-                symbol=sym,
-                direction=exit_side,
-                intent=reason.upper(),
-                order_type="MARKET",
-                qty=pos.get("lots", pos.get("qty", 1)),
-                requested_price=exit_p,
-                fill_price=exit_p,
-                status="FILLED",
-                tag=f"DRY_RUN_EXIT_{reason.upper()}",
-                account_id=self.account_id
-            )
-
-            # 3. Close Position in DB
-            self.db.close_position(
-                position_id=pos["position_id"],
-                exit_price=exit_p,
-                exit_reason=reason,
-                gross_pnl=gross_pnl,
-                net_pnl=net_pnl,
-                total_fees=cost_info["total"]
-            )
-
-            # 4. Record Detailed Trade Record in DB
-            hold_mins = (now - pos["entry_time"]).total_seconds() / 60.0
-            self.db.record_trade(
-                position_id=pos["position_id"],
-                symbol=sym,
-                direction=pos["direction"],
-                qty=pos.get("lots", pos.get("qty", 1)),
-                entry_price=pos["entry_price"],
-                exit_price=exit_p,
-                entry_dt=pos["entry_time"].isoformat(),
-                exit_dt=now.isoformat(),
-                hold_minutes=hold_mins,
-                exit_reason=reason,
-                gross_pnl=gross_pnl,
-                costs_dict=cost_info,
-                net_pnl=net_pnl,
-                capital_after=self.capital,
-                p_up=pos.get("p_up"),
-                rsi=pos.get("rsi"),
-                vwap_dist_pct=pos.get("vwap_dist_pct"),
-                ema_slope_pct=pos.get("ema_slope_pct"),
-                account_id=self.account_id
-            )
-
-            # 5. Record Portfolio Equity Snapshot in DB
-            self.db.record_snapshot(self.account_id)
-
-            col = GR if net_pnl >= 0 else RED
-            print(f"  {BOLD}EXIT{R}  {WH}{sym:12s}{R} {pos['direction']:5s} "
-                  f"@ {YL}₹{exit_p:.2f}{R}  [{reason}]  "
-                  f"Net: {col}₹{net_pnl:+,.2f}{R} (Fees: ₹{cost_info['total']:.2f})  Cap: ₹{self.capital:,.2f}")
-            telegram.alert_exit(sym, pos, exit_p, reason, net_pnl, self.capital)
-
-            rec = {**pos, "exit_price": exit_p, "exit_reason": reason,
-                   "net_pnl": round(net_pnl, 2), "gross_pnl": round(gross_pnl, 2),
-                   "total_costs": round(cost_info["total"], 2),
-                   "exit_time": now.strftime("%H:%M:%S")}
-            self.trades.append(rec)
-            del self.positions[sym]
-            self._save()
+            self._close_position(sym, pos, exit_p, reason, now)
         else:
             # Trail stop & Breakeven Lock
             armed_before = pos["armed_be"]
@@ -755,6 +684,137 @@ class DryRunner:
                     best_price=pos["best_price"],
                     armed_be=pos["armed_be"]
                 )
+
+    def _close_position(self, sym: str, pos: dict, exit_p: float, reason: str, now: datetime):
+        """Shared exit path for SL/TP/timeout/EOD exits AND the manual Telegram
+        kill switch (force_exit_all) -- one place that writes the DB order/
+        position/trade/snapshot records, updates capital, and alerts."""
+        # 1. Calculate Exact Itemized Costs
+        if self.is_commodity:
+            cost_info = compute_mcx_commodity_costs(sym, pos["direction"], pos["entry_price"], exit_p, pos.get("lots", pos.get("qty", 1)))
+        else:
+            cost_info = compute_itemized_costs(pos["direction"], pos["entry_price"], exit_p, pos["qty"])
+
+        net_pnl = cost_info["net"]
+        gross_pnl = cost_info["gross"]
+        self.capital += net_pnl
+
+        # 2. Record Virtual Exit Order in DB
+        ts_tag = now.strftime('%Y%m%d_%H%M%S')
+        exit_order_id = f"ORD_X_{ts_tag}_{sym}"
+        exit_side = "SELL" if pos["direction"] == "long" else "BUY"
+        self.db.place_order(
+            order_id=exit_order_id,
+            symbol=sym,
+            direction=exit_side,
+            intent=reason.upper(),
+            order_type="MARKET",
+            qty=pos.get("lots", pos.get("qty", 1)),
+            requested_price=exit_p,
+            fill_price=exit_p,
+            status="FILLED",
+            tag=f"DRY_RUN_EXIT_{reason.upper()}",
+            account_id=self.account_id
+        )
+
+        # 3. Close Position in DB
+        self.db.close_position(
+            position_id=pos["position_id"],
+            exit_price=exit_p,
+            exit_reason=reason,
+            gross_pnl=gross_pnl,
+            net_pnl=net_pnl,
+            total_fees=cost_info["total"]
+        )
+
+        # 4. Record Detailed Trade Record in DB
+        hold_mins = (now - pos["entry_time"]).total_seconds() / 60.0
+        self.db.record_trade(
+            position_id=pos["position_id"],
+            symbol=sym,
+            direction=pos["direction"],
+            qty=pos.get("lots", pos.get("qty", 1)),
+            entry_price=pos["entry_price"],
+            exit_price=exit_p,
+            entry_dt=pos["entry_time"].isoformat(),
+            exit_dt=now.isoformat(),
+            hold_minutes=hold_mins,
+            exit_reason=reason,
+            gross_pnl=gross_pnl,
+            costs_dict=cost_info,
+            net_pnl=net_pnl,
+            capital_after=self.capital,
+            p_up=pos.get("p_up"),
+            rsi=pos.get("rsi"),
+            vwap_dist_pct=pos.get("vwap_dist_pct"),
+            ema_slope_pct=pos.get("ema_slope_pct"),
+            account_id=self.account_id
+        )
+
+        # 5. Record Portfolio Equity Snapshot in DB
+        self.db.record_snapshot(self.account_id)
+
+        col = GR if net_pnl >= 0 else RED
+        print(f"  {BOLD}EXIT{R}  {WH}{sym:12s}{R} {pos['direction']:5s} "
+              f"@ {YL}₹{exit_p:.2f}{R}  [{reason}]  "
+              f"Net: {col}₹{net_pnl:+,.2f}{R} (Fees: ₹{cost_info['total']:.2f})  Cap: ₹{self.capital:,.2f}")
+        telegram.alert_exit(sym, pos, exit_p, reason, net_pnl, self.capital)
+
+        rec = {**pos, "exit_price": exit_p, "exit_reason": reason,
+               "net_pnl": round(net_pnl, 2), "gross_pnl": round(gross_pnl, 2),
+               "total_costs": round(cost_info["total"], 2),
+               "exit_time": now.strftime("%H:%M:%S")}
+        self.trades.append(rec)
+        del self.positions[sym]
+        self._save()
+
+    # ---- Telegram kill switch -------------------------------------------
+    # Persisted to disk (not just in-memory) so a "stop" command survives a
+    # systemd restart: the daemon must come back up still halted, not quietly
+    # resume trading just because the process happened to restart.
+    def _control_path(self) -> Path:
+        return Path(__file__).parent / "data" / f".{self.account_id}_control.json"
+
+    def _load_control(self) -> dict:
+        try:
+            return json.loads(self._control_path().read_text())
+        except (OSError, json.JSONDecodeError, ValueError):
+            return {}
+
+    def _save_control(self, **updates) -> None:
+        data = self._load_control()
+        data.update(updates)
+        self._control_path().parent.mkdir(parents=True, exist_ok=True)
+        self._control_path().write_text(json.dumps(data))
+
+    def _load_trading_enabled(self) -> bool:
+        return self._load_control().get("enabled", True)
+
+    def get_telegram_offset(self):
+        """Last processed Telegram update_id + 1, or None before the first poll --
+        persisted so a restart doesn't replay (or miss) start/stop commands."""
+        return self._load_control().get("telegram_offset")
+
+    def save_telegram_offset(self, offset: int) -> None:
+        self._save_control(telegram_offset=offset)
+
+    def stop_trading(self, now: datetime) -> int:
+        """Kill switch: halt new entries and force-exit every open position
+        at the current market price. Returns the number of positions closed."""
+        self.trading_enabled = False
+        self._save_control(enabled=False)
+        n = 0
+        for sym in list(self.positions.keys()):
+            pos = self.positions[sym]
+            candles = _fetch_candles(self.broker, sym, self.today)
+            exit_p = float(candles[-1]["close"]) if candles else pos["entry_price"]
+            self._close_position(sym, pos, exit_p, "manual_kill_switch", now)
+            n += 1
+        return n
+
+    def start_trading(self) -> None:
+        self.trading_enabled = True
+        self._save_control(enabled=True)
 
     def _save(self):
         if not self.trades:
@@ -895,7 +955,9 @@ def main():
         f"🟢 <b>DRYRUN DAEMON STARTED</b> — {market_mode}\n"
         f"Capital: ₹{runner.capital:,.0f}  Risk: {args.risk_pct}%  Leverage: {args.leverage}x  "
         f"Direction: {direction_mode.upper()}\n"
-        f"Symbols: {', '.join(symbols)}"
+        f"Symbols: {', '.join(symbols)}\n"
+        f"Trading is currently {'🟢 ENABLED' if runner.trading_enabled else '🛑 STOPPED (send /start to resume)'}.\n"
+        f"Send <b>/stop</b> to halt new entries and force-close all open positions, or <b>/start</b> to resume."
     )
 
     from config import UpstoxConfig
@@ -953,6 +1015,31 @@ def main():
             now = datetime.now(IST)
             print(f"\n{GY}-- Scan #{scan_n} @ {now.strftime('%Y-%m-%d %H:%M:%S')} IST  "
                   f"| Paper Balance: {WH}₹{runner.capital:,.2f}{GY} --{R}", flush=True)
+
+            # Telegram start/stop kill switch: a quick non-blocking (timeout=0)
+            # poll once per scan for any new command from the operator chat.
+            # "stop" halts new entries AND force-closes every open position at
+            # the current market price; "start" resumes normal entries. Both
+            # states persist to disk (see runner.stop_trading/start_trading)
+            # so they survive a systemd restart.
+            try:
+                updates = telegram.get_updates(offset=runner.get_telegram_offset(), timeout=0)
+                for u in updates:
+                    runner.save_telegram_offset(u["update_id"] + 1)
+                    if not telegram.is_authorized_chat(u["chat_id"]):
+                        continue
+                    cmd = u["text"].strip().lower()
+                    if cmd in ("/stop", "stop", "stop trading"):
+                        closed = runner.stop_trading(now)
+                        print(f"  {BOLD}{RED}!! TRADING STOPPED via Telegram -- {closed} position(s) force-closed !!{R}", flush=True)
+                        telegram.send(f"🛑 <b>TRADING STOPPED</b> (manual) — {closed} open position(s) force-closed.\n"
+                                      f"New entries halted until you send /start.")
+                    elif cmd in ("/start", "start", "start trading"):
+                        runner.start_trading()
+                        print(f"  {BOLD}{GR}TRADING STARTED via Telegram{R}", flush=True)
+                        telegram.send("🟢 <b>TRADING STARTED</b> (manual) — resuming normal entries.")
+            except Exception as exc:
+                log.error("Telegram command poll raised: %s", exc, exc_info=True)
 
             # Token refresh: proactively every TOKEN_CHECK_INTERVAL_MIN, or
             # immediately if the broker's 401 circuit breaker trips. A 24/7

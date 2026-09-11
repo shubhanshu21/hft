@@ -22,6 +22,7 @@ _BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 _CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 _API_URL = f"https://api.telegram.org/bot{_BOT_TOKEN}/sendMessage" if _BOT_TOKEN else ""
 _PHOTO_API_URL = f"https://api.telegram.org/bot{_BOT_TOKEN}/sendPhoto" if _BOT_TOKEN else ""
+_UPDATES_API_URL = f"https://api.telegram.org/bot{_BOT_TOKEN}/getUpdates" if _BOT_TOKEN else ""
 
 _log = logging.getLogger("telegram")
 
@@ -66,6 +67,46 @@ def send_photo(path, caption: str = "") -> bool:
     except Exception as exc:
         _log.warning("Telegram send_photo raised: %s", exc)
         return False
+
+
+def get_updates(offset: int = None, timeout: int = 0) -> list:
+    """Poll for inbound messages (used for the start/stop kill switch).
+
+    Returns every update seen -- including ones from chats other than
+    TELEGRAM_CHAT_ID -- so the caller can advance its offset past them
+    without replaying them forever; is_authorized_chat() is what actually
+    gates whether a message's *command* gets acted on. Returns [] on any
+    failure, timeout, or if unconfigured (never raises, same contract as
+    send()/send_photo()).
+    """
+    if not ENABLED:
+        return []
+    try:
+        params = {"timeout": timeout, "allowed_updates": '["message"]'}
+        if offset is not None:
+            params["offset"] = offset
+        resp = requests.get(_UPDATES_API_URL, params=params, timeout=timeout + 10)
+        if resp.status_code != 200:
+            _log.warning("Telegram get_updates failed: HTTP %s %s", resp.status_code, resp.text[:200])
+            return []
+        out = []
+        for u in resp.json().get("result", []):
+            msg = u.get("message") or {}
+            out.append({
+                "update_id": u["update_id"],
+                "chat_id": str(msg.get("chat", {}).get("id", "")),
+                "text": (msg.get("text") or "").strip(),
+            })
+        return out
+    except Exception as exc:
+        _log.warning("Telegram get_updates raised: %s", exc)
+        return []
+
+
+def is_authorized_chat(chat_id: str) -> bool:
+    """Only the configured TELEGRAM_CHAT_ID may issue trading commands --
+    this is a single-operator control channel, not a public bot."""
+    return ENABLED and str(chat_id) == str(_CHAT_ID)
 
 
 def alert_error(context: str, exc: Exception) -> None:
