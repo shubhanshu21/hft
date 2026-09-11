@@ -420,8 +420,8 @@ class DryRunner:
                 is_natgas = "NATGAS" in sym.upper() or "NATURALGAS" in sym.upper()
                 min_ml_l = 0.55 if is_natgas else 0.54
                 max_ml_s = 0.43 if is_natgas else 0.44
-                min_adx = 19.0 if is_natgas else 15.0  # was 24.0/20.0 -- matches backtest_commodity.py's ENTRY_THRESHOLDS (backtested 2026-09-10 improvement)
-                min_vol = 1.40 if is_natgas else 1.10
+                min_adx = 22.0 if is_natgas else 15.0  # natgas was 19.0 -- matches backtest_commodity.py's ENTRY_THRESHOLDS (backtested 2026-09-11: raising natgas' adx/vol bar cut its trade count 23->11 and flipped it from net-loss to net-profit after costs)
+                min_vol = 1.70 if is_natgas else 1.10  # natgas was 1.40 -- same 2026-09-11 backtest
                 min_orb = 0.08 if is_natgas else 0.05
                 min_vwap = 0.08 if is_natgas else 0.05
                 min_stop_pct = 0.0050 if is_natgas else 0.0035
@@ -455,8 +455,8 @@ class DryRunner:
 
                 d  = 1 if direction == "long" else -1
                 sl = round(entry - sdist * d, 2)
-                tp = round(entry + 1.20 * sdist * d, 2)
-                be = round(entry + 0.50 * sdist * d, 2)  # was 0.35 -- matches backtest_commodity.py's BE_ACTIVATION_MULT (backtested 2026-09-10 improvement)
+                tp = round(entry + 1.80 * sdist * d, 2)  # was 1.20 -- matches backtest_commodity.py's TAKE_PROFIT_MULT (backtested 2026-09-11: wider target cut brokerage's share of net PnL by diluting the flat per-trade fee over a bigger win)
+                be = round(entry + 0.60 * sdist * d, 2)  # was 0.50 -- matches backtest_commodity.py's BE_ACTIVATION_MULT (backtested 2026-09-11 improvement)
 
                 ts_tag = now.strftime('%Y%m%d_%H%M%S')
                 pos_id = f"POS_MCX_{ts_tag}_{sym}"
@@ -1004,9 +1004,16 @@ def main():
                 telegram.alert_error(f"Scan #{scan_n} ({market_mode})", exc)
 
             nxt = datetime.now(IST) + timedelta(seconds=args.interval)
-            if nxt > mclose:
-                break
-            secs = max(1, (nxt - datetime.now(IST)).total_seconds())
+            # Sleep to whichever comes first, rather than breaking out the
+            # instant the next scan would overrun close: breaking early left
+            # `now` a couple seconds before mclose, so the outer loop's
+            # `now > mclose` day-rollover check below missed it and re-entered
+            # this loop for one more scan -- duplicating the EOD Telegram
+            # summary and equity-curve photo with identical (no-new-trades)
+            # data. Sleeping past mclose lets the while-condition above exit
+            # this loop naturally, with `now` guaranteed past close.
+            sleep_until = min(nxt, mclose + timedelta(seconds=1))
+            secs = max(1, (sleep_until - datetime.now(IST)).total_seconds())
             print(f"  {GY}Next scan in {secs:.0f}s...{R}", flush=True)
             time.sleep(secs)
 

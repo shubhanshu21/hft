@@ -33,9 +33,9 @@ from strategy.commodity_features import compute_commodity_features
 ARCHIVE_DIR = Path(__file__).resolve().parent / "archive_commodities"
 
 HOLD_BARS = 16
-TAKE_PROFIT_MULT = 1.20
+TAKE_PROFIT_MULT = 1.80  # was 1.20 -- backtested 2026-09-11: on only 1 month of real archive data (2026-08-10 to 2026-09-10, the full history Upstox has for these contracts -- see real_commodity_data.py), a wider target diluted the flat ~Rs47/trade round-trip brokerage over a bigger win, cutting fees from 65% to well under half of gross PnL
 STOP_VOL_MULT = 1.4
-BE_ACTIVATION_MULT = 0.50  # was 0.35 -- backtested 2026-09-10: delaying arming to 50% of the R-multiple toward TP (vs 29% of actual TP distance before) improved both net return and max drawdown over Jan-Sep 2026, see git history for the comparison
+BE_ACTIVATION_MULT = 0.60  # was 0.50 -- same 2026-09-11 backtest, paired with the wider TP above
 TRAIL_DIST_MULT = 0.30
 BE_LOCK_BUFFER_PCT = 0.0020  # was 0.0008 -- same backtest: locking a bigger guaranteed profit on arm outperformed the tighter buffer
 
@@ -44,13 +44,18 @@ BE_LOCK_BUFFER_PCT = 0.0020  # was 0.0008 -- same backtest: locking a bigger gua
 # default -- see README's Crude vs NatGas microstructure comparison.
 ENTRY_THRESHOLDS = {
     "crude":  {"min_ml_l": 0.54, "max_ml_s": 0.44, "min_adx": 15.0, "min_vol": 1.10, "min_orb": 0.05, "min_vwap": 0.05, "min_stop_pct": 0.0035},
-    "natgas": {"min_ml_l": 0.55, "max_ml_s": 0.43, "min_adx": 19.0, "min_vol": 1.40, "min_orb": 0.08, "min_vwap": 0.08, "min_stop_pct": 0.0050},
+    "natgas": {"min_ml_l": 0.55, "max_ml_s": 0.43, "min_adx": 22.0, "min_vol": 1.70, "min_orb": 0.08, "min_vwap": 0.08, "min_stop_pct": 0.0050},
 }
 # min_adx was 20.0/24.0 -- backtested 2026-09-10: lowering by 5 (validated on
 # both Jan-Sep 7 and Jan-Sep 10 ranges, at both 2x and 4x leverage) improved
 # win rate, net profit (+33-58%), and max drawdown simultaneously. Every
 # other lever tried (tighter ML/ADX/volume, TP/stop-distance, hold-bars) was
 # flat-to-worse -- see conversation history / git log for the full sweep.
+# natgas min_adx/min_vol raised again 19.0/1.40 -> 22.0/1.70 on 2026-09-11:
+# NATGASMINI was a net loser after costs (-Rs2,155 on 23 trades) purely from
+# fixed per-trade brokerage outrunning its thin gross edge; raising its bar
+# to only take its highest-conviction setups cut it to 11 trades and flipped
+# it to net +Rs740 -- see conversation history for the full sweep.
 
 
 def run_commodity_backtest(
