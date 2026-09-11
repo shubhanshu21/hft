@@ -60,7 +60,6 @@ class MultiAssetBacktester:
             mult = multipliers.get(sym, 1.0)
             in_pos = False
             open_pos: Optional[Position] = None
-            last_trade_day: Optional[str] = None
 
             if "timestamp" in feat_df.columns:
                 timestamps = feat_df["timestamp"].values
@@ -140,10 +139,6 @@ class MultiAssetBacktester:
                         open_pos = None
                     continue
 
-                # 2. Daily Entry Circuit Breaker (1 trade/day per symbol rule)
-                if c_day == last_trade_day:
-                    continue
-
                 # 3. Generate Signals
                 sig = self.strategy.generate_signal(
                     symbol=sym,
@@ -165,7 +160,6 @@ class MultiAssetBacktester:
 
                     if qty > 0:
                         in_pos = True
-                        last_trade_day = c_day
                         open_pos = Position(
                             position_id=f"POS_{len(self.trades)+1}_{sym}",
                             symbol=sym,

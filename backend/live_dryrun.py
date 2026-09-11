@@ -328,7 +328,6 @@ class DryRunner:
             }
 
         self.trades: list[dict] = []
-        self.last_trade_day: dict[str, str] = {}
         self.today = date.today().isoformat()
 
         # Daily-loss kill switch: halts new entries (existing positions are
@@ -338,16 +337,6 @@ class DryRunner:
         self.trading_day = self.today
         self.day_start_capital = self.capital
         self.kill_switch_active = False
-        if self.is_commodity:
-            # Seed the 1-trade-per-day-per-symbol gate from what's already in the
-            # DB, so a restart mid-day doesn't forget a quota already used today.
-            for t in self.db.get_trades(limit=200, account_id=self.account_id):
-                exit_dt = t.get("exit_dt", "") or ""
-                if exit_dt[:10] == self.today:
-                    self.last_trade_day[t["symbol"]] = self.today
-            for sym, p in self.positions.items():
-                if p["entry_time"].strftime("%Y-%m-%d") == self.today:
-                    self.last_trade_day[sym] = self.today
         logs_dir = Path(__file__).parent / "logs"
         logs_dir.mkdir(exist_ok=True)
         self.log_path = logs_dir / f"dryrun_{self.today}.csv"
@@ -402,9 +391,6 @@ class DryRunner:
                 # backtest_commodity.py's us_session_only=True default, which is
                 # what the validated backtest results were produced with.
                 if mins < 570 or mins > 780:
-                    continue
-
-                if self.last_trade_day.get(sym) == today_str:
                     continue
 
                 # Model probability
@@ -462,8 +448,6 @@ class DryRunner:
                 lots = size_commodity_lots(self.capital, entry, sdist, self.risk_pct, sym, self.leverage)
                 if lots == 0:
                     continue
-
-                self.last_trade_day[sym] = today_str
 
                 multiplier = get_contract_multiplier(sym)
                 qty = lots

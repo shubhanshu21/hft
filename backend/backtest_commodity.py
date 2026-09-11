@@ -156,8 +156,6 @@ def run_commodity_backtest(
         else:
             p_ups = np.full(n, 0.50)
 
-        last_trade_day = None
-
         for i in range(25, n):
             c_price = closes[i]
             c_high  = highs[i]
@@ -226,10 +224,7 @@ def run_commodity_backtest(
 
                 continue
 
-            # 2. Check Trading Session & 1 Trade Per Day Rule
-            if c_day == last_trade_day:
-                continue
-
+            # 2. Check Trading Session
             # US/Evening session runs 18:30 (570 mins) to 22:00 (780 mins)
             if us_session_only and (m_open < 570 or m_open > 780):
                 continue
@@ -296,7 +291,6 @@ def run_commodity_backtest(
             be = round(c_price + BE_ACTIVATION_MULT * sdist * d, 2)
 
             in_pos = True
-            last_trade_day = c_day
             pos = {
                 "direction": direction,
                 "entry_price": c_price,
