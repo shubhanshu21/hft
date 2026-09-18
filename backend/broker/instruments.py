@@ -222,22 +222,6 @@ def resolve_symbols(symbols: list[str]) -> dict[str, str]:
     return result
 
 
-def build_nifty50_map() -> dict[str, str]:
-    """Return {symbol: instrument_key} for Nifty 50 / Nifty Next 50 liquid universe."""
-    nifty50 = [
-        "RELIANCE", "HDFCBANK", "ICICIBANK", "INFY", "TCS", "KOTAKBANK",
-        "LT", "AXISBANK", "SBIN", "HCLTECH", "WIPRO", "BAJFINANCE",
-        "BAJAJFINSV", "SUNPHARMA", "MARUTI", "TATASTEEL", "NTPC", "POWERGRID",
-        "ONGC", "COALINDIA", "ADANIENT", "ADANIPORTS", "HINDALCO", "VEDL",
-        "EICHERMOT", "CANBK", "TITAN", "ITC", "BANKBARODA", "BEL",
-        "HAL", "INDIGO", "TATAPOWER", "PNB", "M&M", "ULTRACEMCO",
-        "GRASIM", "BRITANNIA", "CIPLA", "DRREDDY", "DIVISLAB", "HEROMOTOCO",
-        "TECHM", "NESTLEIND", "APOLLOHOSP", "JSWSTEEL", "BHARTIARTL",
-        "SHRIRAMFIN", "TRENT", "BPCL",
-    ]
-    return resolve_symbols(nifty50)
-
-
 def build_currency_map() -> dict[str, str]:
     """Return {base_symbol: instrument_key} for active NSE currency futures (nearest expiry)."""
     ensure_master()

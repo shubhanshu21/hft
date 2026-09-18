@@ -3,18 +3,24 @@
 cli.py — Master Unified CLI for Multi-Asset Quantitative Trading Framework.
 
 Supports:
-  - Equities (NSE Intraday Scalper)
   - Futures (MCX Commodity LightGBM Scalper)
+  - NSE Currency Derivatives (USDINR/EURINR/GBPINR/JPYINR)
+
+Equity intraday scalping was removed 2026-09-18: even with the full NIFTY50
+universe (50 symbols, real 2022-2026 Upstox data) and disciplined
+train/test-split validation, no threshold/meta-labeling/symbol-selection
+combination survived out-of-sample -- every apparent edge was overfitting
+to the selection window. See git history for the full sweep.
 
 Usage Examples:
     # 1. Backtest MCX Commodities
     python3 cli.py backtest --asset futures --symbols CRUDEOILM NATGASMINI --from 2026-01-01 --to 2026-09-07
 
-    # 2. Backtest NSE Equities
-    python3 cli.py backtest --asset equity --symbols RELIANCE HDFCBANK TCS
+    # 2. Backtest NSE Currency Derivatives (standalone script, not wired into this CLI)
+    python3 backtest_currency.py --symbols USDINR EURINR GBPINR
 
-    # 3. Live Paper-Trading Dryrun (Commodities or Equities)
-    python3 cli.py dryrun --asset futures --capital 100000 --risk-pct 5.0 --interval 30
+    # 3. Live Paper-Trading Dryrun (MCX Commodities + NSE Currency)
+    python3 cli.py dryrun --capital 100000 --risk-pct 5.0 --interval 30
 
     # 4. View SQLite Trade Dashboard & PnL Report
     python3 cli.py report
@@ -54,39 +60,20 @@ from live_dryrun import _load_token
 
 
 def cmd_backtest(args):
-    asset_str = args.asset.lower()
-    symbols = args.symbols
-
-    if asset_str in ("futures", "commodity", "commodities"):
-        from backtest_commodity import run_commodity_backtest
-        res = run_commodity_backtest(
-            symbols=symbols,
-            capital=args.capital,
-            risk_pct=args.risk_pct,
-            leverage=args.leverage,
-            from_date=args.from_date,
-            to_date=args.to_date,
-            us_session_only=not args.full_session,
-            no_ml_filter=args.no_ml_filter,
-        )
-    elif asset_str in ("equity", "equities", "cash"):
-        from backtest_scalper import run_scalper_backtest
-        res = run_scalper_backtest(
-            symbols=symbols,
-            capital=args.capital,
-            risk_pct=args.risk_pct,
-            leverage=args.leverage,
-            top_n=args.top_n or 15,
-            from_date=args.from_date,
-            to_date=args.to_date,
-        )
+    from backtest_commodity import run_commodity_backtest
+    res = run_commodity_backtest(
+        symbols=args.symbols,
+        capital=args.capital,
+        risk_pct=args.risk_pct,
+        leverage=args.leverage,
+        from_date=args.from_date,
+        to_date=args.to_date,
+        us_session_only=not args.full_session,
+        no_ml_filter=args.no_ml_filter,
+    )
 
 
 def cmd_dryrun(args):
-    asset_str = args.asset.lower()
-    is_comm = asset_str in ("futures", "commodity", "commodities")
-
-
     # Delegate to live_dryrun runner
     import subprocess
     cmd = [
@@ -97,10 +84,6 @@ def cmd_dryrun(args):
         "--leverage", str(args.leverage),
         "--interval", str(args.interval),
     ]
-    if is_comm:
-        cmd.append("--commodity")
-    elif args.top_n:
-        cmd.extend(["--top-n", str(args.top_n)])
     if args.symbols:
         cmd.extend(["--symbols"] + args.symbols)
     if args.direction:
@@ -144,9 +127,7 @@ def main():
     # Backtest Subcommand -- defaults come from backend/.env (BACKTEST_* /
     # TRADING_* vars) so `python3 cli.py backtest` needs no flags at all;
     # passing a flag still overrides the .env value for that one run.
-    p_bt = subparsers.add_parser("backtest", help="Run walk-forward backtest on historical data")
-    p_bt.add_argument("--asset", choices=["futures", "equity", "commodity"],
-                       default=_env("BACKTEST_ASSET", "futures"))
+    p_bt = subparsers.add_parser("backtest", help="Run walk-forward backtest on historical MCX commodity data")
     p_bt.add_argument("--symbols", nargs="+", default=_env("BACKTEST_SYMBOLS", "").split() or None,
                        help="Symbols to backtest")
     p_bt.add_argument("--capital", type=float, default=float(_env("TRADING_CAPITAL", "100000.0")),
@@ -160,8 +141,6 @@ def main():
                        help="Start date YYYY-MM-DD")
     p_bt.add_argument("--to", "--to-date", dest="to_date", default=_env("BACKTEST_TO", "") or None,
                        help="End date YYYY-MM-DD")
-    p_bt.add_argument("--top-n", type=int, default=int(_env("BACKTEST_EQUITY_TOP_N", "15")),
-                       help="Equity screener top N")
     p_bt.add_argument("--full-session", action="store_true",
                        default=_env("BACKTEST_FULL_SESSION", "false").lower() in ("1", "true", "yes"),
                        help="Include full session bars (or set BACKTEST_FULL_SESSION=true in .env)")
@@ -175,9 +154,7 @@ def main():
     # Dryrun Subcommand -- defaults come from backend/.env (DRYRUN_* / TRADING_*
     # vars) so `python3 cli.py dryrun` needs no flags at all; passing a flag
     # still overrides the .env value for that one run.
-    p_dr = subparsers.add_parser("dryrun", help="Run live paper-trading dryrun")
-    p_dr.add_argument("--asset", choices=["futures", "equity", "commodity"],
-                       default=_env("DRYRUN_ASSET", "futures"))
+    p_dr = subparsers.add_parser("dryrun", help="Run live paper-trading dryrun (MCX commodities + NSE currency)")
     p_dr.add_argument("--symbols", nargs="+", default=_env("DRYRUN_SYMBOLS", "").split() or None,
                        help="Symbols to watch")
     p_dr.add_argument("--capital", type=float, default=float(_env("TRADING_CAPITAL", "100000.0")),
@@ -191,8 +168,6 @@ def main():
                        help="Scan interval seconds")
     p_dr.add_argument("--direction", choices=["both", "long", "short"],
                        default=_env("TRADING_DIRECTION", "both"))
-    p_dr.add_argument("--top-n", type=int, default=int(_env("DRYRUN_EQUITY_TOP_N", "15")),
-                       help="Equity screener top N (--asset equity only, ignored for commodity)")
     p_dr.set_defaults(func=cmd_dryrun)
 
     # Report Subcommand

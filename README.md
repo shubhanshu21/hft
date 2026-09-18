@@ -88,8 +88,7 @@ backend/
 ├── backtest_natgas_donchian.py      # Donchian trend-following research (negative result, kept for reproducibility)
 ├── backtest_natgas_meanrev.py       # VWAP/RSI mean-reversion research (negative result, kept for reproducibility)
 ├── backtest_natgas_patterns.py      # TA-Lib candlestick/oscillator sweep research (negative result, kept for reproducibility)
-├── backtest_scalper.py              # NSE Equity Momentum Backtest CLI
-├── live_dryrun.py                   # Live 24/7 Paper-Trading Daemon (commodity + currency + equity)
+├── live_dryrun.py                   # Live 24/7 Paper-Trading Daemon (commodity + currency)
 ├── real_commodity_data.py           # Real MCX historical data downloader/top-up (via Upstox)
 └── real_currency_data.py            # Real NSE currency derivatives historical data downloader/top-up (via Upstox, chunked fetch)
 ```
@@ -170,23 +169,19 @@ Everything the CLI needs to run with **zero flags** lives in `backend/.env` (cop
 ### Backtest Defaults (`cli.py backtest`)
 | Variable | Default | Meaning |
 |---|---|---|
-| `BACKTEST_ASSET` | `commodity` | `futures`/`commodity`/`commodities` → MCX; `equity`/`equities`/`cash` → NSE. Currency has no `--asset` value yet — run `backtest_currency.py` directly (see [Unified CLI Cheat Sheet](#unified-cli-cheat-sheet)). |
-| `BACKTEST_SYMBOLS` | *(blank)* | Space-separated symbol override, e.g. `CRUDEOILM GOLDM`. Blank = asset's own default list. |
+| `BACKTEST_SYMBOLS` | *(blank)* | Space-separated MCX symbol override, e.g. `CRUDEOILM GOLDM`. Blank = default list. Currency is backtested standalone — run `backtest_currency.py` directly (see [Unified CLI Cheat Sheet](#unified-cli-cheat-sheet)). |
 | `BACKTEST_RISK_PCT` | `5.0` | Risk % per trade. |
 | `BACKTEST_LEVERAGE` | `4.0` | Margin leverage for backtests specifically. Blank = fall back to `INTRADAY_LEVERAGE`. |
 | `BACKTEST_FROM` / `BACKTEST_TO` | *(blank)* | `YYYY-MM-DD` date range. Blank = full available history. |
-| `BACKTEST_EQUITY_TOP_N` | `15` | Screener size when `--asset equity` and no explicit symbols. |
-| `BACKTEST_FULL_SESSION` | `true` | Commodity only: `true` = full 10:00–22:30 IST session (more total profit, more trades, lower win rate); `false` = evening US-overlap window only (18:30–22:00 IST, fewer/cleaner trades). |
+| `BACKTEST_FULL_SESSION` | `true` | `true` = full 10:00–22:30 IST session (more total profit, more trades, lower win rate); `false` = evening US-overlap window only (18:30–22:00 IST, fewer/cleaner trades). |
 | `BACKTEST_USE_ML_FILTER` | `false` | Commodity only: drop the ML `p_up` condition, keep every other rule-based filter. The ML filter underperformed rule-based-only on real data as of 2026-09-10; revisit once the real archive is substantially larger. |
 
 ### Dry Run Defaults (`cli.py dryrun`)
 | Variable | Default | Meaning |
 |---|---|---|
-| `DRYRUN_ASSET` | `commodity` | `commodity` and `equity` are fully wired for live paper trading. |
 | `DRYRUN_RISK_PCT` | `10.0` | Risk % per trade. |
 | `DRYRUN_LEVERAGE` | `7.0` | Margin leverage for live dry run specifically. Blank = fall back to `INTRADAY_LEVERAGE`. |
 | `DRYRUN_INTERVAL` | `30` | Scan interval, seconds. |
-| `DRYRUN_EQUITY_TOP_N` | `15` | Screener size for `--asset equity`. Ignored for commodity. |
 | `DRYRUN_SYMBOLS` | `CRUDEOILM GOLDM USDINR EURINR GBPINR` | Space-separated symbol override. Currency pairs are auto-detected by symbol name (`USDINR`/`EURINR`/`GBPINR`/`JPYINR`) and routed to the currency cost model + 09:00-17:00 session automatically — no separate `--asset currency` flag needed, just list them alongside commodity symbols. |
 | `DRYRUN_FULL_SESSION` | `true` | See [Session window](#session-window) above. |
 | `DRYRUN_USE_ML_FILTER` | `false` | Mirrors `BACKTEST_USE_ML_FILTER`. |
@@ -211,52 +206,49 @@ Blank = alerts silently disabled, everything else runs fine without them. See [T
 
 All commands below assume you're in `backend/` with the venv active (or just call `.venv/bin/python3`, which `cli.py` also auto-re-execs into if you run it with the system Python). Every flag shown has an `.env` equivalent from the table above — omit the flag to use whatever's in `.env`.
 
-### 1. `cli.py backtest` — Walk-forward backtest on historical data
+### 1. `cli.py backtest` — Walk-forward backtest on historical MCX commodity data
 
 ```bash
-python3 cli.py backtest [--asset {futures,commodity,equity}] [--symbols SYM [SYM ...]]
+python3 cli.py backtest [--symbols SYM [SYM ...]]
                          [--capital N] [--risk-pct N] [--leverage N]
                          [--from YYYY-MM-DD] [--to YYYY-MM-DD]
-                         [--top-n N] [--full-session]
+                         [--full-session]
 ```
 | Flag | Meaning |
 |---|---|
-| `--asset` | `futures`/`commodity` → `backtest_commodity.py`'s MCX scalper. `equity`/`cash` → `backtest_scalper.py`'s NSE scalper. |
-| `--symbols` | Override the asset's default symbol list. |
+| `--symbols` | Override the default MCX symbol list. NSE currency is backtested standalone via `backtest_currency.py` (see #6 below) — not wired into this command. |
 | `--capital` | Starting capital in ₹. |
 | `--risk-pct` | Risk % of capital per trade. |
 | `--leverage` | MIS margin leverage multiplier. |
 | `--from` / `--to` | Date range filter (`--from-date`/`--to-date` also accepted). |
-| `--top-n` | Equity screener size (ignored for commodity). |
-| `--full-session` | Commodity only — trade the full 10:00–22:30 IST session instead of just the evening US-overlap window. |
+| `--full-session` | Trade the full 10:00–22:30 IST session instead of just the evening US-overlap window. |
 
 ```bash
 # Examples
 python3 cli.py backtest                                                  # everything from .env
-python3 cli.py backtest --asset futures --symbols CRUDEOILM GOLDM --from 2026-08-17 --to 2026-09-17
-python3 cli.py backtest --asset equity --symbols RELIANCE INFY TCS
+python3 cli.py backtest --symbols CRUDEOILM GOLDM --from 2026-08-17 --to 2026-09-17
 ```
 
 ### 2. `cli.py dryrun` — Live paper-trading (delegates to `live_dryrun.py`)
 
 ```bash
-python3 cli.py dryrun [--asset {futures,commodity,equity}] [--symbols SYM [SYM ...]]
+python3 cli.py dryrun [--symbols SYM [SYM ...]]
                        [--capital N] [--risk-pct N] [--leverage N]
-                       [--interval N] [--direction {both,long,short}] [--top-n N]
+                       [--interval N] [--direction {both,long,short}]
 ```
+Always trades MCX commodities + NSE currency together in one daemon (`CRUDEOILM`/`GOLDM`/`USDINR`/`EURINR`/`GBPINR` by default) — each symbol's own session window (MCX 09:00–23:30 IST, currency 09:00–17:00 IST) is handled automatically per-symbol inside the daemon.
+
 | Flag | Meaning |
 |---|---|
-| `--asset` | `futures`/`commodity` → MCX 5-min scalper (`CRUDEOILM`/`GOLDM` by default). `equity` → NSE 5-min scalper (screener top-N, 09:15–15:30 IST). |
 | `--symbols` | Override the default watchlist. |
 | `--interval` | Scan interval, seconds. |
 | `--direction` | Restrict to `long` or `short` only, or `both`. |
-| `--top-n` | Equity screener size, ignored for commodity. |
 
 ```bash
 # Examples
 python3 cli.py dryrun                                    # everything from .env — this is what the systemd service runs
-python3 cli.py dryrun --asset commodity --interval 30
-python3 cli.py dryrun --asset equity --top-n 10 --direction long
+python3 cli.py dryrun --interval 30
+python3 cli.py dryrun --direction long
 python3 cli.py dryrun --report                            # dashboard + equity curve chart, no trading
 ```
 
@@ -283,14 +275,13 @@ Useful when you need a flag `cli.py dryrun` doesn't expose yet (`--long-only`, `
 
 ```bash
 python3 live_dryrun.py [--token TOKEN] [--capital N] [--risk-pct N] [--leverage N]
-                        [--top-n N] [--symbols SYM [SYM ...]] [--db PATH] [--account ID]
-                        [--commodity] [--long-only] [--direction {both,long,short}]
+                        [--symbols SYM [SYM ...]] [--db PATH] [--account ID]
+                        [--long-only] [--direction {both,long,short}]
                         [--interval N] [--report] [--reset-db]
 ```
 | Flag | Meaning |
 |---|---|
 | `--token` | Explicit Upstox access token (otherwise loaded from config/cache/`.env`/auto-login, in that order). |
-| `--commodity` | Switch to MCX mode. Omit for the NSE equity scalper. |
 | `--long-only` | Skip all short setups regardless of `--direction`. |
 | `--db` / `--account` | Point at a specific SQLite file / account ID — useful for running multiple independent paper accounts side by side (each gets its own [process lock](#safety-features-dry-run)). |
 | `--report` | Print the dashboard and save the equity curve chart, then exit — no trading. |
@@ -298,12 +289,12 @@ python3 live_dryrun.py [--token TOKEN] [--capital N] [--risk-pct N] [--leverage 
 
 ```bash
 # Examples
-python3 live_dryrun.py --commodity --capital 100000 --risk-pct 10.0 --leverage 7.0 --interval 30
-python3 live_dryrun.py --report --commodity --account DRYRUN_ACCOUNT
+python3 live_dryrun.py --capital 100000 --risk-pct 10.0 --leverage 7.0 --interval 30
+python3 live_dryrun.py --report --account DRYRUN_ACCOUNT
 python3 live_dryrun.py --reset-db --capital 100000
 ```
 
-### 6. Backtest scripts directly (`backtest_commodity.py`, `backtest_scalper.py`)
+### 6. Backtest scripts directly (`backtest_commodity.py`, `backtest_currency.py`)
 
 Same engines `cli.py backtest` delegates to, callable directly when you want their full native flag set:
 
@@ -316,11 +307,6 @@ python3 backtest_commodity.py --symbols CRUDEOILM --capital 100000 --risk-pct 10
 # NSE Currency Derivatives Scalper
 python3 backtest_currency.py --symbols USDINR --capital 100000 --risk-pct 10.0 --leverage 7.0
 python3 backtest_currency.py --symbols USDINR EURINR GBPINR --capital 100000 --risk-pct 10.0 --leverage 7.0
-
-# NSE Equity Scalper
-python3 backtest_scalper.py --symbols RELIANCE HDFCBANK TCS INFY --capital 100000 --risk-pct 2.5 --leverage 4.0
-python3 backtest_scalper.py --screener --top-n 5 --capital 100000 --risk-pct 2.5 --leverage 4.0
-python3 backtest_scalper.py --screener --top-n 5 --long-only --capital 100000 --risk-pct 2.5
 ```
 
 ---
@@ -489,7 +475,7 @@ python3 -m real_commodity_data --topup     # incremental: fetch only candles new
 
 Symbols covered: `CRUDEOILM`/`CRUDEOIL`, `GOLDM`/`GOLD`, `SILVERMIC`/`SILVER`, `COPPER` (base-symbol and mini-contract archive files are kept aligned — `train_commodity.py`/`backtest_commodity.py` look up whichever name they're given via an alias map).
 
-**NSE currency derivatives** (`archive_currency/*.csv`, via `real_currency_data.py`) hit the same real-data wall — same ~1-month-per-contract cap, verified the same way (a wide single-call request to Upstox's history API was found to silently truncate instead of erroring; `real_currency_data.py` fetches in small chunks and unions the results rather than trusting one wide call). No free third-party dataset fills this gap either — checked GitHub and Kaggle directly (2026-09-18): the one GitHub source this project already uses for equity's pre-2022 daily warm-up (`ShabbirHasan1/NSE-Data`) has no currency segment at all, and `jugaad-data`'s official-NSE-bhavcopy library doesn't cover currency derivatives in its roadmap either. Real data here, same as MCX, only grows one real day at a time via the daily top-up job.
+**NSE currency derivatives** (`archive_currency/*.csv`, via `real_currency_data.py`) hit the same real-data wall — same ~1-month-per-contract cap, verified the same way (a wide single-call request to Upstox's history API was found to silently truncate instead of erroring; `real_currency_data.py` fetches in small chunks and unions the results rather than trusting one wide call). No free third-party dataset fills this gap either — checked GitHub and Kaggle directly (2026-09-18): `ShabbirHasan1/NSE-Data` has no currency segment at all, and `jugaad-data`'s official-NSE-bhavcopy library doesn't cover currency derivatives in its roadmap either. Real data here, same as MCX, only grows one real day at a time via the daily top-up job.
 
 ```bash
 python3 -m real_currency_data           # full initial backfill, all 4 pairs, all 4 intervals
@@ -500,17 +486,17 @@ python3 -m real_currency_data --topup     # incremental (what the daily timer ru
 
 ## Statutory Taxation & Friction Schedule
 
-| Cost Head | MCX Futures (`CRUDEOILM`) | NSE Currency Derivatives | NSE Equity (Intraday) |
-|---|---|---|---|
-| **CTT / STT** | **0.010%** on Sell turnover | **None — exempt** | **0.025%** on Sell turnover |
-| **Brokerage** | **₹20 flat cap** per order leg | **₹20 flat cap** per order leg | **₹20 flat cap** per order leg |
-| **Stamp Duty** | **0.002%** on Buy turnover | **0.0001%** (₹10/crore) on Buy turnover | **0.003%** on Buy turnover |
-| **Exchange Turnover** | **0.0021%** on total turnover | **0.0009%** on total turnover | **0.00325%** on total turnover |
-| **SEBI Regulatory Fee** | **₹10 per Crore** (0.0001%) | **₹10 per Crore** (0.0001%) | **₹10 per Crore** (0.0001%) |
-| **GST** | **18%** on (Brokerage + Exch + SEBI) | **18%** on (Brokerage + Exch + SEBI) | **18%** on (Brokerage + Exch + SEBI) |
-| **Slippage Buffer** | **½-tick per leg** | **½-tick per leg** | **½-tick per leg** |
+| Cost Head | MCX Futures (`CRUDEOILM`) | NSE Currency Derivatives |
+|---|---|---|
+| **CTT / STT** | **0.010%** on Sell turnover | **None — exempt** |
+| **Brokerage** | **₹20 flat cap** per order leg | **₹20 flat cap** per order leg |
+| **Stamp Duty** | **0.002%** on Buy turnover | **0.0001%** (₹10/crore) on Buy turnover |
+| **Exchange Turnover** | **0.0021%** on total turnover | **0.0009%** on total turnover |
+| **SEBI Regulatory Fee** | **₹10 per Crore** (0.0001%) | **₹10 per Crore** (0.0001%) |
+| **GST** | **18%** on (Brokerage + Exch + SEBI) | **18%** on (Brokerage + Exch + SEBI) |
+| **Slippage Buffer** | **½-tick per leg** | **½-tick per leg** |
 
-Currency derivatives carry the lightest friction of the three — no STT/CTT at all, and a much lower stamp duty (reduced from ₹200/crore to ₹10/crore specifically for currency & interest-rate derivatives).
+Currency derivatives carry the lighter friction of the two — no STT/CTT at all, and a much lower stamp duty (reduced from ₹200/crore to ₹10/crore specifically for currency & interest-rate derivatives).
 
 ---
 
