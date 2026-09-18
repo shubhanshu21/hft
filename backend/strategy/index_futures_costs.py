@@ -22,6 +22,13 @@ from __future__ import annotations
 
 import math
 
+# See strategy/commodity_costs.py's RATES_LAST_VERIFIED comment -- same
+# freshness discipline, checked by tests/test_rate_freshness.py. Also covers
+# lot_size/tick_size above, which NSE revises periodically (most recently
+# Jan 2026) -- these were pulled from Upstox's live instrument master, not
+# hand-typed, but that master should be re-checked on the same cadence.
+RATES_LAST_VERIFIED = "2026-09-18"
+
 INDEX_FUTURES_SPECS = {
     "NIFTY": {"name": "NIFTY 50 Futures", "lot_size": 65, "tick_size": 0.1},
     "BANKNIFTY": {"name": "NIFTY Bank Futures", "lot_size": 30, "tick_size": 0.2},

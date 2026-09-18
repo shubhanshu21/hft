@@ -60,6 +60,16 @@ from strategy.currency_costs import (
 
 _CURRENCY_SYMBOLS = {"USDINR", "EURINR", "GBPINR", "JPYINR"}
 
+# Per-symbol risk-per-trade override (falls back to --risk-pct/DRYRUN_RISK_PCT
+# for anything not listed). SILVER re-added 2026-09-18 at half the account
+# default: its recalibrated thresholds passed a real train/test OOS split
+# (unlike crude's current thresholds, which didn't -- see
+# backtest_commodity.py's ENTRY_THRESHOLDS["crude"] comment) but only on a
+# single split with a meaningfully higher test-window drawdown (35.1%) than
+# gold's (~7%) -- sized down until it has real live experience behind it,
+# not treated as equally trusted as gold/crude yet.
+_SYMBOL_RISK_PCT_OVERRIDE = {"SILVER": 5.0}
+
 
 def _is_currency(sym: str) -> bool:
     return sym.upper() in _CURRENCY_SYMBOLS
@@ -68,6 +78,8 @@ def _is_currency(sym: str) -> bool:
 from strategy.commodity_features import (
     compute_commodity_features, COMMODITY_FEATURE_COLUMNS
 )
+from backtest_commodity import ENTRY_THRESHOLDS as COMMODITY_ENTRY_THRESHOLDS
+from backtest_currency import ENTRY_THRESHOLDS as CURRENCY_ENTRY_THRESHOLDS, _MIN_ORB as CURRENCY_MIN_ORB
 from broker.instruments import build_mcx_commodity_map, build_currency_map, ensure_master, get_instrument_key
 from utils.logger import get_logger, setup_logger
 from utils import telegram
@@ -80,14 +92,28 @@ DEFAULT_SCAN_INTERVAL_SECONDS = 60  # 1-minute scan for fast SL/TP trailing & ne
 DEFAULT_RISK_PCT = 5.0
 DEFAULT_LEVERAGE = 4.0
 
-try:
-    SYMBOL_MAP: dict[str, str] = {**build_mcx_commodity_map(), **build_currency_map()}
-except Exception as _e:
-    log.warning("Could not load Upstox master; falling back to hardcoded keys: %s", _e)
-    SYMBOL_MAP = {
-        **build_mcx_commodity_map(),
-        **build_currency_map(),
-    }
+def _build_symbol_map() -> dict[str, str]:
+    """Resolves the current nearest-expiry instrument_key for every MCX
+    commodity + NSE currency base symbol. MCX/currency contracts are
+    monthly-expiry (see real_commodity_data.py/real_currency_data.py
+    docstrings) -- calling this again after a contract has rolled picks up
+    the new one automatically, since build_mcx_commodity_map()/
+    build_currency_map() always select whichever expiry is nearest >=
+    today at call time. Must be re-called periodically (see main()'s
+    day-rollover loop) -- a value cached once at process startup would
+    silently keep resolving an expired instrument_key for as long as the
+    process runs without restarting."""
+    try:
+        return {**build_mcx_commodity_map(), **build_currency_map()}
+    except Exception as _e:
+        log.warning("Could not load Upstox master; falling back to hardcoded keys: %s", _e)
+        return {
+            **build_mcx_commodity_map(),
+            **build_currency_map(),
+        }
+
+
+SYMBOL_MAP: dict[str, str] = _build_symbol_map()
 
 # Terminal colours
 R = "\033[0m"; BOLD = "\033[1m"
@@ -210,6 +236,13 @@ class DryRunner:
         # filter. Toggle via DRYRUN_USE_ML_FILTER in .env once that changes
         # (e.g. after the real archive has grown substantially) -- see
         # conversation/git history for the full comparison.
+        # Re-verified 2026-09-18 after retraining all commodity models fresh
+        # (fixing an unrelated 28-vs-33-feature schema incompatibility that
+        # was making every predict_proba() call silently fall back to 0.50
+        # anyway) -- precision-at-threshold is still poor: crude 28.1%@0.55
+        # (best of the lot), gold 1.9%@0.55 (worse than random), silver 3.1%.
+        # Same conclusion holds; still not enough real data for ML to add
+        # value over the rule-based filter alone.
         self.use_ml_filter = os.environ.get("DRYRUN_USE_ML_FILTER", "true").lower() in ("1", "true", "yes")
 
         # Load commodity ML models
@@ -278,6 +311,32 @@ class DryRunner:
         self.day_start_capital = self.capital
         self.kill_switch_active = False
 
+        # Per-symbol daily-loss kill switch, same MAX_DAILY_LOSS_PCT threshold
+        # but tracked per symbol against that symbol's own realized PnL today --
+        # added 2026-09-18 so one symbol having a genuinely bad day (e.g. crude
+        # hitting a bad regime, see backtest_commodity.py's ENTRY_THRESHOLDS
+        # comment) doesn't halt entries account-wide for symbols that are fine.
+        # The existing account-wide switch above still exists as the final
+        # backstop for a bad day across the whole book.
+        self.symbol_daily_pnl: dict[str, float] = {s: 0.0 for s in self.symbols}
+        self.symbol_kill_switch: dict[str, bool] = {s: False for s in self.symbols}
+
+        # Real bid-ask spread sampling (added 2026-09-18): every cost model in
+        # this project assumes a flat half-tick-per-leg slippage guess, never
+        # measured against a real order book. A one-off check found real
+        # spreads running 2x-29x wider than that assumption across every live
+        # symbol at that moment (CRUDEOILM 4x, GOLDM 25x, USDINR 3x, EURINR 2x,
+        # GBPINR 29x) -- consistent enough across symbols to be a real signal,
+        # not a fluke, but one snapshot isn't a distribution. This logs a real
+        # sample (throttled to once per SPREAD_SAMPLE_INTERVAL_MIN per symbol,
+        # not every scan, to stay well under API rate limits) to
+        # logs/spread_samples.csv so a genuine empirical slippage model can
+        # eventually replace the flat guess -- accumulates automatically as
+        # this daemon runs, no separate job needed.
+        self.spread_sample_interval_min = float(os.environ.get("SPREAD_SAMPLE_INTERVAL_MIN", "5"))
+        self._last_spread_sample: dict[str, datetime] = {}
+        self.spread_log_path = Path(__file__).parent / "logs" / "spread_samples.csv"
+
         # Manual Telegram kill switch -- separate from the automatic daily-loss
         # one above. Loaded from disk so a "stop" sent before a restart is
         # still honored after it.
@@ -285,6 +344,35 @@ class DryRunner:
         logs_dir = Path(__file__).parent / "logs"
         logs_dir.mkdir(exist_ok=True)
         self.log_path = logs_dir / f"dryrun_{self.today}.csv"
+
+    # ---- real spread sampling (see __init__'s comment) -----------------------
+    def _maybe_sample_spread(self, sym: str, now: datetime) -> None:
+        last = self._last_spread_sample.get(sym)
+        if last is not None and (now - last).total_seconds() < self.spread_sample_interval_min * 60:
+            return
+        self._last_spread_sample[sym] = now
+        ikey = SYMBOL_MAP.get(sym)
+        if not ikey:
+            return
+        try:
+            depth = self.broker.get_market_depth(ikey)
+        except Exception:
+            return
+        if not depth:
+            return
+        bid = depth["buy"][0]["price"] if depth.get("buy") else 0.0
+        ask = depth["sell"][0]["price"] if depth.get("sell") else 0.0
+        if not bid or not ask or ask <= bid:
+            return
+        spread = ask - bid
+        mid = (bid + ask) / 2
+        spread_pct = spread / mid * 100 if mid else 0.0
+        is_new = not self.spread_log_path.exists()
+        with open(self.spread_log_path, "a", newline="") as f:
+            w = csv.writer(f)
+            if is_new:
+                w.writerow(["timestamp", "symbol", "bid", "ask", "spread", "mid", "spread_pct"])
+            w.writerow([now.isoformat(), sym, bid, ask, round(spread, 4), round(mid, 4), round(spread_pct, 4)])
 
     # ---- scan ---------------------------------------------------------------
     def scan(self) -> list[dict]:
@@ -294,6 +382,8 @@ class DryRunner:
             self.trading_day = today_str
             self.day_start_capital = self.capital
             self.kill_switch_active = False
+            self.symbol_daily_pnl = {s: 0.0 for s in self.symbols}
+            self.symbol_kill_switch = {s: False for s in self.symbols}
 
         if self.day_start_capital > 0:
             daily_loss_pct = (self.day_start_capital - self.capital) / self.day_start_capital * 100
@@ -310,10 +400,11 @@ class DryRunner:
 
         signals = []
         for sym in self.symbols:
+            self._maybe_sample_spread(sym, now)
             if sym in self.positions:
                 self._maybe_exit(sym, now)
                 continue
-            if self.kill_switch_active or not self.trading_enabled:
+            if self.kill_switch_active or self.symbol_kill_switch.get(sym, False) or not self.trading_enabled:
                 continue
             candles = _fetch_candles(self.broker, sym, self.today)
             if not candles or len(candles) < 25:
@@ -376,84 +467,30 @@ class DryRunner:
             entry = float(row["close"])
             atr = float(row.get("atr", 0.005 * entry))
 
-            # Asset-calibrated parameter profiles (matches backtest_commodity.py's
-            # ENTRY_THRESHOLDS dict exactly -- keep these two in sync by hand since
-            # live_dryrun.py duplicates the values as literals rather than importing
-            # the dict, same convention as the ML-filter/full-session flags above).
+            # Asset-calibrated parameter profiles -- imported directly from
+            # backtest_commodity.py's / backtest_currency.py's own ENTRY_THRESHOLDS
+            # dicts (see top of file) rather than duplicated as hand-copied literals.
+            # This used to be "keep these two in sync by hand" -- a real, admitted
+            # drift risk that never actually got a corresponding test. Importing the
+            # single source of truth eliminates the risk structurally instead.
             is_natgas = "NATGAS" in sym.upper() or "NATURALGAS" in sym.upper()
             is_gold = "GOLD" in sym.upper()
             is_silver = "SILVER" in sym.upper()
             if is_curr:
-                # Per-pair calibrated 2026-09-18 -- see backtest_currency.py's
-                # ENTRY_THRESHOLDS comment for the full 375-combo-per-pair sweep.
-                # USDINR/GBPINR: 100% of credible (>=15 trade) combos profitable.
-                # EURINR: 56%. JPYINR: unvalidated (not enough real days yet to
-                # reach 15 trades in any combo) -- included on a placeholder,
-                # revisit once its archive grows. min_ml_l/max_ml_s unused (no
-                # trained model exists for currency; ml_long_ok/ml_short_ok below
-                # are neutral via self.use_ml_filter same as commodity when no
-                # model is loaded).
+                # min_ml_l/max_ml_s unused for currency (no trained model exists;
+                # ml_long_ok/ml_short_ok below are neutral via self.use_ml_filter,
+                # same as commodity when no model is loaded).
+                _et = CURRENCY_ENTRY_THRESHOLDS.get(sym.upper(), CURRENCY_ENTRY_THRESHOLDS["USDINR"])
                 min_ml_l, max_ml_s = 0.54, 0.44
-                # tp_mult/stop_mult added 2026-09-18: a follow-up 40-combo-per-pair
-                # sweep of take-profit/stop-distance multipliers (previously the
-                # commodity-shared 1.80/1.4 below) found a clean win for all three
-                # live pairs -- better win rate, net PnL, AND profit factor at once.
-                # See backtest_currency.py's ENTRY_THRESHOLDS comment for the numbers.
-                _curr_et = {
-                    "USDINR": (15.0, 1.0, 0.04, 0.004, 2.6, 2.0),
-                    "EURINR": (10.0, 1.1, 0.06, 0.008, 3.0, 1.0),
-                    "GBPINR": (10.0, 1.0, 0.04, 0.008, 2.2, 1.0),
-                    "JPYINR": (12.0, 1.3, 0.05, 0.008, 1.80, 1.4),  # unvalidated, left on the old shared default
-                }.get(sym.upper(), (12.0, 1.3, 0.05, 0.008, 1.80, 1.4))
-                min_adx, min_vol, min_vwap, min_ema_slope, tp_mult, stop_mult = _curr_et
-                min_orb, min_stop_pct = 0.05, 0.0006
-            elif is_natgas:
-                min_ml_l, max_ml_s = 0.55, 0.43
-                min_adx, min_vol = 22.0, 1.70   # natgas was 19.0/1.40 -- backtested 2026-09-11: raising the bar cut trade count 23->11 and flipped net-loss to net-profit after costs
-                min_orb, min_vwap, min_stop_pct = 0.08, 0.08, 0.0050
-                min_ema_slope = 0.050
-                tp_mult, stop_mult = 1.80, 1.4  # commodity default, see the tp/sl computation below
-            elif is_gold:
-                # Added 2026-09-17: GOLDM surveyed on the real 32-day archive came
-                # back 141/144 credible (>=15 trade) combos profitable (98%) --
-                # a robust result, unlike natgas's 0/51. See
-                # backtest_commodity.py's ENTRY_THRESHOLDS["gold"] comment for the
-                # full sweep.
-                min_ml_l, max_ml_s = 0.54, 0.44
-                min_adx, min_vol = 12.0, 1.30
-                min_orb, min_vwap, min_stop_pct = 0.05, 0.05, 0.0035
-                min_ema_slope = 0.050
-                # tp_mult/stop_mult updated 2026-09-18: a follow-up 40-combo TP/stop
-                # sweep found tp=1.0/stop=1.7 a clean win over the commodity-default
-                # 1.80/1.4 on every metric -- win rate 69.2%->69.8%, net
-                # +Rs58,795->+Rs70,766 (+20.4%), max DD 7.89%->7.03% (also better).
-                tp_mult, stop_mult = 1.00, 1.7
-            elif is_silver:
-                # Added 2026-09-18: SILVER surveyed on the real 32-day archive came
-                # back 231/231 credible (>=15 trade) combos profitable (100%) --
-                # as robust as gold's own 98%. See backtest_commodity.py's
-                # ENTRY_THRESHOLDS["silver"] comment for the full sweep, including
-                # the TP/stop follow-up that found tp=1.0/stop=2.0 a clean win.
-                min_ml_l, max_ml_s = 0.54, 0.44
-                min_adx, min_vol = 10.0, 1.70
-                min_orb, min_vwap, min_stop_pct = 0.05, 0.05, 0.0035
-                min_ema_slope = 0.030
-                tp_mult, stop_mult = 1.00, 2.0
-            else:  # crude, and default/fallback for anything not yet dedicated-calibrated
-                min_ml_l, max_ml_s = 0.54, 0.44
-                # min_adx raised 15.0->18.0 2026-09-17 -- see backtest_commodity.py's
-                # ENTRY_THRESHOLDS["crude"] comment: clean win on every metric (win rate,
-                # net PnL, and max DD all improved at once) on a 192-combo real sweep.
-                min_adx, min_vol = 18.0, 1.10
-                min_orb, min_vwap, min_stop_pct = 0.05, 0.05, 0.0035
-                # Was a hardcoded 0.010 literal (all symbols) until 2026-09-17 --
-                # see backtest_commodity.py's ENTRY_THRESHOLDS comment for the
-                # root-caused loss day and the backtest sweep that motivated
-                # raising it to 0.05 (commodity-scale only -- currency uses its
-                # own much smaller values above, its intraday moves are an order
-                # of magnitude calmer).
-                min_ema_slope = 0.050
-                tp_mult, stop_mult = 1.80, 1.4  # commodity default, see the tp/sl computation below
+                min_orb, min_stop_pct = CURRENCY_MIN_ORB, _et["min_stop_pct"]
+            else:
+                _key = "natgas" if is_natgas else "gold" if is_gold else "silver" if is_silver else "crude"
+                _et = COMMODITY_ENTRY_THRESHOLDS[_key]
+                min_ml_l, max_ml_s = _et["min_ml_l"], _et["max_ml_s"]
+                min_orb, min_stop_pct = _et["min_orb"], _et["min_stop_pct"]
+            min_adx, min_vol, min_vwap = _et["min_adx"], _et["min_vol"], _et["min_vwap"]
+            min_ema_slope = _et["min_ema_slope"]
+            tp_mult, stop_mult = _et["tp_mult"], _et["stop_mult"]
 
             sdist = max(stop_mult * atr, min_stop_pct * entry)
             if sdist <= 0 or entry <= 0:
@@ -474,10 +511,11 @@ class DryRunner:
             if self.direction_filter != "both" and direction != self.direction_filter:
                 continue
 
+            sym_risk_pct = _SYMBOL_RISK_PCT_OVERRIDE.get(sym.upper(), self.risk_pct)
             if is_curr:
-                lots = size_currency_lots(self.capital, entry, sdist, self.risk_pct, sym, self.leverage)
+                lots = size_currency_lots(self.capital, entry, sdist, sym_risk_pct, sym, self.leverage)
             else:
-                lots = size_commodity_lots(self.capital, entry, sdist, self.risk_pct, sym, self.leverage)
+                lots = size_commodity_lots(self.capital, entry, sdist, sym_risk_pct, sym, self.leverage)
             if lots == 0:
                 continue
 
@@ -623,6 +661,21 @@ class DryRunner:
         net_pnl = cost_info["net"]
         gross_pnl = cost_info["gross"]
         self.capital += net_pnl
+
+        # Per-symbol daily-loss kill switch (see __init__'s comment) --
+        # tracked independently of the account-wide one above.
+        self.symbol_daily_pnl[sym] = self.symbol_daily_pnl.get(sym, 0.0) + net_pnl
+        if not self.symbol_kill_switch.get(sym, False) and self.day_start_capital > 0:
+            sym_loss_pct = -self.symbol_daily_pnl[sym] / self.day_start_capital * 100
+            if sym_loss_pct >= self.max_daily_loss_pct:
+                self.symbol_kill_switch[sym] = True
+                print(f"\n{BOLD}{RED}!! {sym} DAILY LOSS LIMIT HIT ({sym_loss_pct:.2f}% >= "
+                      f"{self.max_daily_loss_pct}%) -- new {sym} entries halted for today, "
+                      f"other symbols unaffected. !!{R}\n")
+                telegram.send(
+                    f"🛑 <b>{sym} DAILY LOSS LIMIT HIT</b> — {sym_loss_pct:.2f}% (limit {self.max_daily_loss_pct}%)\n"
+                    f"New {sym} entries halted for the rest of today. Other symbols continue normally."
+                )
 
         # 2. Record Virtual Exit Order in DB
         ts_tag = now.strftime('%Y%m%d_%H%M%S')
@@ -931,6 +984,20 @@ def main():
                 next_day += timedelta(days=1)
             mopen  = mopen.replace(year=next_day.year, month=next_day.month, day=next_day.day)
             mclose = mclose.replace(year=next_day.year, month=next_day.month, day=next_day.day)
+
+            # Refresh instrument_key resolution once per trading-day rollover --
+            # not just at process startup -- so a monthly contract expiry is
+            # picked up within a day instead of depending on the weekly
+            # finetune job's incidental restart to notice it (found 2026-09-18).
+            global SYMBOL_MAP
+            fresh_map = _build_symbol_map()
+            changed = {k: v for k, v in fresh_map.items() if SYMBOL_MAP.get(k) != v}
+            if changed:
+                log.info("Instrument key(s) rolled over: %s", changed)
+                telegram.send(f"🔄 <b>CONTRACT ROLLOVER</b> — {len(changed)} instrument key(s) updated: "
+                              f"{', '.join(changed.keys())}")
+            SYMBOL_MAP.clear()
+            SYMBOL_MAP.update(fresh_map)
 
         runner.today = mopen.strftime("%Y-%m-%d")
         runner.log_path = Path(__file__).parent / "logs" / f"dryrun_{runner.today}.csv"

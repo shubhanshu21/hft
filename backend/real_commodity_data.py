@@ -8,17 +8,25 @@ trades) with genuine historical candles fetched from Upstox's own History
 API -- the same broker this bot already authenticates and live-trades
 through, so no new credentials/account are needed.
 
-IMPORTANT CONSTRAINT (verified empirically 2026-09-10): MCX commodity
-futures are monthly-expiry contracts, not continuously-listed instruments
-like equities. Upstox's real history for the CURRENT active contract only
-reaches back to that contract's own listing date -- for CRUDEOILM/
-NATGASMINI right now that's 2026-08-10, i.e. ~1 month of genuine history,
-not years. Requesting a from_date before the contract's listing date
-returns zero candles (not a partial/clipped result), so this always
-starts from the earliest date that actually returns data rather than
-assuming a fixed lookback window. This same ~1-month cap applies to every
-interval below (1min/5min/15min/1day all come from the same underlying
-contract) -- daily bars don't get more history, just fewer, coarser rows.
+IMPORTANT CONSTRAINT: MCX commodity futures are monthly-expiry contracts,
+not continuously-listed instruments like equities -- real history for the
+CURRENT active contract only reaches back to that contract's own listing
+date, not years. This same cap applies to every interval below (1min/5min/
+15min/1day all come from the same underlying contract) -- daily bars don't
+get more history, just fewer, coarser rows.
+
+CORRECTED 2026-09-18: the ~1-month figure quoted here until now (and the
+binary-search-for-earliest-date approach this module used to use) was
+itself partly an artifact of a separate bug, not the true contract-listing
+constraint -- a single wide from=/to= Upstox history call silently returns
+only a small recent slice instead of erroring, the same class of bug found
+independently for currency/index-futures/Binance funding-rate data. Fixed
+by routing through data.candles.fetch_real_history_backward's chunked
+backward probe (see that function's docstring) -- verified directly on
+CRUDEOILM: a single 2026-08-01..2026-09-18 call returned 92 candles: the
+same range chunked returned 7,560. The real contract-listing constraint
+still exists and is still discovered (not assumed), it just goes back
+meaningfully further than the old single-call approach ever revealed.
 
 This module intentionally does NOT try to stitch together older expired
 contracts' instrument_keys into a longer synthetic-feeling history -- that
@@ -82,52 +90,26 @@ def _get_broker() -> UpstoxBroker:
     return UpstoxBroker(access_token=token, dry_run=True)
 
 
-def _find_earliest_available(broker: UpstoxBroker, instrument_key: str, unit: str, interval: int) -> str | None:
-    """
-    Binary-searches for the earliest from_date that actually returns candles
-    (Upstox returns zero candles, not a clipped result, for a from_date
-    before the current contract's listing date -- see module docstring).
-    Returns an ISO date string, or None if even a 1-day window returns nothing.
-    """
-    today = date.today()
-    lo, hi = 1, _MAX_PROBE_DAYS  # days back
-    earliest_working = None
-    while lo <= hi:
-        mid = (lo + hi) // 2
-        frm = (today - timedelta(days=mid)).isoformat()
-        to = today.isoformat()
-        candles = broker.get_historical_candles(instrument_key, unit, interval, to, frm)
-        if candles:
-            earliest_working = mid
-            lo = mid + 1  # try further back
-        else:
-            hi = mid - 1  # too far back, come closer
-    if earliest_working is None:
-        return None
-    return (today - timedelta(days=earliest_working)).isoformat()
-
-
 def download_real_commodity_history(symbol: str, unit: str, interval: int, mcx_symbol: str) -> pd.DataFrame | None:
-    """Fetches ALL real history currently available on Upstox for one symbol/interval (full backfill, not incremental)."""
+    """Fetches ALL real history currently available on Upstox for one symbol/interval (full backfill, not incremental).
+    Uses data.candles.fetch_real_history_backward -- see that function's docstring for why a single
+    wide from=/to= call (the previous approach here, via _find_earliest_available + one call) was
+    silently under-archiving this exact dataset for as long as this module has existed."""
+    from data.candles import fetch_real_history_backward
     broker = _get_broker()
     instrument_key = build_mcx_commodity_map().get(mcx_symbol)
     if not instrument_key:
         log.warning("%s: could not resolve MCX instrument_key.", mcx_symbol)
         return None
 
-    earliest = _find_earliest_available(broker, instrument_key, unit, interval)
-    if earliest is None:
+    candles = fetch_real_history_backward(broker, instrument_key, unit, interval, max_lookback_days=_MAX_PROBE_DAYS)
+    if not candles:
         log.warning("%s: no real history available at all (contract may be unlisted/expired).", mcx_symbol)
         return None
 
-    to_date = date.today().isoformat()
-    candles = broker.get_historical_candles(instrument_key, unit, interval, to_date, earliest)
-    if not candles:
-        return None
-
     df = pd.DataFrame(candles).sort_values("timestamp").reset_index(drop=True)
-    log.info("%s (%s/%d): fetched %d real candles, %s to %s.",
-              mcx_symbol, unit, interval, len(df), earliest, to_date)
+    log.info("%s (%s/%d): fetched %d real candles (chunked), %s to %s.",
+              mcx_symbol, unit, interval, len(df), df["timestamp"].iloc[0], df["timestamp"].iloc[-1])
     return df
 
 
@@ -158,7 +140,9 @@ def topup_real_commodity_history(symbol: str, unit: str, interval: int, mcx_symb
         log.warning("%s: could not resolve MCX instrument_key.", mcx_symbol)
         return 0
 
-    candles = broker.get_historical_candles(instrument_key, unit, interval, to_date, from_date)
+    from data.candles import fetch_real_history_backward
+    gap_days = (date.fromisoformat(to_date) - date.fromisoformat(from_date)).days + 1
+    candles = fetch_real_history_backward(broker, instrument_key, unit, interval, max_lookback_days=gap_days)
     if not candles:
         log.info("%s: no new candles (%s to %s).", symbol, from_date, to_date)
         return 0

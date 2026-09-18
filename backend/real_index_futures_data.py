@@ -57,35 +57,17 @@ def _get_broker() -> UpstoxBroker:
     return UpstoxBroker(access_token=token, dry_run=True)
 
 
-_CHUNK_DAYS = 20  # see module docstring -- a wide single-call request silently truncates
-
-
 def download_real_index_futures_history(symbol: str, unit: str, interval: int, instrument_key: str,
                                           max_lookback_days: int = 100) -> pd.DataFrame | None:
-    """Chunked fetch, oldest-to-newest, de-duplicated by timestamp."""
+    """Chunked fetch via data.candles.fetch_real_history_backward -- see that function's
+    docstring for why a single wide from=/to= call silently under-returns data."""
+    from data.candles import fetch_real_history_backward
     broker = _get_broker()
-    today = date.today()
-    all_rows: dict[str, dict] = {}
-    chunk_end = today
-    empty_chunks_in_a_row = 0
-    while (today - chunk_end).days < max_lookback_days:
-        chunk_start = chunk_end - timedelta(days=_CHUNK_DAYS)
-        candles = broker.get_historical_candles(instrument_key, unit, interval,
-                                                   to_date=chunk_end.isoformat(), from_date=chunk_start.isoformat())
-        if candles:
-            for c in candles:
-                all_rows[c["timestamp"]] = c
-            empty_chunks_in_a_row = 0
-        else:
-            empty_chunks_in_a_row += 1
-            if empty_chunks_in_a_row >= 2:  # two consecutive empty chunks = past the real listing date
-                break
-        chunk_end = chunk_start - timedelta(days=1)
-
-    if not all_rows:
+    candles = fetch_real_history_backward(broker, instrument_key, unit, interval, max_lookback_days=max_lookback_days)
+    if not candles:
         log.warning("%s: no real history available at all.", symbol)
         return None
-    df = pd.DataFrame(sorted(all_rows.values(), key=lambda c: c["timestamp"]))
+    df = pd.DataFrame(candles)
     log.info("%s (%s/%d): fetched %d real candles (chunked), %s to %s.",
               symbol, unit, interval, len(df), df["timestamp"].iloc[0], df["timestamp"].iloc[-1])
     return df
@@ -108,8 +90,10 @@ def topup_real_index_futures_history(symbol: str, unit: str, interval: int, inst
     if from_date > to_date:
         return 0
 
+    from data.candles import fetch_real_history_backward
     broker = _get_broker()
-    candles = broker.get_historical_candles(instrument_key, unit, interval, to_date, from_date)
+    gap_days = (date.fromisoformat(to_date) - date.fromisoformat(from_date)).days + 1
+    candles = fetch_real_history_backward(broker, instrument_key, unit, interval, max_lookback_days=gap_days)
     if not candles:
         return 0
     new_df = pd.DataFrame(candles)

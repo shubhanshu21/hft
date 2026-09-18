@@ -14,6 +14,15 @@ from __future__ import annotations
 
 import math
 
+# Statutory rates drift -- e.g. the 2026-04-01 Union Budget hiked index-futures
+# STT from 0.02% to 0.05% (found 2026-09-18 only via a manual web search while
+# building the index-futures cost model; nothing in this codebase would have
+# flagged the old rate as stale on its own). tests/test_rate_freshness.py fails
+# once this goes more than ~180 days old, forcing a periodic human re-check
+# against a current public rate source -- bump this date only after actually
+# re-verifying every rate below, not just to silence the test.
+RATES_LAST_VERIFIED = "2026-09-18"
+
 COMMODITY_SPECS = {
     "CRUDEOIL": {
         "name": "Crude Oil (100 bbl)",

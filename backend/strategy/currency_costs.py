@@ -21,6 +21,10 @@ from __future__ import annotations
 
 import math
 
+# See strategy/commodity_costs.py's RATES_LAST_VERIFIED comment -- same
+# freshness discipline, checked by tests/test_rate_freshness.py.
+RATES_LAST_VERIFIED = "2026-09-18"
+
 CURRENCY_SPECS = {
     "USDINR": {"name": "US Dollar-Rupee (1,000 USD)", "lot_size": 1000, "tick_size": 0.0025, "margin_approx": 2000.0},
     "EURINR": {"name": "Euro-Rupee (1,000 EUR)", "lot_size": 1000, "tick_size": 0.0025, "margin_approx": 2500.0},

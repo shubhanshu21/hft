@@ -52,34 +52,48 @@ ENTRY_THRESHOLDS = {
     # optimal already -- the best alternative (tp=2.2) only added +1.4% net PnL
     # while making max DD meaningfully worse (13.4%->15.4%) and win rate
     # slightly worse. A real tradeoff, not a clean win -- left unchanged.
+    # RETRACTED 2026-09-18: min_adx=18 (and every one of 80 other combos
+    # tried) was found NET-LOSING across the newly-revealed 2026-05-18 to
+    # 2026-07-31 window (0/80 credible combos profitable) once a silent
+    # Upstox wide-range-request truncation bug (fixed in data/candles.py)
+    # stopped hiding it -- the exact same setting is strongly profitable on
+    # 2026-08-17 to 2026-09-17 alone. This isn't a bad threshold, it's
+    # regime dependence: no ADX/EMA-slope/volume combo distinguished the two
+    # periods, meaning the underlying market character (choppy/adverse vs.
+    # trending/favorable) drove the outcome, not the entry rule. Left on the
+    # pre-existing 18.0/1.10 values (no OOS-survivable alternative was found
+    # either) but this should NOT be read as a validated calibration the way
+    # gold/silver below now are -- a real regime filter is needed before
+    # trusting any fixed threshold here across unknown future regimes.
     "crude":  {"min_ml_l": 0.54, "max_ml_s": 0.44, "min_adx": 18.0, "min_vol": 1.10, "min_orb": 0.05, "min_vwap": 0.05, "min_stop_pct": 0.0035, "min_ema_slope": 0.050, "tp_mult": 1.80, "stop_mult": 1.4},
     "natgas": {"min_ml_l": 0.55, "max_ml_s": 0.43, "min_adx": 22.0, "min_vol": 1.70, "min_orb": 0.08, "min_vwap": 0.08, "min_stop_pct": 0.0050, "min_ema_slope": 0.050, "tp_mult": 1.80, "stop_mult": 1.4},
-    # Added 2026-09-17: GOLDM was surveyed on the exact same real 32-day window
-    # that found natgas has NO edge (0/51 credible combos profitable) -- gold
-    # instead came back 141/144 credible (>=15 trade) combos profitable (98%),
-    # a robust result, not a lucky corner. min_vwap barely moved the
-    # result across the top combos, so 0.05 (crude's value) was kept rather
-    # than over-fitting a fourth dimension that showed little signal.
-    # tp_mult/stop_mult updated 2026-09-18: a follow-up 40-combo TP/stop sweep
-    # found tp=1.0/stop=1.7 a clean win over the old 1.8/1.4 on every metric --
-    # win rate 69.2%->69.8%, net +Rs58,795->+Rs70,766 (+20.4%), max DD
-    # 7.89%->7.03% (also better), not a tradeoff.
-    "gold":   {"min_ml_l": 0.54, "max_ml_s": 0.44, "min_adx": 12.0, "min_vol": 1.30, "min_orb": 0.05, "min_vwap": 0.05, "min_stop_pct": 0.0035, "min_ema_slope": 0.050, "tp_mult": 1.00, "stop_mult": 1.7},
-    # Added 2026-09-18: SILVER surveyed on the real 32-day archive (2026-08-17
-    # to 2026-09-17) -- came back 231/231 credible (>=15 trade) combos
-    # profitable (100%) across a 240-combo adx/vol/vwap/ema_slope sweep, as
-    # robust a result as gold's own 98%. A follow-up 20-combo TP/stop sweep
-    # at these entry thresholds found tp=1.0/stop=2.0 a clean win over the
-    # provisional 1.8/1.4 -- win rate 63.5%->66.7%, net +Rs364,446->+Rs552,952,
-    # PF 1.88->2.36, same max DD (28.2%). Not a tradeoff on any metric.
-    "silver": {"min_ml_l": 0.54, "max_ml_s": 0.44, "min_adx": 10.0, "min_vol": 1.70, "min_orb": 0.05, "min_vwap": 0.05, "min_stop_pct": 0.0035, "min_ema_slope": 0.030, "tp_mult": 1.00, "stop_mult": 2.0},
-    # COPPER surveyed the same sweep, same window: only 36/180 credible combos
-    # profitable (20%) -- a real but much less robust edge than silver/gold
-    # (best found: min_adx=12, min_vol=1.7, min_ema_slope=0.05, 25 trades,
-    # 52% win, PF 1.88, +Rs36,351, max DD 21.3%). Not dedicated-calibrated or
-    # added live -- 20% robustness is too close to what multiple-testing
-    # noise alone would produce across 180 combos to trust yet. Revisit once
-    # more real days accumulate.
+    # RECALIBRATED 2026-09-18 with a genuine train/test split, now that the
+    # truncation-bug fix (see crude's comment above) revealed a real ~4-month
+    # archive instead of ~1 month. Swept on TRAIN (2026-05-18 to 2026-07-31)
+    # only, then validated strictly on TEST (2026-08-01 to 2026-09-17, never
+    # seen during selection): min_adx=22/min_vol=1.7/min_ema_slope=0.08 held
+    # up out-of-sample -- train net +Rs35,497 (PF 2.28) -> test net +Rs9,644
+    # (PF 1.62, 63.6% win, 11 trades). Smaller and thinner than the old
+    # in-sample-only 98%-robust claim, but this is real OOS evidence, not
+    # just a good-looking sweep. tp_mult/stop_mult not re-swept this pass --
+    # kept at the commodity default pending a follow-up.
+    "gold":   {"min_ml_l": 0.54, "max_ml_s": 0.44, "min_adx": 22.0, "min_vol": 1.70, "min_orb": 0.05, "min_vwap": 0.05, "min_stop_pct": 0.0035, "min_ema_slope": 0.080, "tp_mult": 1.80, "stop_mult": 1.4},
+    # RECALIBRATED 2026-09-18, same train/test discipline as gold above.
+    # min_adx=18/min_vol=1.1/min_ema_slope=0.05 was picked over the raw
+    # top-by-train-profit combo specifically because it generalized better
+    # OOS on BOTH dimensions at once: train net +Rs761,113 (PF 1.64, DD
+    # 62.0%) -> test net +Rs309,970 (PF 1.52, DD 35.1%) -- higher test net
+    # AND lower test DD than the combo that looked best on train alone. The
+    # original same-day "231/231 credible combos profitable, tp=1.0/
+    # stop=2.0" claim was built on the truncated ~32-day archive and is
+    # retracted; SILVER was briefly live on that basis and has been pulled.
+    # tp_mult/stop_mult not re-swept this pass -- kept at the commodity
+    # default pending a follow-up.
+    "silver": {"min_ml_l": 0.54, "max_ml_s": 0.44, "min_adx": 18.0, "min_vol": 1.10, "min_orb": 0.05, "min_vwap": 0.05, "min_stop_pct": 0.0035, "min_ema_slope": 0.050, "tp_mult": 1.80, "stop_mult": 1.4},
+    # COPPER surveyed the same (now-retracted) truncated-archive sweep: only
+    # 36/180 credible combos profitable (20%) -- weaker than silver/gold even
+    # before the truncation-bug correction. Not dedicated-calibrated or added
+    # live. Revisit with the same train/test discipline once revisited.
 }
 # min_ema_slope was a hardcoded 0.010 literal (both symbols, not asset-
 # calibrated like everything else in this dict) until 2026-09-17. Root-caused
@@ -123,8 +137,23 @@ def run_commodity_backtest(
     size_mode: str = "margin",
     no_ml_filter: bool = False,  # diagnostic only: drop the p_up condition, keep every other rule-based filter -- see conversation history for why/when
     return_trades: bool = False,  # diagnostic only: include the full per-trade list (with entry-signal diagnostics) in the result -- see conversation history 2026-09-17, loss-pattern analysis
+    confirm_silver_with_gold: bool = False,  # SILVER only: require GOLD's own ema_slope_pct to agree in
+    # sign with the entry direction. Tested 2026-09-18 (gold/silver co-movement is a real, documented
+    # relationship -- see the gold-silver-ratio trading literature): on a proper train/test split, this
+    # flipped the TRAIN window (2026-05-18..2026-07-31) from a net loser (PF 0.97, -Rs55,420) to a marginal
+    # winner (PF 1.01, +Rs16,323), and was a no-op on the TEST window (2026-08-01..2026-09-17, PF 1.09
+    # either way -- gold and silver simply never disagreed there). A partial regime-defense mitigant, not a
+    # strong edge on its own -- off by default, opt in explicitly.
 ) -> dict:
     target_symbols = symbols or ["CRUDEOILM", "NATGASMINI"]
+
+    _gold_ema_by_ts: dict = {}
+    if confirm_silver_with_gold and any("SILVER" in s.upper() for s in target_symbols):
+        _gold_path = ARCHIVE_DIR / "GOLD_5minute.csv"
+        if _gold_path.exists():
+            _gold_raw = pd.read_csv(_gold_path)
+            _gold_feat = compute_commodity_features(_gold_raw, symbol="GOLD")
+            _gold_ema_by_ts = dict(zip(_gold_feat["timestamp"], _gold_feat["ema_slope_pct"]))
 
     all_trades: list[dict] = []
     current_capital = capital
@@ -399,6 +428,15 @@ def run_commodity_backtest(
             elif not long_only and ml_short_ok and adx >= min_adx and dmn > dmp and ema_s < -min_ema_slope and orb_l_dist <= -min_orb and vwap_d <= -min_vwap and vol_s >= min_vol:
                 direction = "short"
 
+            if direction and is_silver and confirm_silver_with_gold:
+                _g_ema = _gold_ema_by_ts.get(c_time)
+                if _g_ema is None:
+                    direction = None
+                elif direction == "long" and _g_ema <= 0:
+                    direction = None
+                elif direction == "short" and _g_ema >= 0:
+                    direction = None
+
 
 
             if not direction:
@@ -585,6 +623,8 @@ def main():
                          help="Drop the ML p_up condition, keep every other rule-based filter (or set BACKTEST_USE_ML_FILTER=false in .env)")
     parser.add_argument("--use-ml-filter", dest="no_ml_filter", action="store_false",
                          help="Force the ML p_up condition back on, overriding BACKTEST_USE_ML_FILTER=false in .env")
+    parser.add_argument("--confirm-silver-with-gold", action="store_true",
+                         help="SILVER only: require GOLD's ema_slope_pct to agree with the entry direction (see ENTRY_THRESHOLDS module docstring for the train/test result)")
     args = parser.parse_args()
 
     from_d = args.from_date
@@ -609,6 +649,7 @@ def main():
         to_date=to_d,
         size_mode=args.size_mode,
         no_ml_filter=args.no_ml_filter,
+        confirm_silver_with_gold=args.confirm_silver_with_gold,
     )
 
 
