@@ -39,6 +39,7 @@ _SYMBOL_KEY_MAP: dict[str, str] = {}
 # In-memory cache: {commodity_base_symbol: instrument_key} for nearest active MCX futures
 _MCX_KEY_MAP: dict[str, str] = {}
 _CURRENCY_KEY_MAP: dict[str, str] = {}
+_INDEX_FUT_KEY_MAP: dict[str, str] = {}
 
 
 def _cache_is_fresh(meta_file: Path, cache_file: Path) -> bool:
@@ -141,6 +142,37 @@ def _load_currency_master() -> None:
                   rows[0]["tradingsymbol"], rows[0].get("expiry"))
 
 
+def _load_index_futures_master() -> None:
+    """NSE index futures (NSE_FO/FUTIDX) live in the SAME NSE.csv.gz master as
+    equities/currency. Nearest-expiry-per-base-symbol pattern, same as
+    _load_currency_master()/_load_mcx_master(). Restricted to NIFTY/BANKNIFTY
+    only -- the two genuinely liquid index futures; FINNIFTY/MIDCPNIFTY/
+    NIFTYNXT50/NIFTYFPI also exist in the master but weren't validated."""
+    global _INDEX_FUT_KEY_MAP
+    if not _CACHE_FILE.exists():
+        return
+    today_str = date.today().isoformat()
+    candidates: dict[str, list[dict]] = {}
+    with gzip.open(_CACHE_FILE, "rt", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            if row.get("exchange") != "NSE_FO" or row.get("instrument_type") != "FUTIDX":
+                continue
+            if row.get("name") not in ("NIFTY", "BANKNIFTY"):
+                continue
+            exp = row.get("expiry", "")
+            if exp < today_str:
+                continue
+            candidates.setdefault(row["name"], []).append(row)
+
+    _INDEX_FUT_KEY_MAP = {}
+    for base, rows in candidates.items():
+        rows.sort(key=lambda r: r.get("expiry", ""))
+        _INDEX_FUT_KEY_MAP[base] = rows[0]["instrument_key"]
+        log.info("Resolved index future %s -> %s (%s, Expiry: %s)", base, rows[0]["instrument_key"],
+                  rows[0]["tradingsymbol"], rows[0].get("expiry"))
+
+
 def _load_mcx_master() -> None:
     global _MCX_KEY_MAP
     if not _MCX_CACHE_FILE.exists():
@@ -195,6 +227,8 @@ def ensure_master(force: bool = False) -> None:
         _load_mcx_master()
     if not _CURRENCY_KEY_MAP and _CACHE_FILE.exists():
         _load_currency_master()
+    if not _INDEX_FUT_KEY_MAP and _CACHE_FILE.exists():
+        _load_index_futures_master()
 
 
 def get_instrument_key(symbol: str, auto_refresh: bool = True) -> Optional[str]:
@@ -206,6 +240,8 @@ def get_instrument_key(symbol: str, auto_refresh: bool = True) -> Optional[str]:
         return _MCX_KEY_MAP[sym_u]
     if sym_u in _CURRENCY_KEY_MAP:
         return _CURRENCY_KEY_MAP[sym_u]
+    if sym_u in _INDEX_FUT_KEY_MAP:
+        return _INDEX_FUT_KEY_MAP[sym_u]
     return _SYMBOL_KEY_MAP.get(sym_u)
 
 
@@ -214,7 +250,8 @@ def resolve_symbols(symbols: list[str]) -> dict[str, str]:
     ensure_master()
     result = {}
     for sym in symbols:
-        key = _SYMBOL_KEY_MAP.get(sym.upper()) or _MCX_KEY_MAP.get(sym.upper()) or _CURRENCY_KEY_MAP.get(sym.upper())
+        key = (_SYMBOL_KEY_MAP.get(sym.upper()) or _MCX_KEY_MAP.get(sym.upper())
+               or _CURRENCY_KEY_MAP.get(sym.upper()) or _INDEX_FUT_KEY_MAP.get(sym.upper()))
         if key:
             result[sym] = key
         else:
@@ -227,6 +264,14 @@ def build_currency_map() -> dict[str, str]:
     ensure_master()
     if _CURRENCY_KEY_MAP:
         return _CURRENCY_KEY_MAP
+    return {}
+
+
+def build_index_futures_map() -> dict[str, str]:
+    """Return {base_symbol: instrument_key} for active NSE index futures (NIFTY/BANKNIFTY, nearest expiry)."""
+    ensure_master()
+    if _INDEX_FUT_KEY_MAP:
+        return _INDEX_FUT_KEY_MAP
     return {}
 
 

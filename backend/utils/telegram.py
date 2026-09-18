@@ -113,12 +113,13 @@ def alert_error(context: str, exc: Exception) -> None:
     send(f"🔴 <b>ERROR</b> — {context}\n<code>{type(exc).__name__}: {exc}</code>")
 
 
-def alert_entry(sig: dict) -> None:
+def alert_entry(sig: dict, capital: float) -> None:
     arrow = "🟢 LONG" if sig["direction"] == "long" else "🔴 SHORT"
     send(
         f"📥 <b>ENTRY</b> {sig['symbol']} {arrow}\n"
         f"Price: ₹{sig['entry_price']:.2f}  Qty: {sig['qty']}\n"
-        f"SL: ₹{sig['sl']:.2f}  TP: ₹{sig['tp']:.2f}"
+        f"SL: ₹{sig['sl']:.2f}  TP: ₹{sig['tp']:.2f}\n"
+        f"Balance: ₹{capital:,.2f}"
     )
 
 

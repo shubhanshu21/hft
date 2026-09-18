@@ -382,6 +382,7 @@ class DryRunner:
             # the dict, same convention as the ML-filter/full-session flags above).
             is_natgas = "NATGAS" in sym.upper() or "NATURALGAS" in sym.upper()
             is_gold = "GOLD" in sym.upper()
+            is_silver = "SILVER" in sym.upper()
             if is_curr:
                 # Per-pair calibrated 2026-09-18 -- see backtest_currency.py's
                 # ENTRY_THRESHOLDS comment for the full 375-combo-per-pair sweep.
@@ -427,6 +428,17 @@ class DryRunner:
                 # 1.80/1.4 on every metric -- win rate 69.2%->69.8%, net
                 # +Rs58,795->+Rs70,766 (+20.4%), max DD 7.89%->7.03% (also better).
                 tp_mult, stop_mult = 1.00, 1.7
+            elif is_silver:
+                # Added 2026-09-18: SILVER surveyed on the real 32-day archive came
+                # back 231/231 credible (>=15 trade) combos profitable (100%) --
+                # as robust as gold's own 98%. See backtest_commodity.py's
+                # ENTRY_THRESHOLDS["silver"] comment for the full sweep, including
+                # the TP/stop follow-up that found tp=1.0/stop=2.0 a clean win.
+                min_ml_l, max_ml_s = 0.54, 0.44
+                min_adx, min_vol = 10.0, 1.70
+                min_orb, min_vwap, min_stop_pct = 0.05, 0.05, 0.0035
+                min_ema_slope = 0.030
+                tp_mult, stop_mult = 1.00, 2.0
             else:  # crude, and default/fallback for anything not yet dedicated-calibrated
                 min_ml_l, max_ml_s = 0.54, 0.44
                 # min_adx raised 15.0->18.0 2026-09-17 -- see backtest_commodity.py's
@@ -754,7 +766,7 @@ def _print_sig(sig: dict, cap: float):
     print(f"     VWAP: {sig['vwap_dist_pct']:+.3f}%  EMA: {sig['ema_slope_pct']:+.4f}%  "
           f"Cap now: ₹{cap:,.2f}")
     print(f"     {GY}[VIRTUAL EXECUTION -> RECORDED IN SQLITE DB - NO REAL BROKER ORDER]{R}")
-    telegram.alert_entry(sig)
+    telegram.alert_entry(sig, cap)
 
 
 def main():

@@ -65,6 +65,21 @@ ENTRY_THRESHOLDS = {
     # win rate 69.2%->69.8%, net +Rs58,795->+Rs70,766 (+20.4%), max DD
     # 7.89%->7.03% (also better), not a tradeoff.
     "gold":   {"min_ml_l": 0.54, "max_ml_s": 0.44, "min_adx": 12.0, "min_vol": 1.30, "min_orb": 0.05, "min_vwap": 0.05, "min_stop_pct": 0.0035, "min_ema_slope": 0.050, "tp_mult": 1.00, "stop_mult": 1.7},
+    # Added 2026-09-18: SILVER surveyed on the real 32-day archive (2026-08-17
+    # to 2026-09-17) -- came back 231/231 credible (>=15 trade) combos
+    # profitable (100%) across a 240-combo adx/vol/vwap/ema_slope sweep, as
+    # robust a result as gold's own 98%. A follow-up 20-combo TP/stop sweep
+    # at these entry thresholds found tp=1.0/stop=2.0 a clean win over the
+    # provisional 1.8/1.4 -- win rate 63.5%->66.7%, net +Rs364,446->+Rs552,952,
+    # PF 1.88->2.36, same max DD (28.2%). Not a tradeoff on any metric.
+    "silver": {"min_ml_l": 0.54, "max_ml_s": 0.44, "min_adx": 10.0, "min_vol": 1.70, "min_orb": 0.05, "min_vwap": 0.05, "min_stop_pct": 0.0035, "min_ema_slope": 0.030, "tp_mult": 1.00, "stop_mult": 2.0},
+    # COPPER surveyed the same sweep, same window: only 36/180 credible combos
+    # profitable (20%) -- a real but much less robust edge than silver/gold
+    # (best found: min_adx=12, min_vol=1.7, min_ema_slope=0.05, 25 trades,
+    # 52% win, PF 1.88, +Rs36,351, max DD 21.3%). Not dedicated-calibrated or
+    # added live -- 20% robustness is too close to what multiple-testing
+    # noise alone would produce across 180 combos to trust yet. Revisit once
+    # more real days accumulate.
 }
 # min_ema_slope was a hardcoded 0.010 literal (both symbols, not asset-
 # calibrated like everything else in this dict) until 2026-09-17. Root-caused
@@ -348,12 +363,18 @@ def run_commodity_backtest(
             # Asset-calibrated parameter profiles (see ENTRY_THRESHOLDS module dict)
             is_natgas = "NATGAS" in sym.upper() or "NATURALGAS" in sym.upper()
             is_gold = "GOLD" in sym.upper()
+            is_silver = "SILVER" in sym.upper()
+            is_copper = "COPPER" in sym.upper()
             if is_natgas:
                 _et = ENTRY_THRESHOLDS["natgas"]
             elif is_gold:
                 _et = ENTRY_THRESHOLDS["gold"]
+            elif is_silver and "silver" in ENTRY_THRESHOLDS:
+                _et = ENTRY_THRESHOLDS["silver"]
+            elif is_copper and "copper" in ENTRY_THRESHOLDS:
+                _et = ENTRY_THRESHOLDS["copper"]
             else:
-                _et = ENTRY_THRESHOLDS["crude"]  # default/fallback for anything not yet dedicated-calibrated (silver, copper)
+                _et = ENTRY_THRESHOLDS["crude"]  # default/fallback for anything not yet dedicated-calibrated
             min_ml_l = _et["min_ml_l"]
             max_ml_s = _et["max_ml_s"]
             min_adx = _et["min_adx"]

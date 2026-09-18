@@ -25,10 +25,17 @@ COMMODITY_FEATURE_COLUMNS = [
 
 
 
-def compute_commodity_features(df: pd.DataFrame, symbol: str = "CRUDEOIL") -> pd.DataFrame:
+def compute_commodity_features(df: pd.DataFrame, symbol: str = "CRUDEOIL", session_open_minutes: int = 9 * 60) -> pd.DataFrame:
     """
-    Computes causality-preserving 5-minute rolling features for MCX commodities.
-    `df` contains [timestamp, open, high, low, close, volume].
+    Computes causality-preserving 5-minute rolling features for MCX commodities
+    and (via session_open_minutes) other same-shaped 09:00-anchored markets
+    (NSE currency derivatives). `df` contains [timestamp, open, high, low, close, volume].
+
+    `session_open_minutes` defaults to 9*60 (MCX/NCD's shared 09:00 IST open) --
+    pass 9*60+15 for NSE F&O (index futures, 09:15 IST open) instead of
+    reusing the default, since `minutes_since_open` and every session-window
+    gate downstream is computed relative to it. Never assume one market's
+    open time applies to another.
     """
     df = df.copy()
     if "timestamp" in df.columns:
@@ -40,7 +47,7 @@ def compute_commodity_features(df: pd.DataFrame, symbol: str = "CRUDEOIL") -> pd
     df["minute"] = df["_dt"].dt.minute
     df["day_of_week"] = df["_dt"].dt.dayofweek
     df["day"] = df["_dt"].dt.date
-    df["minutes_since_open"] = (df["hour"] * 60 + df["minute"]) - (9 * 60) # Minutes since 09:00 open
+    df["minutes_since_open"] = (df["hour"] * 60 + df["minute"]) - session_open_minutes
 
     # 1. Session Phase Categorization
     # 0: Asian (09:00-14:00), 1: Europe (14:00-18:30), 2: US Core (18:30-22:30), 3: Late (22:30-23:30)
