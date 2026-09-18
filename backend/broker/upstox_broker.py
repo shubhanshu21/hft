@@ -126,7 +126,13 @@ class UpstoxBroker(BaseBroker):
         if not access_token:
             raise ValueError("access_token must not be empty.")
 
-        self.dry_run = dry_run
+        # Layered kill switch (see safety_gate.py): a caller passing
+        # dry_run=True is always honoured as-is; a caller asking for
+        # dry_run=False only gets it if the kill switch, .env flag, and
+        # armed-state file all agree. Every current call site hardcodes
+        # dry_run=True, so this only matters if that ever changes.
+        from safety_gate import enforce_dry_run
+        self.dry_run = enforce_dry_run("upstox", dry_run)
 
         # --- Initialise the SDK configuration ---
         # The access_token is injected into the SDK's configuration object.

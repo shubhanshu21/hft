@@ -1,7 +1,11 @@
 [Unit]
-Description=Daily real MCX commodity data top-up (CRUDEOILM/NATGASMINI, via Upstox)
+Description=Daily real MCX commodity + NSE currency data top-up (CRUDEOILM/NATGASMINI/GOLDM/SILVERMIC/COPPER, USDINR/EURINR/GBPINR/JPYINR, via Upstox)
 
 [Service]
 Type=oneshot
 WorkingDirectory=/var/www/html/hft/backend
 ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m real_commodity_data --topup
+# Added 2026-09-18: currency derivatives top-up, same daily job (multiple ExecStart=
+# lines run sequentially for a oneshot service) rather than a second timer -- both are
+# small, fast, real-data top-ups against the same broker/account.
+ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m real_currency_data --topup

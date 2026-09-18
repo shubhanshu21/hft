@@ -60,6 +60,16 @@ from strategy.costs import (
 from strategy.commodity_costs import (
     compute_mcx_commodity_costs, size_commodity_lots, COMMODITY_SPECS, get_contract_multiplier
 )
+from strategy.currency_costs import (
+    compute_ncd_currency_costs, size_currency_lots, CURRENCY_SPECS,
+    get_contract_multiplier as get_currency_contract_multiplier,
+)
+
+_CURRENCY_SYMBOLS = {"USDINR", "EURINR", "GBPINR", "JPYINR"}
+
+
+def _is_currency(sym: str) -> bool:
+    return sym.upper() in _CURRENCY_SYMBOLS
 from strategy.commodity_features import (
     compute_commodity_features, COMMODITY_FEATURE_COLUMNS
 )
@@ -71,9 +81,10 @@ from backtest.engine import (
     UP_THRESHOLD, DOWN_THRESHOLD, TAKE_PROFIT_MULT, BE_ACTIVATION_MULT,
     TRAIL_DIST_MULT, SESSION_START_MINUTES, SESSION_CUTOFF_MINUTES,
 )
-from broker.instruments import build_nifty50_map, build_mcx_commodity_map, ensure_master, get_instrument_key
+from broker.instruments import build_nifty50_map, build_mcx_commodity_map, build_currency_map, ensure_master, get_instrument_key
 from utils.logger import get_logger, setup_logger
 from utils import telegram
+from utils.market_holidays import get_trading_holidays
 
 log = get_logger("live_dryrun")
 
@@ -81,11 +92,12 @@ IST = ZoneInfo("Asia/Kolkata")
 DEFAULT_SCAN_INTERVAL_SECONDS = 60  # 1-minute scan for fast SL/TP trailing & new bar detection
 
 try:
-    SYMBOL_MAP: dict[str, str] = {**build_nifty50_map(), **build_mcx_commodity_map()}
+    SYMBOL_MAP: dict[str, str] = {**build_nifty50_map(), **build_mcx_commodity_map(), **build_currency_map()}
 except Exception as _e:
     log.warning("Could not load Upstox master; falling back to hardcoded keys: %s", _e)
     SYMBOL_MAP = {
         **build_mcx_commodity_map(),
+        **build_currency_map(),
         "RELIANCE":   "NSE_EQ|INE002A01018", "HDFCBANK":  "NSE_EQ|INE040A01034",
         "ICICIBANK":  "NSE_EQ|INE090A01021", "SBIN":      "NSE_EQ|INE062A01020",
         "INFY":       "NSE_EQ|INE009A01021", "TCS":       "NSE_EQ|INE467B01029",
@@ -331,6 +343,18 @@ class DryRunner:
         self.trades: list[dict] = []
         self.today = date.today().isoformat()
 
+        # Full-day vs evening-only trading window -- see backtest_commodity.py's
+        # us_session_only for the matching backtest flag/comparison. Switched
+        # to full-session by default 2026-09-17 per user decision: real
+        # backtest on the full 2022-2026 archive showed full session more
+        # than doubles net PnL (+Rs68,097 vs +Rs30,248) at the cost of a
+        # lower win rate (65.8% vs 70.6%) and higher max DD (8.51% vs 6.51%)
+        # from 3x more (noisier, more expensive) daytime trades. Toggle via
+        # DRYRUN_FULL_SESSION in .env -- keep BACKTEST_FULL_SESSION in sync
+        # so backtest and live dryrun match, same convention as
+        # DRYRUN_USE_ML_FILTER/BACKTEST_USE_ML_FILTER above.
+        self.full_session = os.environ.get("DRYRUN_FULL_SESSION", "true").lower() in ("1", "true", "yes")
+
         # Daily-loss kill switch: halts new entries (existing positions are
         # still managed/exited normally) once today's realized loss hits
         # MAX_DAILY_LOSS_PCT of the capital this process started the day with.
@@ -393,11 +417,27 @@ class DryRunner:
                 row = feat_df.iloc[t]
                 mins = int(row.get("minutes_since_open", 0))
 
-                # US/Evening overlap session only (18:30-22:00 IST) -- matches
-                # backtest_commodity.py's us_session_only=True default, which is
-                # what the validated backtest results were produced with.
-                if mins < 570 or mins > 780:
-                    continue
+                is_curr = _is_currency(sym)
+                if is_curr:
+                    # NSE currency derivatives trade 09:00-17:00 IST -- no MCX-style
+                    # evening/US-overlap session (no analogous "second session" for a
+                    # currency pair). 15-min open buffer + 16:50 square-off, matching
+                    # backtest_currency.py exactly.
+                    if mins < 15 or mins > 460:
+                        continue
+                else:
+                    # Full session (10:00-22:30 IST) vs US/Evening-overlap-only
+                    # (18:30-22:00 IST) -- matches backtest_commodity.py's
+                    # us_session_only flag exactly (same two windows: 60-810 vs
+                    # 570-780 minutes since 09:00 open). See self.full_session's
+                    # docstring for the backtest comparison that motivated the
+                    # 2026-09-17 switch to full-session by default.
+                    if self.full_session:
+                        if mins < 60 or mins > 810:
+                            continue
+                    else:
+                        if mins < 570 or mins > 780:
+                            continue
 
                 # Model probability
                 model = self.commodity_models.get(sym)
@@ -422,15 +462,60 @@ class DryRunner:
                 entry = float(row["close"])
                 atr = float(row.get("atr", 0.005 * entry))
 
-                # Asset-calibrated parameter profiles (matches backtest_commodity.py)
+                # Asset-calibrated parameter profiles (matches backtest_commodity.py's
+                # ENTRY_THRESHOLDS dict exactly -- keep these two in sync by hand since
+                # live_dryrun.py duplicates the values as literals rather than importing
+                # the dict, same convention as the ML-filter/full-session flags above).
                 is_natgas = "NATGAS" in sym.upper() or "NATURALGAS" in sym.upper()
-                min_ml_l = 0.55 if is_natgas else 0.54
-                max_ml_s = 0.43 if is_natgas else 0.44
-                min_adx = 22.0 if is_natgas else 15.0  # natgas was 19.0 -- matches backtest_commodity.py's ENTRY_THRESHOLDS (backtested 2026-09-11: raising natgas' adx/vol bar cut its trade count 23->11 and flipped it from net-loss to net-profit after costs)
-                min_vol = 1.70 if is_natgas else 1.10  # natgas was 1.40 -- same 2026-09-11 backtest
-                min_orb = 0.08 if is_natgas else 0.05
-                min_vwap = 0.08 if is_natgas else 0.05
-                min_stop_pct = 0.0050 if is_natgas else 0.0035
+                is_gold = "GOLD" in sym.upper()
+                if is_curr:
+                    # Per-pair calibrated 2026-09-18 -- see backtest_currency.py's
+                    # ENTRY_THRESHOLDS comment for the full 375-combo-per-pair sweep.
+                    # USDINR/GBPINR: 100% of credible (>=15 trade) combos profitable.
+                    # EURINR: 56%. JPYINR: unvalidated (not enough real days yet to
+                    # reach 15 trades in any combo) -- included on a placeholder,
+                    # revisit once its archive grows. min_ml_l/max_ml_s unused (no
+                    # trained model exists for currency; ml_long_ok/ml_short_ok below
+                    # are neutral via self.use_ml_filter same as commodity when no
+                    # model is loaded).
+                    min_ml_l, max_ml_s = 0.54, 0.44
+                    _curr_et = {
+                        "USDINR": (15.0, 1.0, 0.04, 0.004),
+                        "EURINR": (10.0, 1.1, 0.06, 0.008),
+                        "GBPINR": (10.0, 1.0, 0.04, 0.008),
+                        "JPYINR": (12.0, 1.3, 0.05, 0.008),
+                    }.get(sym.upper(), (12.0, 1.3, 0.05, 0.008))
+                    min_adx, min_vol, min_vwap, min_ema_slope = _curr_et
+                    min_orb, min_stop_pct = 0.05, 0.0006
+                elif is_natgas:
+                    min_ml_l, max_ml_s = 0.55, 0.43
+                    min_adx, min_vol = 22.0, 1.70   # natgas was 19.0/1.40 -- backtested 2026-09-11: raising the bar cut trade count 23->11 and flipped net-loss to net-profit after costs
+                    min_orb, min_vwap, min_stop_pct = 0.08, 0.08, 0.0050
+                    min_ema_slope = 0.050
+                elif is_gold:
+                    # Added 2026-09-17: GOLDM surveyed on the real 32-day archive came
+                    # back 141/144 credible (>=15 trade) combos profitable (98%) --
+                    # a robust result, unlike natgas's 0/51. See
+                    # backtest_commodity.py's ENTRY_THRESHOLDS["gold"] comment for the
+                    # full sweep. Best: 39 trades, 69.2% win rate, +Rs58,795, PF 2.72.
+                    min_ml_l, max_ml_s = 0.54, 0.44
+                    min_adx, min_vol = 12.0, 1.30
+                    min_orb, min_vwap, min_stop_pct = 0.05, 0.05, 0.0035
+                    min_ema_slope = 0.050
+                else:  # crude, and default/fallback for anything not yet dedicated-calibrated
+                    min_ml_l, max_ml_s = 0.54, 0.44
+                    # min_adx raised 15.0->18.0 2026-09-17 -- see backtest_commodity.py's
+                    # ENTRY_THRESHOLDS["crude"] comment: clean win on every metric (win rate,
+                    # net PnL, and max DD all improved at once) on a 192-combo real sweep.
+                    min_adx, min_vol = 18.0, 1.10
+                    min_orb, min_vwap, min_stop_pct = 0.05, 0.05, 0.0035
+                    # Was a hardcoded 0.010 literal (all symbols) until 2026-09-17 --
+                    # see backtest_commodity.py's ENTRY_THRESHOLDS comment for the
+                    # root-caused loss day and the backtest sweep that motivated
+                    # raising it to 0.05 (commodity-scale only -- currency uses its
+                    # own much smaller values above, its intraday moves are an order
+                    # of magnitude calmer).
+                    min_ema_slope = 0.050
 
                 sdist = max(1.4 * atr, min_stop_pct * entry)
                 if sdist <= 0 or entry <= 0:
@@ -440,9 +525,9 @@ class DryRunner:
                 ml_long_ok = (not self.use_ml_filter) or (p_up >= min_ml_l)
                 ml_short_ok = (not self.use_ml_filter) or (p_up <= max_ml_s)
                 # Calibrated 70%+ Win Rate Rules (asset-calibrated, matches backtest):
-                if ml_long_ok and adx >= min_adx and dmp > dmn and ema_s > 0.010 and orb_h_dist >= min_orb and vwap_d >= min_vwap and vol_s >= min_vol:
+                if ml_long_ok and adx >= min_adx and dmp > dmn and ema_s > min_ema_slope and orb_h_dist >= min_orb and vwap_d >= min_vwap and vol_s >= min_vol:
                     direction = "long"
-                elif self.direction_filter != "long" and ml_short_ok and adx >= min_adx and dmn > dmp and ema_s < -0.010 and orb_l_dist <= -min_orb and vwap_d <= -min_vwap and vol_s >= min_vol:
+                elif self.direction_filter != "long" and ml_short_ok and adx >= min_adx and dmn > dmp and ema_s < -min_ema_slope and orb_l_dist <= -min_orb and vwap_d <= -min_vwap and vol_s >= min_vol:
                     direction = "short"
 
                 if not direction:
@@ -451,13 +536,18 @@ class DryRunner:
                 if self.direction_filter != "both" and direction != self.direction_filter:
                     continue
 
-                lots = size_commodity_lots(self.capital, entry, sdist, self.risk_pct, sym, self.leverage)
+                if is_curr:
+                    lots = size_currency_lots(self.capital, entry, sdist, self.risk_pct, sym, self.leverage)
+                else:
+                    lots = size_commodity_lots(self.capital, entry, sdist, self.risk_pct, sym, self.leverage)
                 if lots == 0:
                     continue
 
-                multiplier = get_contract_multiplier(sym)
+                multiplier = get_currency_contract_multiplier(sym) if is_curr else get_contract_multiplier(sym)
                 qty = lots
-                trade_val = lots * (COMMODITY_SPECS.get(sym, {}).get("lot_size", 1)) * entry
+                lot_size = CURRENCY_SPECS.get(sym.upper(), {}).get("lot_size", 1000) if is_curr \
+                    else COMMODITY_SPECS.get(sym, {}).get("lot_size", 1)
+                trade_val = lots * lot_size * entry
 
                 d  = 1 if direction == "long" else -1
                 sl = round(entry - sdist * d, 2)
@@ -690,7 +780,9 @@ class DryRunner:
         kill switch (force_exit_all) -- one place that writes the DB order/
         position/trade/snapshot records, updates capital, and alerts."""
         # 1. Calculate Exact Itemized Costs
-        if self.is_commodity:
+        if self.is_commodity and _is_currency(sym):
+            cost_info = compute_ncd_currency_costs(sym, pos["direction"], pos["entry_price"], exit_p, pos.get("lots", pos.get("qty", 1)))
+        elif self.is_commodity:
             cost_info = compute_mcx_commodity_costs(sym, pos["direction"], pos["entry_price"], exit_p, pos.get("lots", pos.get("qty", 1)))
         else:
             cost_info = compute_itemized_costs(pos["direction"], pos["entry_price"], exit_p, pos["qty"])
@@ -928,7 +1020,7 @@ def main():
         # Energy Contracts (Crude Oil Mini & Natural Gas Mini)
         default_commodities = ["CRUDEOILM", "NATGASMINI"]
         symbols = args.symbols or default_commodities
-        market_mode = "MCX COMMODITIES (ENERGY: CRUDE & NATGAS)"
+        market_mode = "MCX COMMODITIES"  # was a hardcoded "(ENERGY: CRUDE & NATGAS)" label -- inaccurate once NATGASMINI was pulled and GOLDM (not energy) added; actual symbols are printed separately below anyway
     else:
         symbols = args.symbols or list(SYMBOL_MAP.keys())[:args.top_n]
         market_mode = "5-MIN NSE SCALPER"
@@ -967,8 +1059,22 @@ def main():
     # Treat SIGTERM (systemctl stop / systemd restart) the same as Ctrl-C: a
     # clean, alerted shutdown -- instead of an unhandled-exception crash that
     # would exit non-zero and fight the stop command via Restart=on-failure.
+    #
+    # A signal-handler-raised KeyboardInterrupt is injected asynchronously,
+    # between arbitrary bytecode instructions -- it can land literally
+    # anywhere, including deep inside a Telegram network call during the
+    # graceful shutdown path itself (EOD summary / the final "STOPPED"
+    # message), and Python's traceback for it can even misattribute the
+    # line (observed 2026-09-17: it pointed at a comment). Wrapping every
+    # individual call site in try/except BaseException is fragile -- easy to
+    # miss one, as the final unconditional telegram.send() in this function
+    # was. The robust fix is to stop the signal from firing a second time at
+    # all: once shutdown has begun, re-arm SIGTERM to SIG_IGN so nothing
+    # further can be injected while cleanup runs. systemd's
+    # TimeoutStopSec/SIGKILL remains the real backstop if cleanup ever hangs.
     import signal
     def _handle_sigterm(signum, frame):
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
         raise KeyboardInterrupt()
     signal.signal(signal.SIGTERM, _handle_sigterm)
 
@@ -988,8 +1094,16 @@ def main():
 
         if now > mclose:
             # Today's session is already over -- roll to the next trading day.
+            # Skips weekends AND real public holidays. Holiday dates come from
+            # Upstox's own public holiday API (utils/market_holidays.py) --
+            # never a hand-maintained/hardcoded list, and never a hardcoded
+            # year; it always reflects whatever "this year" currently is,
+            # refetched automatically once a day (and across a year
+            # boundary). Was previously Sunday-only, an admitted gap in an
+            # earlier version of this comment -- found 2026-09-18.
+            trading_holidays = get_trading_holidays()
             next_day = now + timedelta(days=1)
-            while next_day.weekday() == 6:  # Sunday -- Indian markets are shut; NOT a full holiday calendar (Sat/holidays aren't handled -- see runner.scan()'s own session gate as the real safety net)
+            while next_day.weekday() >= 5 or next_day.date() in trading_holidays:
                 next_day += timedelta(days=1)
             mopen  = mopen.replace(year=next_day.year, month=next_day.month, day=next_day.day)
             mclose = mclose.replace(year=next_day.year, month=next_day.month, day=next_day.day)
@@ -1110,10 +1224,17 @@ def main():
         db.print_dashboard(args.account)
         runner._save()
 
-        total_pnl = sum(t.get("net_pnl", 0) for t in runner.trades)
+        # Sourced from the DB, not the in-memory runner.trades list -- that
+        # list starts empty on every process start, so a restart mid-session
+        # (e.g. to pick up a threshold change) used to make this report
+        # "Trades today: 0 / Total PnL: Rs0" even with real trades already
+        # closed earlier that day. The DB survives restarts; see
+        # database.py's get_trades_for_date() docstring for the full story.
+        todays_trades = db.get_trades_for_date(runner.today, args.account)
+        total_pnl = sum(t.get("net_pnl", 0) for t in todays_trades)
         telegram.send(
             f"🏁 <b>SESSION COMPLETE</b> ({runner.today}) — {market_mode}\n"
-            f"Trades today: {len(runner.trades)}  Total PnL: ₹{total_pnl:+,.2f}\n"
+            f"Trades today: {len(todays_trades)}  Total PnL: ₹{total_pnl:+,.2f}\n"
             f"Balance: ₹{runner.capital:,.2f}"
         )
 
@@ -1143,6 +1264,10 @@ if __name__ == "__main__":
         print(f"\n{YL}Shutting down.{R}", flush=True)
         try:
             telegram.send("🔴 <b>DRYRUN DAEMON STOPPED</b> (shutdown signal)")
-        except Exception:
+        except BaseException:
+            # BaseException, not Exception: a second SIGTERM landing mid-send
+            # raises KeyboardInterrupt again, which `except Exception` does
+            # NOT catch -- that's what produced the traceback on restart.
+            # _handle_sigterm is now one-shot so this is belt-and-suspenders.
             pass
         sys.exit(0)

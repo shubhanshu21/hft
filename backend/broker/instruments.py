@@ -13,6 +13,7 @@ Usage:
 from __future__ import annotations
 
 import csv
+import re
 import gzip
 import io
 import json
@@ -37,6 +38,7 @@ _MCX_META_FILE  = _CACHE_DIR / "upstox_instruments_mcx_meta.json"
 _SYMBOL_KEY_MAP: dict[str, str] = {}
 # In-memory cache: {commodity_base_symbol: instrument_key} for nearest active MCX futures
 _MCX_KEY_MAP: dict[str, str] = {}
+_CURRENCY_KEY_MAP: dict[str, str] = {}
 
 
 def _cache_is_fresh(meta_file: Path, cache_file: Path) -> bool:
@@ -98,6 +100,47 @@ def _load_master() -> None:
     log.info("Loaded %d NSE EQ equity instruments into memory.", len(_SYMBOL_KEY_MAP))
 
 
+def _load_currency_master() -> None:
+    """NSE currency derivatives (NCD_FO/FUTCUR) live in the SAME NSE.csv.gz master as
+    equities -- not a separate file like MCX. Added 2026-09-18 for USDINR/EURINR/
+    GBPINR/JPYINR futures, same nearest-expiry-per-base-symbol pattern as
+    _load_mcx_master()."""
+    global _CURRENCY_KEY_MAP
+    if not _CACHE_FILE.exists():
+        return
+    today_str = date.today().isoformat()
+    # NCD_FO lists both WEEKLY expiries (tradingsymbol e.g. "USDINR26918FUT" --
+    # year+month+day, digits only) and the standard MONTHLY contract (e.g.
+    # "USDINR26SEPFUT" -- year+3-letter-month). Weekly ones can be days from
+    # expiry with almost no listing history; only the monthly pattern gives a
+    # contract comparable in life span to MCX's, which is what we actually
+    # want to trade/backtest. Regex mirrors resolve_commodity_key()'s pattern.
+    monthly_pattern = re.compile(r"^([A-Z]+)\d{2}[A-Z]{3}FUT$")
+    candidates: dict[str, list[dict]] = {}
+    with gzip.open(_CACHE_FILE, "rt", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            if row.get("exchange") != "NCD_FO" or row.get("instrument_type") != "FUTCUR":
+                continue
+            exp = row.get("expiry", "")
+            if exp < today_str:
+                continue
+            tsym = row.get("tradingsymbol", "")
+            m = monthly_pattern.match(tsym)
+            if not m:
+                continue
+            base = m.group(1)
+            if base in ("USDINR", "EURINR", "GBPINR", "JPYINR"):
+                candidates.setdefault(base, []).append(row)
+
+    _CURRENCY_KEY_MAP = {}
+    for base, rows in candidates.items():
+        rows.sort(key=lambda r: r.get("expiry", ""))
+        _CURRENCY_KEY_MAP[base] = rows[0]["instrument_key"]
+        log.info("Resolved currency %s -> %s (%s, Expiry: %s)", base, rows[0]["instrument_key"],
+                  rows[0]["tradingsymbol"], rows[0].get("expiry"))
+
+
 def _load_mcx_master() -> None:
     global _MCX_KEY_MAP
     if not _MCX_CACHE_FILE.exists():
@@ -112,8 +155,16 @@ def _load_mcx_master() -> None:
                 exp = row.get("expiry", "")
                 if exp >= today_str:
                     tsym = row.get("tradingsymbol", "")
-                    # Match base symbols
-                    for base in ["CRUDEOILM", "NATGASMINI", "CRUDEOIL", "NATURALGAS"]:
+                    # Match base symbols -- extended 2026-09-17 to survey other MCX
+                    # commodities beyond crude/natgas (Gold Mini, Silver Mini/Micro,
+                    # Copper already have cost-model support in strategy/commodity_costs.py's
+                    # get_contract_multiplier fallbacks; this was the actual blocker,
+                    # not data availability -- Upstox's MCX master already lists these.
+                    # Order matters: startswith() means a more specific prefix (SILVERMIC,
+                    # SILVERM) must be checked before the shorter prefix it also matches
+                    # (SILVER) would otherwise steal the match.
+                    for base in ["CRUDEOILM", "NATGASMINI", "CRUDEOIL", "NATURALGAS",
+                                 "GOLDM", "GOLD", "SILVERMIC", "SILVERM", "SILVER", "COPPER"]:
                         if tsym.startswith(base):
                             if base not in candidates:
                                 candidates[base] = []
@@ -142,6 +193,8 @@ def ensure_master(force: bool = False) -> None:
             log.warning("Could not download MCX master: %s", e)
     if not _MCX_KEY_MAP and _MCX_CACHE_FILE.exists():
         _load_mcx_master()
+    if not _CURRENCY_KEY_MAP and _CACHE_FILE.exists():
+        _load_currency_master()
 
 
 def get_instrument_key(symbol: str, auto_refresh: bool = True) -> Optional[str]:
@@ -151,6 +204,8 @@ def get_instrument_key(symbol: str, auto_refresh: bool = True) -> Optional[str]:
     sym_u = symbol.upper()
     if sym_u in _MCX_KEY_MAP:
         return _MCX_KEY_MAP[sym_u]
+    if sym_u in _CURRENCY_KEY_MAP:
+        return _CURRENCY_KEY_MAP[sym_u]
     return _SYMBOL_KEY_MAP.get(sym_u)
 
 
@@ -159,7 +214,7 @@ def resolve_symbols(symbols: list[str]) -> dict[str, str]:
     ensure_master()
     result = {}
     for sym in symbols:
-        key = _SYMBOL_KEY_MAP.get(sym.upper()) or _MCX_KEY_MAP.get(sym.upper())
+        key = _SYMBOL_KEY_MAP.get(sym.upper()) or _MCX_KEY_MAP.get(sym.upper()) or _CURRENCY_KEY_MAP.get(sym.upper())
         if key:
             result[sym] = key
         else:
@@ -181,6 +236,14 @@ def build_nifty50_map() -> dict[str, str]:
         "SHRIRAMFIN", "TRENT", "BPCL",
     ]
     return resolve_symbols(nifty50)
+
+
+def build_currency_map() -> dict[str, str]:
+    """Return {base_symbol: instrument_key} for active NSE currency futures (nearest expiry)."""
+    ensure_master()
+    if _CURRENCY_KEY_MAP:
+        return _CURRENCY_KEY_MAP
+    return {}
 
 
 def build_mcx_commodity_map() -> dict[str, str]:

@@ -54,6 +54,13 @@ ARCHIVE_DIR = Path(__file__).resolve().parent / "archive_commodities"
 SYMBOLS = {
     "CRUDEOIL": "CRUDEOILM",     # archive under the base name (matches backtest/live's COMMODITY_ALIASES lookup)
     "NATURALGAS": "NATGASMINI",
+    # Added 2026-09-17 to survey other MCX commodities beyond crude/natgas, per user
+    # request -- cost-model support (contract multipliers) already existed in
+    # strategy/commodity_costs.py's get_contract_multiplier fallbacks; the only real
+    # blocker was broker/instruments.py's hardcoded base-symbol allowlist, now fixed.
+    "GOLD": "GOLDM",
+    "SILVER": "SILVERMIC",
+    "COPPER": "COPPER",
 }
 
 # (Upstox unit, Upstox interval, archive filename suffix)
@@ -202,7 +209,7 @@ def build_all_real_commodity_archives(topup: bool = False) -> None:
 
 if __name__ == "__main__":
     setup_logger("", log_file=str(Path(__file__).resolve().parent / "logs" / "real_commodity_data.log"))
-    parser = argparse.ArgumentParser(description="Real MCX commodity data (CRUDEOILM/NATGASMINI) via Upstox")
+    parser = argparse.ArgumentParser(description="Real MCX commodity data (CRUDEOILM/NATGASMINI/GOLDM/SILVERMIC/COPPER) via Upstox")
     parser.add_argument("--topup", action="store_true", help="Incremental top-up instead of a full backfill")
     args = parser.parse_args()
     build_all_real_commodity_archives(topup=args.topup)

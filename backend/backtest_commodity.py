@@ -43,9 +43,39 @@ BE_LOCK_BUFFER_PCT = 0.0020  # was 0.0008 -- same backtest: locking a bigger gua
 # order book, thinner liquidity outside inventory windows) than crude by
 # default -- see README's Crude vs NatGas microstructure comparison.
 ENTRY_THRESHOLDS = {
-    "crude":  {"min_ml_l": 0.54, "max_ml_s": 0.44, "min_adx": 15.0, "min_vol": 1.10, "min_orb": 0.05, "min_vwap": 0.05, "min_stop_pct": 0.0035},
-    "natgas": {"min_ml_l": 0.55, "max_ml_s": 0.43, "min_adx": 22.0, "min_vol": 1.70, "min_orb": 0.08, "min_vwap": 0.08, "min_stop_pct": 0.0050},
+    # min_adx raised 15.0->18.0 on 2026-09-17: swept 192 combos (slope/adx/vol/vwap) on the
+    # real archive looking for a win-rate improvement -- this was the one clean win, better on
+    # every metric at once (not a tradeoff): win rate 66.7%->68.2%, net +Rs66,269->+Rs79,940,
+    # max DD 19.7%->13.4% (150->132 trades). See conversation history for the full sweep table.
+    "crude":  {"min_ml_l": 0.54, "max_ml_s": 0.44, "min_adx": 18.0, "min_vol": 1.10, "min_orb": 0.05, "min_vwap": 0.05, "min_stop_pct": 0.0035, "min_ema_slope": 0.050},
+    "natgas": {"min_ml_l": 0.55, "max_ml_s": 0.43, "min_adx": 22.0, "min_vol": 1.70, "min_orb": 0.08, "min_vwap": 0.08, "min_stop_pct": 0.0050, "min_ema_slope": 0.050},
+    # Added 2026-09-17: GOLDM was surveyed on the exact same real 32-day window
+    # that found natgas has NO edge (0/51 credible combos profitable) -- gold
+    # instead came back 141/144 credible (>=15 trade) combos profitable (98%),
+    # a robust result, not a lucky corner. Best: 39 trades, 69.2% win rate,
+    # +Rs58,795, profit factor 2.72, max DD 7.9%. min_vwap barely moved the
+    # result across the top combos, so 0.05 (crude's value) was kept rather
+    # than over-fitting a fourth dimension that showed little signal.
+    "gold":   {"min_ml_l": 0.54, "max_ml_s": 0.44, "min_adx": 12.0, "min_vol": 1.30, "min_orb": 0.05, "min_vwap": 0.05, "min_stop_pct": 0.0035, "min_ema_slope": 0.050},
 }
+# min_ema_slope was a hardcoded 0.010 literal (both symbols, not asset-
+# calibrated like everything else in this dict) until 2026-09-17. Root-caused
+# from a real loss day: 2026-09-16 had 6 CRUDEOILM shorts in ~2h, half of
+# them on ema_slope_pct as weak as -0.015 to -0.038 -- barely past the old
+# 0.010 floor, indistinguishable from chop -- while an increasingly oversold
+# price (RSI 45->23, vwap_dist -0.43%->-1.53%) mean-reverted against 3 of the
+# 6, for losses (~-2900 to -3434) bigger than the wins (~1150-1370). Contrast
+# a same-week WINNING day (2026-09-17, 3/3 NATGASMINI longs) where
+# ema_slope_pct was 0.19-0.24 -- a genuinely strong trend, not a bare pass of
+# the floor. Promoted to per-symbol so a stricter value can be backtested
+# and tuned like every other threshold here, instead of hand-editing two
+# hardcoded literals in two files. Swept 0.010/0.03/0.05/0.08/0.12 on the
+# full 2022-2026 real archive (2026-09-17): 0.05 improved every metric at
+# once -- win rate 68.75%->70.59%, net +Rs25,777->+Rs30,248, profit factor
+# 1.69->1.97, max DD 7.52%->6.51% (fewer, higher-quality trades: 48->34).
+# Past 0.05 it over-filters: 0.08 gives back some of the gain, 0.12 flips
+# net-negative (win rate crashes to 53.8%) -- see conversation history for
+# the full sweep table.
 # min_adx was 20.0/24.0 -- backtested 2026-09-10: lowering by 5 (validated on
 # both Jan-Sep 7 and Jan-Sep 10 ranges, at both 2x and 4x leverage) improved
 # win rate, net profit (+33-58%), and max drawdown simultaneously. Every
@@ -69,6 +99,7 @@ def run_commodity_backtest(
     to_date: str | None = None,
     size_mode: str = "margin",
     no_ml_filter: bool = False,  # diagnostic only: drop the p_up condition, keep every other rule-based filter -- see conversation history for why/when
+    return_trades: bool = False,  # diagnostic only: include the full per-trade list (with entry-signal diagnostics) in the result -- see conversation history 2026-09-17, loss-pattern analysis
 ) -> dict:
     target_symbols = symbols or ["CRUDEOILM", "NATGASMINI"]
 
@@ -76,7 +107,58 @@ def run_commodity_backtest(
     current_capital = capital
     equity_curve = [capital]
 
-    period_str = f"{from_date or '2022-01-01'} to {to_date or '2026-03-01'}"
+    # Symbol -> canonical archive base name (e.g. CRUDEOILM's real data is
+    # archived as CRUDEOIL_5minute.csv, matching real_commodity_data.py's
+    # SYMBOLS dict). Moved up from further below so the period label (next)
+    # and the actual data-loading loop resolve the SAME file -- see that
+    # comment for why this matters.
+    aliases = {
+        "CRUDEOILM": "CRUDEOIL",
+        "NATGASMINI": "NATURALGAS",
+        "GOLDM": "GOLD",
+        "SILVERMIC": "SILVER",
+        "SILVERM": "SILVER",
+        "COPPER": "COPPER",
+    }
+
+    # Was a hardcoded fallback label ("2022-01-01 to 2026-03-01") that never
+    # reflected what data actually got used -- MCX real archives are capped
+    # to ~1 month per contract (Upstox only serves the current contract's
+    # intraday history; see CLAUDE.md), so every backtest run so far has
+    # actually covered ~27-28 real trading days, not years. Found 2026-09-17
+    # when asked directly "how are we backtesting, we don't have old data" --
+    # a fair catch; that stale label had been quoted as real coverage in
+    # conversation. Computed from the actual archive data instead, so the
+    # printed period can never again silently misstate real coverage.
+    #
+    # SECOND bug found and fixed the same day: this originally read
+    # f"{_sym.upper()}_5minute.csv" directly (e.g. "CRUDEOILM_5minute.csv")
+    # WITHOUT going through `aliases` the way the real data-loading loop
+    # below does -- and both files exist on disk (CRUDEOILM_5minute.csv is
+    # an older, no-longer-updated leftover; CRUDEOIL_5minute.csv is the one
+    # actually read and kept fresh by the daily topup job). The displayed
+    # period could silently name the WRONG file's date range while the
+    # simulation itself correctly used the other one. Now resolved through
+    # the identical alias + fallback logic as the real loop.
+    _archive_lo, _archive_hi = None, None
+    for _sym in target_symbols:
+        _base = aliases.get(_sym.upper(), _sym.upper())
+        _p = ARCHIVE_DIR / f"{_base}_5minute.csv"
+        if not _p.exists():
+            _p = ARCHIVE_DIR / f"{_sym.upper()}_5minute.csv"
+        if _p.exists():
+            _ts = pd.read_csv(_p, usecols=lambda c: c in ("timestamp", "date"))
+            _ts_col = "timestamp" if "timestamp" in _ts.columns else "date"
+            _ts[_ts_col] = pd.to_datetime(_ts[_ts_col])
+            _lo, _hi = _ts[_ts_col].min(), _ts[_ts_col].max()
+            _archive_lo = _lo if _archive_lo is None else min(_archive_lo, _lo)
+            _archive_hi = _hi if _archive_hi is None else max(_archive_hi, _hi)
+    _actual_start = from_date or (str(_archive_lo.date()) if _archive_lo is not None else "?")
+    _actual_end = to_date or (str(_archive_hi.date()) if _archive_hi is not None else "?")
+    period_str = f"{_actual_start} to {_actual_end}"
+    if _archive_lo is not None and from_date is None and to_date is None:
+        _n_days = (_archive_hi.date() - _archive_lo.date()).days + 1
+        period_str += f"  ({_n_days} calendar days -- real MCX archives are capped to ~1 month/contract)"
 
     print(f"\n{'='*75}")
     print(f"  MCX COMMODITY 5-MINUTE SCALPER WALK-FORWARD BACKTEST")
@@ -86,15 +168,6 @@ def run_commodity_backtest(
     print(f"  ML Filter: {'DISABLED (rule-based only)' if no_ml_filter else 'enabled'}")
     print(f"  Symbols ({len(target_symbols)}): {', '.join(target_symbols)}")
     print(f"{'='*75}\n")
-
-    aliases = {
-        "CRUDEOILM": "CRUDEOIL",
-        "NATGASMINI": "NATURALGAS",
-        "GOLDM": "GOLD",
-        "SILVERMIC": "SILVER",
-        "SILVERM": "SILVER",
-        "COPPER": "COPPER",
-    }
 
     # Lot point value multiplier map for MCX
     point_vals = {
@@ -157,7 +230,19 @@ def run_commodity_backtest(
         from strategy.commodity_features import COMMODITY_FEATURE_COLUMNS
         X_feats = feat_df[COMMODITY_FEATURE_COLUMNS] if model else None
         if model and X_feats is not None:
-            p_ups = model.predict_proba(X_feats)[:, 1]
+            try:
+                p_ups = model.predict_proba(X_feats)[:, 1]
+            except Exception as e:
+                # Found 2026-09-17 surveying GOLDM/SILVERMIC/COPPER: stale model
+                # files from 2026-09-08 (cache/commodity_models/lgb_gold.pkl etc.)
+                # were trained on an older 28-feature schema; COMMODITY_FEATURE_COLUMNS
+                # is now 33. That crashed the WHOLE backtest even with
+                # no_ml_filter=True, which is wrong -- when ML isn't usable, this
+                # should fall back to rule-based-only (p_up=0.50neutral), the same
+                # as when no model file exists at all, not raise.
+                log_msg = f"{sym}: ML model at {model_path} incompatible with current features ({e}); falling back to rule-based-only (p_up=0.50)."
+                print(f"  \033[93m[warn]\033[0m {log_msg}")
+                p_ups = np.full(n, 0.50)
         else:
             p_ups = np.full(n, 0.50)
 
@@ -210,6 +295,10 @@ def run_commodity_backtest(
                         "total_fees": cost_info["total"],
                         "net_pnl": net_pnl,
                         "reason": reason,
+                        "p_up": pos.get("diag_p_up"), "adx": pos.get("diag_adx"),
+                        "rsi": pos.get("diag_rsi"), "ema_slope": pos.get("diag_ema_slope"),
+                        "vwap_dist": pos.get("diag_vwap_dist"), "vol_surge": pos.get("diag_vol_surge"),
+                        "mins_since_open": pos.get("diag_mins_since_open"),
                         **cost_info,
                     })
 
@@ -250,7 +339,13 @@ def run_commodity_backtest(
 
             # Asset-calibrated parameter profiles (see ENTRY_THRESHOLDS module dict)
             is_natgas = "NATGAS" in sym.upper() or "NATURALGAS" in sym.upper()
-            _et = ENTRY_THRESHOLDS["natgas"] if is_natgas else ENTRY_THRESHOLDS["crude"]
+            is_gold = "GOLD" in sym.upper()
+            if is_natgas:
+                _et = ENTRY_THRESHOLDS["natgas"]
+            elif is_gold:
+                _et = ENTRY_THRESHOLDS["gold"]
+            else:
+                _et = ENTRY_THRESHOLDS["crude"]  # default/fallback for anything not yet dedicated-calibrated (silver, copper)
             min_ml_l = _et["min_ml_l"]
             max_ml_s = _et["max_ml_s"]
             min_adx = _et["min_adx"]
@@ -258,6 +353,7 @@ def run_commodity_backtest(
             min_orb = _et["min_orb"]
             min_vwap = _et["min_vwap"]
             min_stop_pct = _et["min_stop_pct"]
+            min_ema_slope = _et["min_ema_slope"]
 
             sdist = max(STOP_VOL_MULT * atr, min_stop_pct * c_price)
             if sdist <= 0 or c_price <= 0:
@@ -267,9 +363,9 @@ def run_commodity_backtest(
             ml_long_ok = no_ml_filter or (p_up >= min_ml_l)
             ml_short_ok = no_ml_filter or (p_up <= max_ml_s)
             # High-conviction Trend Expansion Setup
-            if ml_long_ok and adx >= min_adx and dmp > dmn and ema_s > 0.010 and orb_h_dist >= min_orb and vwap_d >= min_vwap and vol_s >= min_vol:
+            if ml_long_ok and adx >= min_adx and dmp > dmn and ema_s > min_ema_slope and orb_h_dist >= min_orb and vwap_d >= min_vwap and vol_s >= min_vol:
                 direction = "long"
-            elif not long_only and ml_short_ok and adx >= min_adx and dmn > dmp and ema_s < -0.010 and orb_l_dist <= -min_orb and vwap_d <= -min_vwap and vol_s >= min_vol:
+            elif not long_only and ml_short_ok and adx >= min_adx and dmn > dmp and ema_s < -min_ema_slope and orb_l_dist <= -min_orb and vwap_d <= -min_vwap and vol_s >= min_vol:
                 direction = "short"
 
 
@@ -309,6 +405,13 @@ def run_commodity_backtest(
                 "best_price": c_price,
                 "armed_be": False,
                 "stop_dist": sdist,
+                # Diagnostic-only, mirrors what live_dryrun.py logs to the DB
+                # per trade -- added 2026-09-17 so losing trades can be
+                # analyzed for patterns instead of only seeing aggregate
+                # win-rate/PnL. Never read by the trading logic itself.
+                "diag_p_up": p_up, "diag_adx": adx, "diag_rsi": rsis[i],
+                "diag_ema_slope": ema_s, "diag_vwap_dist": vwap_d,
+                "diag_vol_surge": vol_s, "diag_mins_since_open": mins_open[i],
             }
 
 
@@ -423,10 +526,13 @@ def run_commodity_backtest(
 
     print(f"{C_BOLD}{C_CYAN}└──────────────┴────────┴──────────┴────────────────┴──────────────┴────────────────┘{C_RESET}\n")
 
-    return {
+    result = {
         "trades": total_trades, "win_rate": win_rate, "net_pnl": net_pnl_sum,
         "profit_factor": profit_factor, "max_dd": max_dd, "fees": fees_sum
     }
+    if return_trades:
+        result["trade_list"] = all_trades
+    return result
 
 
 

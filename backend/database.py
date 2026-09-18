@@ -391,6 +391,21 @@ class TradingDB:
             """, (account_id, limit)).fetchall()
             return [dict(r) for r in rows]
 
+    def get_trades_for_date(self, date_str: str, account_id: str = "DRYRUN_ACCOUNT") -> List[dict]:
+        """Trades closed on a given calendar date (exit_dt), sourced from the DB
+        rather than an in-process list. Added 2026-09-17: live_dryrun.py's EOD
+        Telegram summary previously counted an in-memory `runner.trades` list
+        that starts empty on every process start -- a `systemctl restart`
+        mid-session (e.g. to pick up a config/threshold change) silently
+        reported "Trades today: 0 / Total PnL: Rs0" even though the DB had
+        real trades from earlier that same day. The DB is the source of
+        truth and survives restarts; this is what the summary should read."""
+        with self._get_conn() as conn:
+            rows = conn.execute("""
+            SELECT * FROM trades WHERE account_id = ? AND date(exit_dt) = ? ORDER BY exit_dt ASC
+            """, (account_id, date_str)).fetchall()
+            return [dict(r) for r in rows]
+
     def get_orders(self, limit: int = 50, account_id: str = "DRYRUN_ACCOUNT") -> List[dict]:
         with self._get_conn() as conn:
             rows = conn.execute("""

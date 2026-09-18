@@ -5,7 +5,6 @@ cli.py — Master Unified CLI for Multi-Asset Quantitative Trading Framework.
 Supports:
   - Equities (NSE Intraday Scalper)
   - Futures (MCX Commodity LightGBM Scalper)
-  - Options (Directional Buyer & Credit Spreads with Greeks)
 
 Usage Examples:
     # 1. Backtest MCX Commodities
@@ -48,11 +47,7 @@ def _env(key: str, default: str) -> str:
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from framework import TradingDB
-from strategies import (
-    NSEIntradayScalper, MCXCommodityScalper, DirectionalOptionBuyer
-)
-from engine import MultiAssetBacktester, MultiAssetLiveRunner
+from database import TradingDB
 from broker.upstox_broker import UpstoxBroker
 from broker.instruments import ensure_master, get_instrument_key
 from live_dryrun import _load_token
@@ -85,69 +80,12 @@ def cmd_backtest(args):
             from_date=args.from_date,
             to_date=args.to_date,
         )
-    elif asset_str in ("crypto", "binance"):
-        from backtest_crypto import run_crypto_backtest
-        res = run_crypto_backtest(
-            symbols=symbols,
-            capital=args.capital,
-            risk_pct=args.risk_pct,
-            leverage=args.leverage,
-            from_date=args.from_date,
-            to_date=args.to_date,
-            no_ml_filter=args.no_ml_filter,
-        )
-    elif asset_str in ("options", "option"):
-        from data.local_5min_archive import _load, available_symbols
-        target_symbols = symbols or ["NIFTY 50", "NIFTY BANK"]
-        data_by_symbol = {}
-        for sym in target_symbols:
-            df = _load(sym)
-            if df is not None and not df.empty:
-                data_by_symbol[sym] = df
-
-        if not data_by_symbol:
-            print(f"\033[91mNo candle data found for options symbols: {target_symbols}\033[0m")
-            return
-
-        strat = DirectionalOptionBuyer(symbols=list(data_by_symbol.keys()))
-        engine = MultiAssetBacktester(
-            strategy=strat,
-            initial_capital=args.capital,
-            from_date=args.from_date,
-            to_date=args.to_date,
-        )
-        res = engine.run(data_by_symbol)
-
-        print(f"\n\033[1m\033[96m{'='*85}\033[0m")
-        print(f"\033[1m\033[97m  ⚡ DIRECTIONAL OPTIONS BUYING — WALK-FORWARD BACKTEST RESULTS\033[0m")
-        print(f"  \033[90mPeriod:\033[0m {args.from_date or 'All'} to {args.to_date or 'All'} | \033[90mCapital:\033[0m ₹{args.capital:,.0f} | \033[90mSymbols:\033[0m {', '.join(data_by_symbol.keys())}")
-        print(f"\033[1m\033[96m{'='*85}\033[0m")
-        pnl_color = "\033[92m" if res["total_net_pnl"] > 0 else "\033[91m"
-        print(f"  \033[90mTotal Executed Trades:\033[0m {res['total_trades']} ({res['wins']}W / {res['losses']}L)")
-        print(f"  \033[90mOverall Win Rate:\033[0m      {res['win_rate_pct']:.1f}%")
-        print(f"  \033[90mProfit Factor:\033[0m         {res['profit_factor']:.2f}")
-        print(f"  \033[90mMax Drawdown:\033[0m          {res['max_drawdown_pct']:.2f}%")
-        print(f"  \033[90mNet Realized PnL:\033[0m      {pnl_color}₹{res['total_net_pnl']:+,.2f} ({res['roi_pct']:+.2f}%)\033[0m")
-        print(f"\033[1m\033[96m{'='*85}\033[0m\n")
-    else:
-        print(f"Asset class '{args.asset}' backtest running via unified engine...")
 
 
 def cmd_dryrun(args):
     asset_str = args.asset.lower()
     is_comm = asset_str in ("futures", "commodity", "commodities")
 
-    if asset_str in ("options", "option"):
-        # live_dryrun.py / engine.MultiAssetLiveRunner have no options signal
-        # path wired up -- DirectionalOptionBuyer only runs inside the
-        # backtest engine today. Silently falling through to the equity
-        # scalper here would trade options-shaped symbols with equity logic,
-        # so refuse instead of doing the wrong thing quietly.
-        print(f"\033[91mERROR: 'dryrun --asset options' isn't implemented yet -- "
-              f"there is no live/paper options strategy wired up (only "
-              f"'backtest --asset options' exists). Use --asset commodity or "
-              f"--asset equity for dryrun.\033[0m")
-        sys.exit(1)
 
     # Delegate to live_dryrun runner
     import subprocess
@@ -176,6 +114,20 @@ def cmd_report(args):
     db.print_dashboard(args.account)
 
 
+def cmd_arm_live_trading(args):
+    from safety_gate import arm, KILL_SWITCH_ENGAGED
+    ok = arm(args.component, args.confirm)
+    if ok and KILL_SWITCH_ENGAGED:
+        print("\033[93mNote: safety_gate.KILL_SWITCH_ENGAGED is still True in source -- "
+              "live trading remains blocked until that constant is hand-edited to False "
+              "and redeployed. That is intentional (see safety_gate.py).\033[0m")
+
+
+def cmd_disarm_live_trading(args):
+    from safety_gate import disarm
+    disarm(args.component)
+
+
 def cmd_reset_db(args):
     db = TradingDB(args.db)
     if db.db_path.exists():
@@ -193,7 +145,7 @@ def main():
     # TRADING_* vars) so `python3 cli.py backtest` needs no flags at all;
     # passing a flag still overrides the .env value for that one run.
     p_bt = subparsers.add_parser("backtest", help="Run walk-forward backtest on historical data")
-    p_bt.add_argument("--asset", choices=["futures", "equity", "options", "commodity", "crypto"],
+    p_bt.add_argument("--asset", choices=["futures", "equity", "commodity"],
                        default=_env("BACKTEST_ASSET", "futures"))
     p_bt.add_argument("--symbols", nargs="+", default=_env("BACKTEST_SYMBOLS", "").split() or None,
                        help="Symbols to backtest")
@@ -224,7 +176,7 @@ def main():
     # vars) so `python3 cli.py dryrun` needs no flags at all; passing a flag
     # still overrides the .env value for that one run.
     p_dr = subparsers.add_parser("dryrun", help="Run live paper-trading dryrun")
-    p_dr.add_argument("--asset", choices=["futures", "equity", "options", "commodity"],
+    p_dr.add_argument("--asset", choices=["futures", "equity", "commodity"],
                        default=_env("DRYRUN_ASSET", "futures"))
     p_dr.add_argument("--symbols", nargs="+", default=_env("DRYRUN_SYMBOLS", "").split() or None,
                        help="Symbols to watch")
@@ -257,6 +209,21 @@ def main():
     p_rst.add_argument("--risk-pct", type=float, default=float(_env("DRYRUN_RISK_PCT", "5.0")), help="Risk %% per trade")
     p_rst.add_argument("--leverage", type=float, default=float(_env("INTRADAY_LEVERAGE", "4.0")), help="Margin leverage")
     p_rst.set_defaults(func=cmd_reset_db)
+
+    # Layered live-trading kill switch (see safety_gate.py) -- arming here is
+    # only one of three independent gates; KILL_SWITCH_ENGAGED in
+    # safety_gate.py must also be hand-edited to False, and ALLOW_LIVE_TRADING
+    # must be set in .env. This command exists to be the deliberate,
+    # hard-to-fat-finger human-confirmation step, not a switch on its own.
+    p_arm = subparsers.add_parser("arm-live-trading", help="Arm one of the three live-trading gates (see safety_gate.py)")
+    p_arm.add_argument("--component", required=True, choices=["upstox", "binance", "ALL"])
+    p_arm.add_argument("--confirm", required=True,
+                        help='Must exactly equal "I UNDERSTAND THIS PLACES REAL ORDERS WITH REAL MONEY"')
+    p_arm.set_defaults(func=cmd_arm_live_trading)
+
+    p_disarm = subparsers.add_parser("disarm-live-trading", help="Remove the armed-state gate (always safe)")
+    p_disarm.add_argument("--component", default=None, choices=["upstox", "binance", "ALL", None])
+    p_disarm.set_defaults(func=cmd_disarm_live_trading)
 
     args = parser.parse_args()
     args.func(args)

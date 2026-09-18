@@ -109,7 +109,13 @@ def build_daily_universe(
     liquidity_top_n: int = LIQUIDITY_TOP_N,
     min_rvol: float = 1.05,
     min_atr_pct: float = 1.25,
-    min_history_days: int = 1200,
+    # Was 1200. The current archive (bootstrapped 2026-09-17 from Upstox's own
+    # ~4.5-year real intraday limit, starting 2022-01-01) tops out at ~1148
+    # trading days per symbol -- 1200 filtered out every symbol, unreachable
+    # given Upstox's actual data ceiling, not a real quality bar. Lowered to
+    # 1100 for headroom; grows back toward (and eventually past) 1200 on its
+    # own as update_archive.py's daily top-up adds real trading days.
+    min_history_days: int = 1100,
 ) -> dict[pd.Timestamp, set[str]]:
     """
     Multi-stage quantitative screener funnel:
@@ -175,6 +181,11 @@ def build_daily_universe(
     liquid = all_scores.groupby("date", group_keys=False).apply(
         lambda g: g.nlargest(liquidity_top_n, "avg_turnover"), include_groups=True,
     )
+    # Newer pandas can leave 'date' as both the groupby-apply's resulting index
+    # AND a regular column, which later groupby("date") calls below reject as
+    # ambiguous ("'date' is both an index level and a column label"). Reset to
+    # a plain positional index so 'date' is unambiguously just a column.
+    liquid = liquid.reset_index(drop=True)
 
     # Stage 2: Filter out dead/dormant volume and compressed ATR
     gated = liquid[(liquid["rvol"] >= min_rvol) & (liquid["prior_atr_pct"] >= min_atr_pct)].copy()
