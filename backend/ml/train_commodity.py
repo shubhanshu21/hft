@@ -100,6 +100,13 @@ COMMODITY_ALIASES = {
     "NATURALGAS": "NATURALGAS",
     "GOLD": "GOLD",
     "SILVER": "SILVER",
+    # Added 2026-09-18 (base metals survey) -- archives are saved under the
+    # base metal name (real_commodity_data.py's SYMBOLS dict), not the traded
+    # mini-contract symbol, same pattern as CRUDEOILM/GOLDM/SILVERMIC above.
+    "ALUMINI": "ALUMINIUM",
+    "LEADMINI": "LEAD",
+    "ZINCMINI": "ZINC",
+    "NICKEL": "NICKEL",
 }
 
 

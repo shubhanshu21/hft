@@ -194,9 +194,13 @@ def _load_mcx_master() -> None:
                     # not data availability -- Upstox's MCX master already lists these.
                     # Order matters: startswith() means a more specific prefix (SILVERMIC,
                     # SILVERM) must be checked before the shorter prefix it also matches
-                    # (SILVER) would otherwise steal the match.
+                    # (SILVER) would otherwise steal the match. ALUMINIUM/ALUMINI, LEAD/
+                    # LEADMINI, ZINC/ZINCMINI added 2026-09-18 (base metals survey) -- same
+                    # ordering rule: LEADMINI/ZINCMINI/ALUMINIUM before the shorter prefix
+                    # each also starts with (LEAD/ZINC/ALUMINI respectively).
                     for base in ["CRUDEOILM", "NATGASMINI", "CRUDEOIL", "NATURALGAS",
-                                 "GOLDM", "GOLD", "SILVERMIC", "SILVERM", "SILVER", "COPPER"]:
+                                 "GOLDM", "GOLD", "SILVERMIC", "SILVERM", "SILVER", "COPPER",
+                                 "ALUMINIUM", "ALUMINI", "LEADMINI", "LEAD", "ZINCMINI", "ZINC", "NICKEL"]:
                         if tsym.startswith(base):
                             if base not in candidates:
                                 candidates[base] = []

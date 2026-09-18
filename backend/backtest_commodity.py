@@ -94,6 +94,15 @@ ENTRY_THRESHOLDS = {
     # 36/180 credible combos profitable (20%) -- weaker than silver/gold even
     # before the truncation-bug correction. Not dedicated-calibrated or added
     # live. Revisit with the same train/test discipline once revisited.
+    # Added 2026-09-18 (base metals survey) so a threshold sweep for these four
+    # actually takes effect -- until this dict got real "alumini"/"leadmini"/
+    # "zincmini"/"nickel" keys AND matching branches below (see is_alumini
+    # etc.), every one of these fell through to the "crude" fallback
+    # regardless of what was swept, silently making an earlier sweep a no-op.
+    "alumini":  {"min_ml_l": 0.54, "max_ml_s": 0.44, "min_adx": 18.0, "min_vol": 1.10, "min_orb": 0.05, "min_vwap": 0.05, "min_stop_pct": 0.0035, "min_ema_slope": 0.050, "tp_mult": 1.80, "stop_mult": 1.4},
+    "leadmini": {"min_ml_l": 0.54, "max_ml_s": 0.44, "min_adx": 18.0, "min_vol": 1.10, "min_orb": 0.05, "min_vwap": 0.05, "min_stop_pct": 0.0035, "min_ema_slope": 0.050, "tp_mult": 1.80, "stop_mult": 1.4},
+    "zincmini": {"min_ml_l": 0.54, "max_ml_s": 0.44, "min_adx": 18.0, "min_vol": 1.10, "min_orb": 0.05, "min_vwap": 0.05, "min_stop_pct": 0.0035, "min_ema_slope": 0.050, "tp_mult": 1.80, "stop_mult": 1.4},
+    "nickel":   {"min_ml_l": 0.54, "max_ml_s": 0.44, "min_adx": 18.0, "min_vol": 1.10, "min_orb": 0.05, "min_vwap": 0.05, "min_stop_pct": 0.0035, "min_ema_slope": 0.050, "tp_mult": 1.80, "stop_mult": 1.4},
 }
 # min_ema_slope was a hardcoded 0.010 literal (both symbols, not asset-
 # calibrated like everything else in this dict) until 2026-09-17. Root-caused
@@ -195,6 +204,12 @@ def run_commodity_backtest(
         "SILVERMIC": "SILVER",
         "SILVERM": "SILVER",
         "COPPER": "COPPER",
+        # Added 2026-09-18 (base metals survey) -- matches real_commodity_data.py's
+        # SYMBOLS dict (archived under the base name, traded as the mini contract).
+        "ALUMINI": "ALUMINIUM",
+        "LEADMINI": "LEAD",
+        "ZINCMINI": "ZINC",
+        "NICKEL": "NICKEL",
     }
 
     # Was a hardcoded fallback label ("2022-01-01 to 2026-03-01") that never
@@ -418,7 +433,12 @@ def run_commodity_backtest(
             is_gold = "GOLD" in sym.upper()
             is_silver = "SILVER" in sym.upper()
             is_copper = "COPPER" in sym.upper()
-            is_crude = not (is_natgas or is_gold or is_silver or is_copper)
+            is_alumini = "ALUMIN" in sym.upper()
+            is_leadmini = "LEAD" in sym.upper()
+            is_zincmini = "ZINC" in sym.upper()
+            is_nickel = "NICKEL" in sym.upper()
+            is_crude = not (is_natgas or is_gold or is_silver or is_copper
+                             or is_alumini or is_leadmini or is_zincmini or is_nickel)
             if is_natgas:
                 _et = ENTRY_THRESHOLDS["natgas"]
             elif is_gold:
@@ -427,6 +447,14 @@ def run_commodity_backtest(
                 _et = ENTRY_THRESHOLDS["silver"]
             elif is_copper and "copper" in ENTRY_THRESHOLDS:
                 _et = ENTRY_THRESHOLDS["copper"]
+            elif is_alumini and "alumini" in ENTRY_THRESHOLDS:
+                _et = ENTRY_THRESHOLDS["alumini"]
+            elif is_leadmini and "leadmini" in ENTRY_THRESHOLDS:
+                _et = ENTRY_THRESHOLDS["leadmini"]
+            elif is_zincmini and "zincmini" in ENTRY_THRESHOLDS:
+                _et = ENTRY_THRESHOLDS["zincmini"]
+            elif is_nickel and "nickel" in ENTRY_THRESHOLDS:
+                _et = ENTRY_THRESHOLDS["nickel"]
             else:
                 _et = ENTRY_THRESHOLDS["crude"]  # default/fallback for anything not yet dedicated-calibrated
             min_ml_l = _et["min_ml_l"]

@@ -94,6 +94,41 @@ COMMODITY_SPECS = {
         "ctt_pct": 0.01,
         "margin_approx": 40000.0,
     },
+    # Added 2026-09-18 (base metals survey). Real lot sizes verified via web
+    # search, NOT trusted blindly from Upstox's own instrument-master
+    # "lot_size" field -- that field means "1 lot" (a trading-unit count) for
+    # these three mini contracts, not the kg multiplier the way it happened
+    # to coincide for CRUDEOILM/NICKEL. Real: Aluminium/Lead/Zinc Mini = 1 MT
+    # (1000 kg) per lot, quoted per kg; Nickel = 250 kg per lot (this one DID
+    # match Upstox's lot_size field directly).
+    "ALUMINI": {
+        "name": "Aluminium Mini (1 MT)",
+        "lot_size": 1000,
+        "tick_size": 0.05,
+        "ctt_pct": 0.01,
+        "margin_approx": 15000.0,
+    },
+    "LEADMINI": {
+        "name": "Lead Mini (1 MT)",
+        "lot_size": 1000,
+        "tick_size": 0.05,
+        "ctt_pct": 0.01,
+        "margin_approx": 15000.0,
+    },
+    "ZINCMINI": {
+        "name": "Zinc Mini (1 MT)",
+        "lot_size": 1000,
+        "tick_size": 0.05,
+        "ctt_pct": 0.01,
+        "margin_approx": 20000.0,
+    },
+    "NICKEL": {
+        "name": "Nickel (250 kg)",
+        "lot_size": 250,
+        "tick_size": 0.10,
+        "ctt_pct": 0.01,
+        "margin_approx": 30000.0,
+    },
 }
 
 MCX_CTT_PCT_SELL_SIDE = 0.010       # 0.01% on sell-side turnover
@@ -121,6 +156,10 @@ def get_contract_multiplier(symbol: str) -> int:
         "SILVERM": 5,
         "SILVERMIC": 1,
         "COPPER": 2500,
+        "ALUMINI": 1000,
+        "LEADMINI": 1000,
+        "ZINCMINI": 1000,
+        "NICKEL": 250,
     }
     return fallbacks.get(sym_clean, 10)
 

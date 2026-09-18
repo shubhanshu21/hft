@@ -69,6 +69,15 @@ SYMBOLS = {
     "GOLD": "GOLDM",
     "SILVER": "SILVERMIC",
     "COPPER": "COPPER",
+    # Added 2026-09-18: base metals survey (copper already covered above came
+    # back weak/20% robust -- checking the rest of the MCX base-metal group
+    # with the same discipline). Mini contracts used where they exist
+    # (lower margin, matches the CRUDEOILM/GOLDM/SILVERMIC convention above);
+    # NICKEL has no mini variant on MCX.
+    "ALUMINIUM": "ALUMINI",
+    "LEAD": "LEADMINI",
+    "ZINC": "ZINCMINI",
+    "NICKEL": "NICKEL",
 }
 
 # (Upstox unit, Upstox interval, archive filename suffix)
