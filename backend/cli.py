@@ -85,6 +85,17 @@ def cmd_backtest(args):
             from_date=args.from_date,
             to_date=args.to_date,
         )
+    elif asset_str in ("crypto", "binance"):
+        from backtest_crypto import run_crypto_backtest
+        res = run_crypto_backtest(
+            symbols=symbols,
+            capital=args.capital,
+            risk_pct=args.risk_pct,
+            leverage=args.leverage,
+            from_date=args.from_date,
+            to_date=args.to_date,
+            no_ml_filter=args.no_ml_filter,
+        )
     elif asset_str in ("options", "option"):
         from data.local_5min_archive import _load, available_symbols
         target_symbols = symbols or ["NIFTY 50", "NIFTY BANK"]
@@ -182,7 +193,7 @@ def main():
     # TRADING_* vars) so `python3 cli.py backtest` needs no flags at all;
     # passing a flag still overrides the .env value for that one run.
     p_bt = subparsers.add_parser("backtest", help="Run walk-forward backtest on historical data")
-    p_bt.add_argument("--asset", choices=["futures", "equity", "options", "commodity"],
+    p_bt.add_argument("--asset", choices=["futures", "equity", "options", "commodity", "crypto"],
                        default=_env("BACKTEST_ASSET", "futures"))
     p_bt.add_argument("--symbols", nargs="+", default=_env("BACKTEST_SYMBOLS", "").split() or None,
                        help="Symbols to backtest")

@@ -14,6 +14,7 @@ class AssetClass(str, Enum):
     INDEX_OPTIONS = "INDEX_OPTIONS"
     STOCK_OPTIONS = "STOCK_OPTIONS"
     COMMODITY_OPTIONS = "COMMODITY_OPTIONS"
+    CRYPTO_FUTURES = "CRYPTO_FUTURES"
 
 
 class Exchange(str, Enum):
@@ -22,6 +23,7 @@ class Exchange(str, Enum):
     BSE_EQ = "BSE_EQ"
     BSE_FO = "BSE_FO"
     MCX_FO = "MCX_FO"
+    BINANCE_FUTURES = "BINANCE_FUTURES"
 
 
 class OrderSide(str, Enum):

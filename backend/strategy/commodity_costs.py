@@ -195,7 +195,7 @@ def size_commodity_lots(
 
     lots_risk = max(1, math.floor(risk_rupees / loss_per_lot))
 
-    if size_mode == "risk_only":
+    if size_mode == "risk":
         return lots_risk
 
     # Default: Always enforce user-specified leverage margin
