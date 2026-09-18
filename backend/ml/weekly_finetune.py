@@ -17,6 +17,15 @@ process).
 Usage:
     python3 -m ml.weekly_finetune               # update archives + fine-tune + restart the dryrun service
     python3 -m ml.weekly_finetune --no-restart    # skip restarting the systemd service
+
+Note (2026-09-18): DRYRUN_USE_ML_FILTER is currently false (re-verified the
+same day -- crude's own precision-at-threshold is real but thin at 28.1%,
+gold/silver are near/below random) -- so the fine-tuned models this job
+produces aren't actually influencing any live entry decision right now.
+Kept running anyway: the archive top-up here is real and useful on its own,
+and keeping the models current means they're ready the moment ML is
+revisited, rather than stale from whenever this was last meaningfully used.
+Not wasted, just not currently load-bearing.
 """
 from __future__ import annotations
 

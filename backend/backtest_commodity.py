@@ -144,6 +144,14 @@ def run_commodity_backtest(
     # winner (PF 1.01, +Rs16,323), and was a no-op on the TEST window (2026-08-01..2026-09-17, PF 1.09
     # either way -- gold and silver simply never disagreed there). A partial regime-defense mitigant, not a
     # strong edge on its own -- off by default, opt in explicitly.
+    use_crude_regime_filter: bool = False,  # CRUDEOILM only: see strategy/regime.py's docstring for the
+    # full finding -- crude's intraday momentum edge is regime-dependent (0/80 combos profitable on
+    # May18-Jul31 vs. strongly profitable on Aug17-Sep17, SAME thresholds). Gating entries by a rolling
+    # 15-day daily-return-autocorrelation >= 0.0 (positive = trending regime day-to-day, favorable to this
+    # momentum strategy) took the bad window from PF 0.75 toward breakeven/positive while barely touching
+    # the good window's own strong performance -- see conversation history for the full sweep. Off by
+    # default (opt in explicitly) since this is a newer, less-tested lever than the entry thresholds
+    # themselves.
 ) -> dict:
     target_symbols = symbols or ["CRUDEOILM", "NATGASMINI"]
 
@@ -154,6 +162,22 @@ def run_commodity_backtest(
             _gold_raw = pd.read_csv(_gold_path)
             _gold_feat = compute_commodity_features(_gold_raw, symbol="GOLD")
             _gold_ema_by_ts = dict(zip(_gold_feat["timestamp"], _gold_feat["ema_slope_pct"]))
+
+    _crude_regime_by_date: dict = {}
+    if use_crude_regime_filter and any("CRUDE" in s.upper() for s in target_symbols):
+        from strategy.regime import regime_ok as _regime_ok
+        _crude_path = ARCHIVE_DIR / "CRUDEOIL_5minute.csv"
+        if _crude_path.exists():
+            _crude_raw = pd.read_csv(_crude_path)
+            _ts_col = "timestamp" if "timestamp" in _crude_raw.columns else "date"
+            _crude_raw["_dt"] = pd.to_datetime(_crude_raw[_ts_col])
+            _daily = _crude_raw.set_index("_dt")["close"].resample("1D").last().dropna()
+            _closes = list(_daily.values)
+            _dates = list(_daily.index.date)
+            for _i, _d in enumerate(_dates):
+                # Regime as of end of the PRIOR day only -- never includes
+                # today's own close, so this is causal/no-lookahead.
+                _crude_regime_by_date[_d] = _regime_ok(_closes[:_i], window=15, min_autocorr=0.0)
 
     all_trades: list[dict] = []
     current_capital = capital
@@ -394,6 +418,7 @@ def run_commodity_backtest(
             is_gold = "GOLD" in sym.upper()
             is_silver = "SILVER" in sym.upper()
             is_copper = "COPPER" in sym.upper()
+            is_crude = not (is_natgas or is_gold or is_silver or is_copper)
             if is_natgas:
                 _et = ENTRY_THRESHOLDS["natgas"]
             elif is_gold:
@@ -435,6 +460,14 @@ def run_commodity_backtest(
                 elif direction == "long" and _g_ema <= 0:
                     direction = None
                 elif direction == "short" and _g_ema >= 0:
+                    direction = None
+
+            if direction and is_crude and use_crude_regime_filter:
+                _regime = _crude_regime_by_date.get(pd.Timestamp(c_time).date())
+                # None (not enough daily history) or True lets the trade
+                # through unaffected -- only an explicit False blocks it.
+                # See strategy/regime.py's regime_ok docstring.
+                if _regime is False:
                     direction = None
 
 
@@ -625,6 +658,8 @@ def main():
                          help="Force the ML p_up condition back on, overriding BACKTEST_USE_ML_FILTER=false in .env")
     parser.add_argument("--confirm-silver-with-gold", action="store_true",
                          help="SILVER only: require GOLD's ema_slope_pct to agree with the entry direction (see ENTRY_THRESHOLDS module docstring for the train/test result)")
+    parser.add_argument("--use-crude-regime-filter", action="store_true",
+                         help="CRUDEOILM only: gate entries by a rolling 15-day daily-return-autocorrelation regime check (see strategy/regime.py docstring for the train/test result)")
     args = parser.parse_args()
 
     from_d = args.from_date
@@ -650,6 +685,7 @@ def main():
         size_mode=args.size_mode,
         no_ml_filter=args.no_ml_filter,
         confirm_silver_with_gold=args.confirm_silver_with_gold,
+        use_crude_regime_filter=args.use_crude_regime_filter,
     )
 
 

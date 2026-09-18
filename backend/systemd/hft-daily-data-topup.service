@@ -13,3 +13,6 @@ ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m real_currency_data --to
 # evaluation (only ~2.5 months of real archive so far, not yet live), but growing
 # the archive daily now means it'll be ready to re-validate sooner.
 ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m real_index_futures_data --topup
+# Added 2026-09-18: daily paper_trading.db backup -- previously no backup
+# existed at all for the entire trading history.
+ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m backup_db

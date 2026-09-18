@@ -6,27 +6,36 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import backtest_commodity
 import backtest_currency
+import strategy.entry_signal as entry_signal
 import live_dryrun
+import live_trading
 
 
 class TestThresholdParity(unittest.TestCase):
-    """live_dryrun.py used to duplicate backtest_commodity.py's/backtest_currency.py's
-    ENTRY_THRESHOLDS as hand-copied literals, with only a comment ("keep these two in
-    sync by hand") standing between them and silent drift -- exactly the kind of bug
-    that let a currency EOD-squareoff mismatch and gold's own stale thresholds ship
-    unnoticed earlier in this project. Fixed 2026-09-18 by having live_dryrun.py import
-    the dicts directly instead. These are identity checks (`is`), not equality checks --
-    equality would still pass if someone reintroduced a second, independently-maintained
-    copy; identity proves there is only ever one dict in memory."""
+    """live_dryrun.py (and, since 2026-09-18, live_trading.py) used to duplicate
+    backtest_commodity.py's/backtest_currency.py's ENTRY_THRESHOLDS as hand-copied
+    literals, with only a comment ("keep these two/three in sync by hand") standing
+    between them and silent drift -- exactly the kind of bug that let a currency
+    EOD-squareoff mismatch and gold's own stale thresholds ship unnoticed earlier in
+    this project. Fixed by routing everything through strategy.entry_signal, which
+    imports the dicts directly rather than duplicating them, and is itself the one
+    place both live_dryrun.py's DryRunner and live_trading.py's LiveTrader call for
+    entry decisions. These are identity checks (`is`), not equality checks --
+    equality would still pass if someone reintroduced a second, independently-
+    maintained copy; identity proves there is only ever one dict in memory."""
 
     def test_commodity_thresholds_are_the_same_object(self):
-        self.assertIs(live_dryrun.COMMODITY_ENTRY_THRESHOLDS, backtest_commodity.ENTRY_THRESHOLDS)
+        self.assertIs(entry_signal.COMMODITY_ENTRY_THRESHOLDS, backtest_commodity.ENTRY_THRESHOLDS)
 
     def test_currency_thresholds_are_the_same_object(self):
-        self.assertIs(live_dryrun.CURRENCY_ENTRY_THRESHOLDS, backtest_currency.ENTRY_THRESHOLDS)
+        self.assertIs(entry_signal.CURRENCY_ENTRY_THRESHOLDS, backtest_currency.ENTRY_THRESHOLDS)
 
     def test_currency_min_orb_is_the_same_value(self):
-        self.assertEqual(live_dryrun.CURRENCY_MIN_ORB, backtest_currency._MIN_ORB)
+        self.assertEqual(entry_signal.CURRENCY_MIN_ORB, backtest_currency._MIN_ORB)
+
+    def test_live_dryrun_and_live_trading_use_the_same_entry_signal_function(self):
+        self.assertIs(live_dryrun.compute_entry_signal, entry_signal.compute_entry_signal)
+        self.assertIs(live_trading.compute_entry_signal, entry_signal.compute_entry_signal)
 
     def test_all_live_traded_commodity_symbols_have_dedicated_thresholds(self):
         # Anything live_dryrun.py's is_natgas/is_gold/is_silver detection can match

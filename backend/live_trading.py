@@ -15,10 +15,19 @@ complete, and it is reachable ONLY by running it directly with
 it:
   - cli.py has no subcommand for it (dryrun/backtest are unchanged).
   - No systemd unit references it (only hft-dryrun.service exists, and it
-    still runs live_dryrun.py exactly as before).
-  - live_dryrun.py itself is completely untouched by this file's existence.
-Grep for "live_trading" outside this file to confirm that stays true before
-ever changing that.
+    still runs live_dryrun.py, behavior unchanged -- see below).
+Grep for "live_trading" outside this file to confirm neither of the above
+changes before ever touching that.
+
+live_dryrun.py WAS touched, once, on 2026-09-18: its entry-decision logic
+used to be duplicated here almost verbatim (the exact "keep two files in
+sync by hand" drift risk ENTRY_THRESHOLDS' own extraction eliminated one
+layer up). Both files now call the same shared strategy.entry_signal.
+compute_entry_signal() instead. This changed live_dryrun.py's SOURCE, not
+its BEHAVIOR -- verified by running its DryRunner.scan() directly before and
+after and confirming identical output, plus the full test suite (23/23) and
+a live service restart, before trusting the change. The paper daemon is
+NOT wired to this file and never calls anything defined here.
 ================================================================================
 
 Even run directly, this refuses to place a single real order unless ALL
@@ -402,8 +411,19 @@ class LiveTrader:
         }
         log.warning("LIVE ENTRY FILLED: %s %s qty=%s @ %.2f (order_id=%s, SL=%.2f, TP=%.2f)",
                     sym, sig["direction"], sig["lots"], fill_price, order_id, real_sl, real_tp)
+        # "Balance" (self.capital) is realized equity -- it only changes when
+        # a position CLOSES, never on entry (see _exit -- self.capital +=
+        # net_pnl), so it would look unchanged here even though the order
+        # just consumed real margin. Fetches the REAL post-order available
+        # funds fresh (the pre-order check earlier in this method is now
+        # stale) so the actual margin impact is visible instead of implied
+        # by a "Balance" figure that was never going to move.
+        remaining_funds = self.broker.get_available_funds()
+        funds_line = f"\nReal Funds Remaining: ₹{remaining_funds:,.2f}" if remaining_funds is not None else \
+            "\nReal Funds Remaining: (could not fetch)"
         telegram.send(f"📥 <b>LIVE ENTRY FILLED</b> {sym} {sig['direction'].upper()} @ ₹{fill_price:.2f}  "
-                      f"Qty: {sig['lots']}\nSL: ₹{real_sl:.2f}  TP: ₹{real_tp:.2f}\nBalance: ₹{self.capital:,.2f}")
+                      f"Qty: {sig['lots']}\nSL: ₹{real_sl:.2f}  TP: ₹{real_tp:.2f}{funds_line}\n"
+                      f"Balance (realized equity): ₹{self.capital:,.2f}")
 
     # ---- exit management (mirrors DryRunner._maybe_exit/_close_position) ----
     def _maybe_exit(self, sym: str, now: datetime) -> None:
@@ -525,7 +545,8 @@ class LiveTrader:
         log.warning("LIVE EXIT FILLED: %s %s @ %.2f [%s] net=%.2f (order_id=%s)",
                     sym, pos["direction"], exit_price, reason, net_pnl, order_id)
         telegram.send(f"{'✅' if net_pnl >= 0 else '❌'} <b>LIVE EXIT FILLED</b> {sym} {pos['direction'].upper()} "
-                      f"@ ₹{exit_price:.2f}  [{reason}]\nNet PnL: ₹{net_pnl:+,.2f}\nBalance: ₹{self.capital:,.2f}")
+                      f"@ ₹{exit_price:.2f}  [{reason}]\nNet PnL: ₹{net_pnl:+,.2f}\n"
+                      f"Balance (realized equity): ₹{self.capital:,.2f}")
 
     # ---- scan loop ------------------------------------------------------------
     # ---- position reconciliation ----------------------------------------------

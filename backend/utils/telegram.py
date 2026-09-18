@@ -115,11 +115,16 @@ def alert_error(context: str, exc: Exception) -> None:
 
 def alert_entry(sig: dict, capital: float) -> None:
     arrow = "🟢 LONG" if sig["direction"] == "long" else "🔴 SHORT"
+    # "Balance" is realized equity -- it only changes when a position
+    # CLOSES, never on entry (see DryRunner._close_position). Shown
+    # alongside this trade's own margin, not netted out of it, so the two
+    # numbers aren't mistaken for the same thing.
+    margin_line = f"\nMargin Used (this trade): ₹{sig['margin_used']:,.2f}" if "margin_used" in sig else ""
     send(
         f"📥 <b>ENTRY</b> {sig['symbol']} {arrow}\n"
         f"Price: ₹{sig['entry_price']:.2f}  Qty: {sig['qty']}\n"
-        f"SL: ₹{sig['sl']:.2f}  TP: ₹{sig['tp']:.2f}\n"
-        f"Balance: ₹{capital:,.2f}"
+        f"SL: ₹{sig['sl']:.2f}  TP: ₹{sig['tp']:.2f}{margin_line}\n"
+        f"Balance (realized equity): ₹{capital:,.2f}"
     )
 
 
@@ -128,5 +133,5 @@ def alert_exit(sym: str, pos: dict, exit_p: float, reason: str, net_pnl: float, 
     send(
         f"{emoji} <b>EXIT</b> {sym} {pos['direction'].upper()} @ ₹{exit_p:.2f}  [{reason}]\n"
         f"Net PnL: ₹{net_pnl:+,.2f}\n"
-        f"Balance: ₹{capital:,.2f}"
+        f"Balance (realized equity): ₹{capital:,.2f}"
     )

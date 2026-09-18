@@ -306,6 +306,17 @@ class DryRunner:
         self.symbol_daily_pnl: dict[str, float] = {s: 0.0 for s in self.symbols}
         self.symbol_kill_switch: dict[str, bool] = {s: False for s in self.symbols}
 
+        # CRUDEOILM regime gate (see strategy/regime.py's docstring for the
+        # full finding and backtest_commodity.py's use_crude_regime_filter
+        # for the train/test result) -- off by default, opt in via .env.
+        # This is a genuine tradeoff, not a clean win (cuts bad-regime
+        # losses and drawdown substantially, but also trims good-regime
+        # profit) -- deliberately NOT auto-enabled.
+        self.use_crude_regime_filter = os.environ.get("USE_CRUDE_REGIME_FILTER", "false").lower() in ("1", "true", "yes")
+        self.crude_regime_ok: bool | None = True
+        if self.use_crude_regime_filter:
+            self._refresh_crude_regime()
+
         # Real bid-ask spread sampling (added 2026-09-18): every cost model in
         # this project assumes a flat half-tick-per-leg slippage guess, never
         # measured against a real order book. A one-off check found real
@@ -329,6 +340,33 @@ class DryRunner:
         logs_dir = Path(__file__).parent / "logs"
         logs_dir.mkdir(exist_ok=True)
         self.log_path = logs_dir / f"dryrun_{self.today}.csv"
+
+    # ---- CRUDEOILM regime gate (see __init__'s comment) -----------------------
+    def _refresh_crude_regime(self) -> None:
+        """Fetches real daily candles through YESTERDAY (never today's own
+        still-forming price -- causal by construction) and recomputes
+        self.crude_regime_ok. Fails open (leaves the previous value in
+        place, or True on the very first call) if the fetch fails -- a
+        broker hiccup should never silently start blocking every crude
+        entry for the day."""
+        ikey = SYMBOL_MAP.get("CRUDEOILM")
+        if not ikey:
+            return
+        yesterday = (datetime.now(IST) - timedelta(days=1)).strftime("%Y-%m-%d")
+        try:
+            candles = self.broker.get_historical_candles(ikey, unit="days", interval=1, to_date=yesterday)
+        except Exception as exc:
+            log.warning("Could not fetch daily candles for crude regime gate: %s", exc)
+            return
+        if not candles:
+            return
+        closes = [float(c["close"]) for c in sorted(candles, key=lambda c: c["timestamp"])]
+        from strategy.regime import regime_ok as _regime_ok
+        self.crude_regime_ok = _regime_ok(closes, window=15, min_autocorr=0.0)
+        if self.crude_regime_ok is False:
+            log.warning("Crude regime gate: BLOCKED for today (recent daily-return autocorrelation < 0).")
+            telegram.send("⚠️ <b>CRUDE REGIME GATE: BLOCKED</b> — recent daily price action looks mean-reverting, "
+                           "not trending. New CRUDEOILM entries held back today (existing positions unaffected).")
 
     # ---- real spread sampling (see __init__'s comment) -----------------------
     def _maybe_sample_spread(self, sym: str, now: datetime) -> None:
@@ -369,6 +407,8 @@ class DryRunner:
             self.kill_switch_active = False
             self.symbol_daily_pnl = {s: 0.0 for s in self.symbols}
             self.symbol_kill_switch = {s: False for s in self.symbols}
+            if self.use_crude_regime_filter:
+                self._refresh_crude_regime()
 
         if self.day_start_capital > 0:
             daily_loss_pct = (self.day_start_capital - self.capital) / self.day_start_capital * 100
@@ -399,9 +439,11 @@ class DryRunner:
             # ENTRY_THRESHOLDS' own extraction eliminated one layer up, on 2026-09-18).
             candles = _fetch_candles(self.broker, sym, self.today)
             sym_risk_pct = _SYMBOL_RISK_PCT_OVERRIDE.get(sym.upper(), self.risk_pct)
+            regime_ok = self.crude_regime_ok if (self.use_crude_regime_filter and sym.upper() == "CRUDEOILM") else True
             sig_result = compute_entry_signal(
                 sym, candles, SYMBOL_MAP.get(sym), self.commodity_models, self.use_ml_filter,
                 self.full_session, self.direction_filter, self.capital, sym_risk_pct, self.leverage,
+                regime_ok=regime_ok,
             )
             if not sig_result:
                 continue
@@ -464,6 +506,14 @@ class DryRunner:
                 "sl": sl, "tp": tp, "be": be,
                 "qty": lots, "lots": lots,
                 "trade_value": round(trade_val, 2),
+                # Balance/capital only ever changes on a CLOSE (see
+                # _close_position -- self.capital += net_pnl), never on
+                # entry, so the "Balance" shown in the entry Telegram alert
+                # is realized equity, not "cash left after this trade's
+                # margin" -- those are different numbers. Shows the actual
+                # margin this trade blocks so that distinction is visible
+                # instead of implying it's already netted out of Balance.
+                "margin_used": round(trade_val / self.leverage, 2),
                 "stop_dist": round(sdist, 4),
                 "p_up": round(p_up, 3), "rsi": round(rsi, 1),
                 "vwap_dist_pct": round(vwap_d, 4),

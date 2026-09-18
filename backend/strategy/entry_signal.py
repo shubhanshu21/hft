@@ -43,6 +43,7 @@ def compute_entry_signal(
     capital: float,
     risk_pct: float,
     leverage: float,
+    regime_ok: bool | None = True,
 ) -> dict | None:
     """
     Returns a signal dict (direction, entry_price, sl, tp, be, lots,
@@ -51,6 +52,14 @@ def compute_entry_signal(
     ema_slope_pct) if a qualifying setup exists on the latest closed 5-min
     bar in `candles`, else None. `candles` must already be chronological
     (oldest-first) real 5-min OHLCV for `sym`, at least 25 bars.
+
+    `regime_ok`: see strategy/regime.py -- currently only meaningful for
+    CRUDEOILM (the one symbol this was found and validated for). False
+    blocks a new entry regardless of every other condition below; None
+    (not enough daily history yet to compute the gate) or True lets the
+    normal rule-based decision proceed unaffected. Callers that don't pass
+    this at all get the default True, i.e. no behavior change -- this
+    parameter is opt-in per caller, not a silent new restriction.
     """
     if not candles or len(candles) < 25:
         return None
@@ -134,6 +143,8 @@ def compute_entry_signal(
     if not direction:
         return None
     if direction_filter != "both" and direction != direction_filter:
+        return None
+    if regime_ok is False:
         return None
 
     if is_curr:
