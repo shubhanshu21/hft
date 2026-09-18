@@ -479,29 +479,40 @@ class DryRunner:
                     # are neutral via self.use_ml_filter same as commodity when no
                     # model is loaded).
                     min_ml_l, max_ml_s = 0.54, 0.44
+                    # tp_mult/stop_mult added 2026-09-18: a follow-up 40-combo-per-pair
+                    # sweep of take-profit/stop-distance multipliers (previously the
+                    # commodity-shared 1.80/1.4 below) found a clean win for all three
+                    # live pairs -- better win rate, net PnL, AND profit factor at once.
+                    # See backtest_currency.py's ENTRY_THRESHOLDS comment for the numbers.
                     _curr_et = {
-                        "USDINR": (15.0, 1.0, 0.04, 0.004),
-                        "EURINR": (10.0, 1.1, 0.06, 0.008),
-                        "GBPINR": (10.0, 1.0, 0.04, 0.008),
-                        "JPYINR": (12.0, 1.3, 0.05, 0.008),
-                    }.get(sym.upper(), (12.0, 1.3, 0.05, 0.008))
-                    min_adx, min_vol, min_vwap, min_ema_slope = _curr_et
+                        "USDINR": (15.0, 1.0, 0.04, 0.004, 2.6, 2.0),
+                        "EURINR": (10.0, 1.1, 0.06, 0.008, 3.0, 1.0),
+                        "GBPINR": (10.0, 1.0, 0.04, 0.008, 2.2, 1.0),
+                        "JPYINR": (12.0, 1.3, 0.05, 0.008, 1.80, 1.4),  # unvalidated, left on the old shared default
+                    }.get(sym.upper(), (12.0, 1.3, 0.05, 0.008, 1.80, 1.4))
+                    min_adx, min_vol, min_vwap, min_ema_slope, tp_mult, stop_mult = _curr_et
                     min_orb, min_stop_pct = 0.05, 0.0006
                 elif is_natgas:
                     min_ml_l, max_ml_s = 0.55, 0.43
                     min_adx, min_vol = 22.0, 1.70   # natgas was 19.0/1.40 -- backtested 2026-09-11: raising the bar cut trade count 23->11 and flipped net-loss to net-profit after costs
                     min_orb, min_vwap, min_stop_pct = 0.08, 0.08, 0.0050
                     min_ema_slope = 0.050
+                    tp_mult, stop_mult = 1.80, 1.4  # commodity default, see the tp/sl computation below
                 elif is_gold:
                     # Added 2026-09-17: GOLDM surveyed on the real 32-day archive came
                     # back 141/144 credible (>=15 trade) combos profitable (98%) --
                     # a robust result, unlike natgas's 0/51. See
                     # backtest_commodity.py's ENTRY_THRESHOLDS["gold"] comment for the
-                    # full sweep. Best: 39 trades, 69.2% win rate, +Rs58,795, PF 2.72.
+                    # full sweep.
                     min_ml_l, max_ml_s = 0.54, 0.44
                     min_adx, min_vol = 12.0, 1.30
                     min_orb, min_vwap, min_stop_pct = 0.05, 0.05, 0.0035
                     min_ema_slope = 0.050
+                    # tp_mult/stop_mult updated 2026-09-18: a follow-up 40-combo TP/stop
+                    # sweep found tp=1.0/stop=1.7 a clean win over the commodity-default
+                    # 1.80/1.4 on every metric -- win rate 69.2%->69.8%, net
+                    # +Rs58,795->+Rs70,766 (+20.4%), max DD 7.89%->7.03% (also better).
+                    tp_mult, stop_mult = 1.00, 1.7
                 else:  # crude, and default/fallback for anything not yet dedicated-calibrated
                     min_ml_l, max_ml_s = 0.54, 0.44
                     # min_adx raised 15.0->18.0 2026-09-17 -- see backtest_commodity.py's
@@ -516,8 +527,9 @@ class DryRunner:
                     # own much smaller values above, its intraday moves are an order
                     # of magnitude calmer).
                     min_ema_slope = 0.050
+                    tp_mult, stop_mult = 1.80, 1.4  # commodity default, see the tp/sl computation below
 
-                sdist = max(1.4 * atr, min_stop_pct * entry)
+                sdist = max(stop_mult * atr, min_stop_pct * entry)
                 if sdist <= 0 or entry <= 0:
                     continue
 
@@ -551,7 +563,7 @@ class DryRunner:
 
                 d  = 1 if direction == "long" else -1
                 sl = round(entry - sdist * d, 2)
-                tp = round(entry + 1.80 * sdist * d, 2)  # was 1.20 -- matches backtest_commodity.py's TAKE_PROFIT_MULT (backtested 2026-09-11: wider target cut brokerage's share of net PnL by diluting the flat per-trade fee over a bigger win)
+                tp = round(entry + tp_mult * sdist * d, 2)  # per-symbol now -- commodity default 1.80 (was 1.20, backtested 2026-09-11), currency pairs use their own validated tp_mult from the block above
                 be = round(entry + 0.60 * sdist * d, 2)  # was 0.50 -- matches backtest_commodity.py's BE_ACTIVATION_MULT (backtested 2026-09-11 improvement)
 
                 ts_tag = now.strftime('%Y%m%d_%H%M%S')

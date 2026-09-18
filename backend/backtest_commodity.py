@@ -47,16 +47,24 @@ ENTRY_THRESHOLDS = {
     # real archive looking for a win-rate improvement -- this was the one clean win, better on
     # every metric at once (not a tradeoff): win rate 66.7%->68.2%, net +Rs66,269->+Rs79,940,
     # max DD 19.7%->13.4% (150->132 trades). See conversation history for the full sweep table.
-    "crude":  {"min_ml_l": 0.54, "max_ml_s": 0.44, "min_adx": 18.0, "min_vol": 1.10, "min_orb": 0.05, "min_vwap": 0.05, "min_stop_pct": 0.0035, "min_ema_slope": 0.050},
-    "natgas": {"min_ml_l": 0.55, "max_ml_s": 0.43, "min_adx": 22.0, "min_vol": 1.70, "min_orb": 0.08, "min_vwap": 0.08, "min_stop_pct": 0.0050, "min_ema_slope": 0.050},
+    # tp_mult/stop_mult added 2026-09-18: a 40-combo TP/stop-distance sweep at
+    # crude's already-optimal entry thresholds found the current 1.8/1.4 near-
+    # optimal already -- the best alternative (tp=2.2) only added +1.4% net PnL
+    # while making max DD meaningfully worse (13.4%->15.4%) and win rate
+    # slightly worse. A real tradeoff, not a clean win -- left unchanged.
+    "crude":  {"min_ml_l": 0.54, "max_ml_s": 0.44, "min_adx": 18.0, "min_vol": 1.10, "min_orb": 0.05, "min_vwap": 0.05, "min_stop_pct": 0.0035, "min_ema_slope": 0.050, "tp_mult": 1.80, "stop_mult": 1.4},
+    "natgas": {"min_ml_l": 0.55, "max_ml_s": 0.43, "min_adx": 22.0, "min_vol": 1.70, "min_orb": 0.08, "min_vwap": 0.08, "min_stop_pct": 0.0050, "min_ema_slope": 0.050, "tp_mult": 1.80, "stop_mult": 1.4},
     # Added 2026-09-17: GOLDM was surveyed on the exact same real 32-day window
     # that found natgas has NO edge (0/51 credible combos profitable) -- gold
     # instead came back 141/144 credible (>=15 trade) combos profitable (98%),
-    # a robust result, not a lucky corner. Best: 39 trades, 69.2% win rate,
-    # +Rs58,795, profit factor 2.72, max DD 7.9%. min_vwap barely moved the
+    # a robust result, not a lucky corner. min_vwap barely moved the
     # result across the top combos, so 0.05 (crude's value) was kept rather
     # than over-fitting a fourth dimension that showed little signal.
-    "gold":   {"min_ml_l": 0.54, "max_ml_s": 0.44, "min_adx": 12.0, "min_vol": 1.30, "min_orb": 0.05, "min_vwap": 0.05, "min_stop_pct": 0.0035, "min_ema_slope": 0.050},
+    # tp_mult/stop_mult updated 2026-09-18: a follow-up 40-combo TP/stop sweep
+    # found tp=1.0/stop=1.7 a clean win over the old 1.8/1.4 on every metric --
+    # win rate 69.2%->69.8%, net +Rs58,795->+Rs70,766 (+20.4%), max DD
+    # 7.89%->7.03% (also better), not a tradeoff.
+    "gold":   {"min_ml_l": 0.54, "max_ml_s": 0.44, "min_adx": 12.0, "min_vol": 1.30, "min_orb": 0.05, "min_vwap": 0.05, "min_stop_pct": 0.0035, "min_ema_slope": 0.050, "tp_mult": 1.00, "stop_mult": 1.7},
 }
 # min_ema_slope was a hardcoded 0.010 literal (both symbols, not asset-
 # calibrated like everything else in this dict) until 2026-09-17. Root-caused
@@ -354,8 +362,10 @@ def run_commodity_backtest(
             min_vwap = _et["min_vwap"]
             min_stop_pct = _et["min_stop_pct"]
             min_ema_slope = _et["min_ema_slope"]
+            tp_mult = _et.get("tp_mult", TAKE_PROFIT_MULT)
+            stop_mult = _et.get("stop_mult", STOP_VOL_MULT)
 
-            sdist = max(STOP_VOL_MULT * atr, min_stop_pct * c_price)
+            sdist = max(stop_mult * atr, min_stop_pct * c_price)
             if sdist <= 0 or c_price <= 0:
                 continue
 
@@ -388,7 +398,7 @@ def run_commodity_backtest(
 
             d = 1 if direction == "long" else -1
             sl = round(c_price - sdist * d, 2)
-            tp = round(c_price + TAKE_PROFIT_MULT * sdist * d, 2)
+            tp = round(c_price + tp_mult * sdist * d, 2)
             be = round(c_price + BE_ACTIVATION_MULT * sdist * d, 2)
 
             in_pos = True

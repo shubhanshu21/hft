@@ -68,11 +68,22 @@ BE_LOCK_BUFFER_PCT = 0.0020
 # (39-49%), but strong profit factors (2.2-3.8x) and small drawdowns
 # (<4.3%) -- profit from asymmetric win/loss size, not win rate. Genuinely
 # different payoff shape than crude/gold's 65-70%-win-rate/tight-R:R style.
+# tp_mult/stop_mult added 2026-09-18: a follow-up 40-combo-per-pair sweep of the
+# take-profit/stop-distance multipliers (previously the shared TAKE_PROFIT_MULT=1.80/
+# STOP_VOL_MULT=1.4 constants below, borrowed unvalidated from commodities) found a
+# clean win for all three live pairs -- better win rate, net PnL, AND profit factor
+# simultaneously, not a tradeoff:
+#   USDINR: win 48.9%->51.2%, net +Rs13,854->+Rs17,240, PF 3.13->3.65 (tp=2.6, stop=2.0)
+#   EURINR: net +Rs8,416->+Rs9,458, PF 2.23->2.34 (tp=3.0, stop=1.0)
+#   GBPINR: win 41.2%->47.1%, net +Rs3,848->+Rs6,694, PF 2.87->4.36 (tp=2.2, stop=1.0)
+# 40/40 credible combos were profitable for every pair in that sweep -- currency's
+# low-win-rate/high-profit-factor payoff shape rewards a wider target much more than
+# commodities' tighter-R:R style did.
 ENTRY_THRESHOLDS = {
-    "USDINR": {"min_adx": 15.0, "min_vol": 1.0, "min_vwap": 0.04, "min_stop_pct": 0.0006, "min_ema_slope": 0.004},
-    "EURINR": {"min_adx": 10.0, "min_vol": 1.1, "min_vwap": 0.06, "min_stop_pct": 0.0006, "min_ema_slope": 0.008},
-    "GBPINR": {"min_adx": 10.0, "min_vol": 1.0, "min_vwap": 0.04, "min_stop_pct": 0.0006, "min_ema_slope": 0.008},
-    "JPYINR": {"min_adx": 12.0, "min_vol": 1.30, "min_vwap": 0.05, "min_stop_pct": 0.0006, "min_ema_slope": 0.008},  # unvalidated, see above
+    "USDINR": {"min_adx": 15.0, "min_vol": 1.0, "min_vwap": 0.04, "min_stop_pct": 0.0006, "min_ema_slope": 0.004, "tp_mult": 2.6, "stop_mult": 2.0},
+    "EURINR": {"min_adx": 10.0, "min_vol": 1.1, "min_vwap": 0.06, "min_stop_pct": 0.0006, "min_ema_slope": 0.008, "tp_mult": 3.0, "stop_mult": 1.0},
+    "GBPINR": {"min_adx": 10.0, "min_vol": 1.0, "min_vwap": 0.04, "min_stop_pct": 0.0006, "min_ema_slope": 0.008, "tp_mult": 2.2, "stop_mult": 1.0},
+    "JPYINR": {"min_adx": 12.0, "min_vol": 1.30, "min_vwap": 0.05, "min_stop_pct": 0.0006, "min_ema_slope": 0.008, "tp_mult": 1.80, "stop_mult": 1.4},  # unvalidated, see above -- left on the old shared default
 }
 _MIN_ORB = 0.05  # min_orb showed little discriminating power in the sweep (unlike ema_slope/adx) -- kept at gold's value, not over-fit as a 5th dimension
 
@@ -227,8 +238,10 @@ def run_currency_backtest(
             min_vwap = _et["min_vwap"]
             min_stop_pct = _et["min_stop_pct"]
             min_ema_slope = _et["min_ema_slope"]
+            tp_mult = _et.get("tp_mult", TAKE_PROFIT_MULT)
+            stop_mult = _et.get("stop_mult", STOP_VOL_MULT)
 
-            sdist = max(STOP_VOL_MULT * atr, min_stop_pct * c_price)
+            sdist = max(stop_mult * atr, min_stop_pct * c_price)
             if sdist <= 0 or c_price <= 0:
                 continue
 
@@ -250,7 +263,7 @@ def run_currency_backtest(
 
             d = 1 if direction == "long" else -1
             sl = round(c_price - sdist * d, 4)
-            tp = round(c_price + TAKE_PROFIT_MULT * sdist * d, 4)
+            tp = round(c_price + tp_mult * sdist * d, 4)
             be = round(c_price + BE_ACTIVATION_MULT * sdist * d, 4)
 
             in_pos = True
