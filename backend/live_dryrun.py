@@ -44,21 +44,16 @@ from datetime import date, datetime, timedelta
 from typing import Optional
 from zoneinfo import ZoneInfo
 
-import pandas as pd
-
 sys.path.insert(0, str(Path(__file__).parent))
 
 from broker.upstox_broker import UpstoxBroker, token_invalid_event
 from database import TradingDB
-from strategy.commodity_costs import (
-    compute_mcx_commodity_costs, size_commodity_lots, COMMODITY_SPECS, get_contract_multiplier
-)
+from strategy.commodity_costs import compute_mcx_commodity_costs, COMMODITY_SPECS, get_contract_multiplier
 from strategy.currency_costs import (
-    compute_ncd_currency_costs, size_currency_lots, CURRENCY_SPECS,
+    compute_ncd_currency_costs, CURRENCY_SPECS,
     get_contract_multiplier as get_currency_contract_multiplier,
 )
-
-_CURRENCY_SYMBOLS = {"USDINR", "EURINR", "GBPINR", "JPYINR"}
+from strategy.entry_signal import compute_entry_signal, is_currency as _is_currency
 
 # Per-symbol risk-per-trade override (falls back to --risk-pct/DRYRUN_RISK_PCT
 # for anything not listed). SILVER re-added 2026-09-18 at half the account
@@ -70,16 +65,6 @@ _CURRENCY_SYMBOLS = {"USDINR", "EURINR", "GBPINR", "JPYINR"}
 # not treated as equally trusted as gold/crude yet.
 _SYMBOL_RISK_PCT_OVERRIDE = {"SILVER": 5.0}
 
-
-def _is_currency(sym: str) -> bool:
-    return sym.upper() in _CURRENCY_SYMBOLS
-
-
-from strategy.commodity_features import (
-    compute_commodity_features, COMMODITY_FEATURE_COLUMNS
-)
-from backtest_commodity import ENTRY_THRESHOLDS as COMMODITY_ENTRY_THRESHOLDS
-from backtest_currency import ENTRY_THRESHOLDS as CURRENCY_ENTRY_THRESHOLDS, _MIN_ORB as CURRENCY_MIN_ORB
 from broker.instruments import build_mcx_commodity_map, build_currency_map, ensure_master, get_instrument_key
 from utils.logger import get_logger, setup_logger
 from utils import telegram
@@ -406,129 +391,36 @@ class DryRunner:
                 continue
             if self.kill_switch_active or self.symbol_kill_switch.get(sym, False) or not self.trading_enabled:
                 continue
+
+            # Entry decision delegated to strategy.entry_signal.compute_entry_signal
+            # -- the single shared function live_trading.py's LiveTrader also calls,
+            # eliminating what used to be near-identical logic hand-duplicated in
+            # both files (the exact "keep two files in sync by hand" drift risk
+            # ENTRY_THRESHOLDS' own extraction eliminated one layer up, on 2026-09-18).
             candles = _fetch_candles(self.broker, sym, self.today)
-            if not candles or len(candles) < 25:
+            sym_risk_pct = _SYMBOL_RISK_PCT_OVERRIDE.get(sym.upper(), self.risk_pct)
+            sig_result = compute_entry_signal(
+                sym, candles, SYMBOL_MAP.get(sym), self.commodity_models, self.use_ml_filter,
+                self.full_session, self.direction_filter, self.capital, sym_risk_pct, self.leverage,
+            )
+            if not sig_result:
                 continue
-
-            # -----------------------------------------------------------------
-            # MCX Commodity Scalper Logic (LightGBM + Microstructure Momentum)
-            # -----------------------------------------------------------------
-            raw_df = pd.DataFrame(candles)
-            feat_df = compute_commodity_features(raw_df, symbol=sym)
-            if feat_df is None or len(feat_df) < 25:
-                continue
-
-            t = len(feat_df) - 1   # latest complete 5m bar
-            row = feat_df.iloc[t]
-            mins = int(row.get("minutes_since_open", 0))
 
             is_curr = _is_currency(sym)
-            if is_curr:
-                # NSE currency derivatives trade 09:00-17:00 IST -- no MCX-style
-                # evening/US-overlap session (no analogous "second session" for a
-                # currency pair). 15-min open buffer + 16:50 square-off, matching
-                # backtest_currency.py exactly.
-                if mins < 15 or mins > 460:
-                    continue
-            else:
-                # Full session (10:00-22:30 IST) vs US/Evening-overlap-only
-                # (18:30-22:00 IST) -- matches backtest_commodity.py's
-                # us_session_only flag exactly (same two windows: 60-810 vs
-                # 570-780 minutes since 09:00 open). See self.full_session's
-                # docstring for the backtest comparison that motivated the
-                # 2026-09-17 switch to full-session by default.
-                if self.full_session:
-                    if mins < 60 or mins > 810:
-                        continue
-                else:
-                    if mins < 570 or mins > 780:
-                        continue
-
-            # Model probability
-            model = self.commodity_models.get(sym)
-            if model:
-                try:
-                    X_feat = feat_df[COMMODITY_FEATURE_COLUMNS].iloc[[t]]
-                    p_up = float(model.predict_proba(X_feat)[0, 1])
-                except Exception:
-                    p_up = 0.50
-            else:
-                p_up = 0.50
-
-            adx = float(row.get("adx", 25.0))
-            dmp = float(row.get("dmp", 25.0))
-            dmn = float(row.get("dmn", 25.0))
-            vol_s = float(row.get("vol_surge_ratio", 1.0))
-            vwap_d = float(row.get("vwap_dist_pct", 0.0))
-            ema_s = float(row.get("ema_slope_pct", 0.0))
-            orb_h_dist = float(row.get("orb_high_dist_pct", 0.0))
-            orb_l_dist = float(row.get("orb_low_dist_pct", 0.0))
-            rsi = float(row.get("intraday_rsi", 50.0))
-            entry = float(row["close"])
-            atr = float(row.get("atr", 0.005 * entry))
-
-            # Asset-calibrated parameter profiles -- imported directly from
-            # backtest_commodity.py's / backtest_currency.py's own ENTRY_THRESHOLDS
-            # dicts (see top of file) rather than duplicated as hand-copied literals.
-            # This used to be "keep these two in sync by hand" -- a real, admitted
-            # drift risk that never actually got a corresponding test. Importing the
-            # single source of truth eliminates the risk structurally instead.
-            is_natgas = "NATGAS" in sym.upper() or "NATURALGAS" in sym.upper()
-            is_gold = "GOLD" in sym.upper()
-            is_silver = "SILVER" in sym.upper()
-            if is_curr:
-                # min_ml_l/max_ml_s unused for currency (no trained model exists;
-                # ml_long_ok/ml_short_ok below are neutral via self.use_ml_filter,
-                # same as commodity when no model is loaded).
-                _et = CURRENCY_ENTRY_THRESHOLDS.get(sym.upper(), CURRENCY_ENTRY_THRESHOLDS["USDINR"])
-                min_ml_l, max_ml_s = 0.54, 0.44
-                min_orb, min_stop_pct = CURRENCY_MIN_ORB, _et["min_stop_pct"]
-            else:
-                _key = "natgas" if is_natgas else "gold" if is_gold else "silver" if is_silver else "crude"
-                _et = COMMODITY_ENTRY_THRESHOLDS[_key]
-                min_ml_l, max_ml_s = _et["min_ml_l"], _et["max_ml_s"]
-                min_orb, min_stop_pct = _et["min_orb"], _et["min_stop_pct"]
-            min_adx, min_vol, min_vwap = _et["min_adx"], _et["min_vol"], _et["min_vwap"]
-            min_ema_slope = _et["min_ema_slope"]
-            tp_mult, stop_mult = _et["tp_mult"], _et["stop_mult"]
-
-            sdist = max(stop_mult * atr, min_stop_pct * entry)
-            if sdist <= 0 or entry <= 0:
-                continue
-
-            direction = None
-            ml_long_ok = (not self.use_ml_filter) or (p_up >= min_ml_l)
-            ml_short_ok = (not self.use_ml_filter) or (p_up <= max_ml_s)
-            # Calibrated 70%+ Win Rate Rules (asset-calibrated, matches backtest):
-            if ml_long_ok and adx >= min_adx and dmp > dmn and ema_s > min_ema_slope and orb_h_dist >= min_orb and vwap_d >= min_vwap and vol_s >= min_vol:
-                direction = "long"
-            elif self.direction_filter != "long" and ml_short_ok and adx >= min_adx and dmn > dmp and ema_s < -min_ema_slope and orb_l_dist <= -min_orb and vwap_d <= -min_vwap and vol_s >= min_vol:
-                direction = "short"
-
-            if not direction:
-                continue
-
-            if self.direction_filter != "both" and direction != self.direction_filter:
-                continue
-
-            sym_risk_pct = _SYMBOL_RISK_PCT_OVERRIDE.get(sym.upper(), self.risk_pct)
-            if is_curr:
-                lots = size_currency_lots(self.capital, entry, sdist, sym_risk_pct, sym, self.leverage)
-            else:
-                lots = size_commodity_lots(self.capital, entry, sdist, sym_risk_pct, sym, self.leverage)
-            if lots == 0:
-                continue
+            direction = sig_result["direction"]
+            entry = sig_result["entry_price"]
+            sl, tp, be = sig_result["sl"], sig_result["tp"], sig_result["be"]
+            lots = sig_result["lots"]
+            sdist = sig_result["stop_dist"]
+            p_up, rsi = sig_result["p_up"], sig_result["rsi"]
+            adx, vol_s = sig_result["adx"], sig_result["vol_surge"]
+            vwap_d, ema_s = sig_result["vwap_dist_pct"], sig_result["ema_slope_pct"]
 
             multiplier = get_currency_contract_multiplier(sym) if is_curr else get_contract_multiplier(sym)
             qty = lots
             lot_size = CURRENCY_SPECS.get(sym.upper(), {}).get("lot_size", 1000) if is_curr \
                 else COMMODITY_SPECS.get(sym, {}).get("lot_size", 1)
             trade_val = lots * lot_size * entry
-
-            d  = 1 if direction == "long" else -1
-            sl = round(entry - sdist * d, 2)
-            tp = round(entry + tp_mult * sdist * d, 2)  # per-symbol now -- commodity default 1.80 (was 1.20, backtested 2026-09-11), currency pairs use their own validated tp_mult from the block above
-            be = round(entry + 0.60 * sdist * d, 2)  # was 0.50 -- matches backtest_commodity.py's BE_ACTIVATION_MULT (backtested 2026-09-11 improvement)
 
             ts_tag = now.strftime('%Y%m%d_%H%M%S')
             pos_id = f"POS_MCX_{ts_tag}_{sym}"
@@ -582,7 +474,6 @@ class DryRunner:
             signals.append(sig)
             self.positions[sym] = {
                 **sig, "entry_time": now,
-                "entry_idx": t,
                 "current_stop": sl, "best_price": entry, "armed_be": False,
             }
         return signals

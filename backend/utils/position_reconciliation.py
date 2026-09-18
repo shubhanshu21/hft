@@ -25,12 +25,20 @@ from broker.upstox_broker import UpstoxBroker
 def find_discrepancies(
     broker: UpstoxBroker,
     tracked_positions: dict[str, dict],
-    symbol_map: dict[str, str],
+    symbol_map: dict[str, str] | None = None,
 ) -> dict[str, dict]:
     """
     Compares `tracked_positions` (this app's own {symbol: {"direction",
-    "qty", ...}} view of what's open) against the REAL broker-side net
-    quantity per instrument.
+    "qty", "instrument_key", ...}} view of what's open) against the REAL
+    broker-side net quantity per instrument.
+
+    Uses each position's own `instrument_key` (the exact contract it was
+    actually opened on) when present, rather than `symbol_map` -- a fresh
+    symbol->instrument lookup can point at a DIFFERENT (rolled-over)
+    contract than the one really held, which would incorrectly compare
+    against an unrelated instrument's broker-side quantity. `symbol_map` is
+    kept only as a fallback for callers/positions that don't carry their own
+    instrument_key (e.g. a position dict built before this field existed).
 
     Returns {symbol: {"kind": ..., "tracked_qty": int, "broker_qty": int}}
     for every symbol where they disagree. `kind` is one of:
@@ -54,7 +62,7 @@ def find_discrepancies(
 
     discrepancies: dict[str, dict] = {}
     for sym, pos in tracked_positions.items():
-        ikey = symbol_map.get(sym)
+        ikey = pos.get("instrument_key") or (symbol_map or {}).get(sym)
         if not ikey:
             continue
         tracked_qty_signed = pos["qty"] * (1 if pos["direction"] == "long" else -1)

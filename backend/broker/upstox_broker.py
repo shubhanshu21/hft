@@ -1005,6 +1005,38 @@ class UpstoxBroker(BaseBroker):
             )
             raise RuntimeError(f"Order placement failed: {exc}") from exc
 
+    def cancel_order(self, order_id: str) -> bool:
+        """
+        Cancel a live (still-open) order via DELETE /v3/order/cancel. Added
+        2026-09-18 -- the SDK (upstox_client.OrderApiV3.cancel_order) already
+        supported this; it just had never been wired into this class, which
+        meant an order stuck in an ambiguous state (not yet 'complete', not
+        yet 'rejected') could only be flagged for a human, never resolved
+        automatically by anything in this codebase. Only meaningful for an
+        order that hasn't reached a terminal state yet -- cancelling an
+        already-'complete' order is a no-op the exchange will simply reject.
+
+        Returns True if the cancel request was accepted (NOT the same as the
+        order being confirmed cancelled -- poll get_order_status afterward
+        for that, same as after placing an order). False on any failure;
+        never raises, since a caller re-checking status after this either
+        way is the correct pattern regardless of whether the cancel itself
+        succeeded.
+        """
+        if self.dry_run:
+            log.warning("[DRY RUN] Would cancel order | order_id=%s", order_id)
+            return True
+        try:
+            response = self._order_api_v3.cancel_order(order_id=order_id)
+            log.info("Cancel requested for order_id=%s | response_status=%s", order_id, getattr(response, "status", None))
+            return True
+        except ApiException as exc:
+            log.warning("ApiException cancelling order '%s': HTTP %s — %s", order_id, exc.status, exc.reason)
+            return False
+        except Exception as exc:
+            log.warning("Unexpected error cancelling order '%s': %s", order_id, exc)
+            return False
+
     def place_sell_order(
         self,
         instrument_token: str,

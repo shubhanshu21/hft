@@ -39,11 +39,16 @@ Real-order specifics live_dryrun.py's simulation never had to deal with:
     get_fill_price polled with a timeout) before a position is recorded --
     an order_id being returned does not mean the exchange filled it.
   - Costs are computed from the REAL fill price, never an assumed one.
-  - There is no cancel_order() on UpstoxBroker yet. An entry order that
-    doesn't reach 'complete' within ORDER_FILL_TIMEOUT_SEC is logged as a
-    FAILED entry and left alone -- this module does not attempt to cancel
-    or otherwise resolve it. A stuck/partially-filled real order needs a
-    human to check the actual Upstox order book, not an automated guess.
+  - An order that doesn't reach 'complete' within ORDER_FILL_TIMEOUT_SEC
+    triggers an active broker.cancel_order() attempt (added 2026-09-18)
+    before giving up, not just a flag-and-wait. Most timeouts resolve
+    cleanly this way (cancelled with nothing filled, or it turns out to
+    have filled anyway in the race). If it's STILL unresolved after that
+    (Upstox's order-status values don't distinguish every intermediate/
+    partial-fill state, and get_fill_price() only reports a price for a
+    fully-'complete' order), it's flagged loudly for a human to check the
+    real Upstox order book -- this module does not guess at a partial-fill
+    quantity it can't actually see.
   - Exit orders are placed and confirmed the same way; if an exit order
     fails to fill, the position is left open and flagged loudly (Telegram +
     log) rather than the process assuming it's flat when it might not be.
@@ -86,23 +91,14 @@ from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import pandas as pd
-
 import safety_gate
 from auth.upstox_auto_login import ensure_fresh_upstox_token
-from broker.upstox_broker import UpstoxBroker
+from broker.upstox_broker import UpstoxBroker, token_invalid_event
 from config import UpstoxConfig
 from database import TradingDB
-from strategy.commodity_costs import (
-    compute_mcx_commodity_costs, size_commodity_lots, COMMODITY_SPECS, get_contract_multiplier,
-)
-from strategy.currency_costs import (
-    compute_ncd_currency_costs, size_currency_lots, CURRENCY_SPECS,
-    get_contract_multiplier as get_currency_contract_multiplier,
-)
-from strategy.commodity_features import compute_commodity_features, COMMODITY_FEATURE_COLUMNS
-from backtest_commodity import ENTRY_THRESHOLDS as COMMODITY_ENTRY_THRESHOLDS
-from backtest_currency import ENTRY_THRESHOLDS as CURRENCY_ENTRY_THRESHOLDS, _MIN_ORB as CURRENCY_MIN_ORB
+from strategy.commodity_costs import compute_mcx_commodity_costs, COMMODITY_SPECS
+from strategy.currency_costs import compute_ncd_currency_costs, CURRENCY_SPECS
+from strategy.entry_signal import compute_entry_signal, is_currency as _is_currency
 from broker.instruments import build_mcx_commodity_map, build_currency_map
 from utils.logger import get_logger, setup_logger
 from utils import telegram
@@ -110,23 +106,21 @@ from utils import telegram
 IST = ZoneInfo("Asia/Kolkata")
 log = get_logger("live_trading")
 
-_CURRENCY_SYMBOLS = {"USDINR", "EURINR", "GBPINR", "JPYINR"}
-
-
-def _is_currency(sym: str) -> bool:
-    return sym.upper() in _CURRENCY_SYMBOLS
-
 
 # Same per-symbol risk override as live_dryrun.py -- see that file's comment
 # (SILVER re-added 2026-09-18 at half risk pending more live experience).
 _SYMBOL_RISK_PCT_OVERRIDE = {"SILVER": 5.0}
 
-# How long to wait for a real order to reach 'complete' before giving up and
-# flagging it for manual review (see module docstring -- no cancel_order()
-# exists yet). Market orders on liquid MCX/NCD_FO contracts should fill in
-# well under this; a slower fill is itself a signal something's off.
+# How long to wait for a real order to reach 'complete' before attempting to
+# cancel it (see _wait_for_fill). Market orders on liquid MCX/NCD_FO
+# contracts should fill in well under this; a slower fill is itself a signal
+# something's off.
 ORDER_FILL_TIMEOUT_SEC = 30
 ORDER_POLL_INTERVAL_SEC = 2
+# How long to re-poll after attempting cancel_order() before giving up and
+# reporting "ambiguous" -- gives the cancel a real chance to be reflected in
+# order status, or lets a fill that raced the cancel show up as 'complete'.
+ORDER_CANCEL_RECHECK_SEC = 10
 
 
 def _build_symbol_map() -> dict[str, str]:
@@ -154,23 +148,46 @@ def _fetch_candles(broker: UpstoxBroker, symbol: str, ikey: str, today: str) -> 
 
 def _wait_for_fill(broker: UpstoxBroker, order_id: str, requested_price: float) -> tuple[str, float]:
     """Polls get_order_status/get_fill_price until 'complete', a terminal
-    failure status, or timeout. Returns (outcome, fill_price):
+    failure status, or timeout -- and, added 2026-09-18 once
+    UpstoxBroker.cancel_order() existed, attempts to actively resolve a
+    timeout instead of just flagging it. Returns (outcome, fill_price):
       - ("filled", price)   -- confirmed complete, price is the real fill.
-      - ("rejected", 0.0)   -- broker cleanly rejected/cancelled the order.
-        Nothing was filled; safe to treat as "never happened".
-      - ("ambiguous", 0.0)  -- still not 'complete'/'rejected'/'cancelled' at
-        timeout. NOT the same as "rejected" -- Upstox's order-history status
-        values include intermediate states (e.g. partial fills, 'open',
-        'trigger pending') this doesn't enumerate, so an order sitting in one
-        of those at the deadline might have real quantity filled at the
-        broker even though this process can't confirm it. Callers must NOT
-        treat this the same as a clean non-fill."""
+      - ("rejected", 0.0)   -- broker cleanly rejected/cancelled the order
+        (either on its own, or via our own cancel attempt below) with
+        nothing filled; safe to treat as "never happened".
+      - ("ambiguous", 0.0)  -- STILL not resolved even after attempting to
+        cancel it. Upstox's order-history status values include
+        intermediate states (partial fills, 'open', 'trigger pending') this
+        doesn't enumerate, and get_fill_price() only ever reports a price
+        for a fully-'complete' order (see its own docstring) -- so a partial
+        fill followed by our cancel of the remainder can still land here
+        with real quantity filled at the broker that this process can't see.
+        Callers must NOT treat this the same as a clean non-fill."""
     deadline = time.monotonic() + ORDER_FILL_TIMEOUT_SEC
     while time.monotonic() < deadline:
         status = broker.get_order_status(order_id)
         if status in ("rejected", "cancelled"):
             return "rejected", 0.0
         if status == "complete":
+            fill_price = broker.get_fill_price(order_id)
+            return "filled", (fill_price if fill_price is not None else requested_price)
+        time.sleep(ORDER_POLL_INTERVAL_SEC)
+
+    # Timed out still pending -- actively try to resolve it rather than just
+    # reporting "unknown". A cancel request on an order that's already fully
+    # filled by the time it reaches the exchange is simply rejected by
+    # Upstox, so this is safe to attempt unconditionally.
+    log.warning("Order %s still not resolved after %ds -- attempting cancel_order() before giving up.",
+                order_id, ORDER_FILL_TIMEOUT_SEC)
+    broker.cancel_order(order_id)
+    recheck_deadline = time.monotonic() + ORDER_CANCEL_RECHECK_SEC
+    while time.monotonic() < recheck_deadline:
+        status = broker.get_order_status(order_id)
+        if status in ("rejected", "cancelled"):
+            return "rejected", 0.0
+        if status == "complete":
+            # Raced with our own cancel -- it filled before the cancel took
+            # effect. Treat as a normal fill, same as the first loop above.
             fill_price = broker.get_fill_price(order_id)
             return "filled", (fill_price if fill_price is not None else requested_price)
         time.sleep(ORDER_POLL_INTERVAL_SEC)
@@ -244,6 +261,14 @@ class LiveTrader:
                 "entry_time": datetime.fromisoformat(p["entry_time"]),
                 "stop_dist": abs(p["entry_price"] - p["current_stop"]) or p["entry_price"] * 0.005,
                 "entry_order_id": p.get("entry_order_id", ""),
+                # The positions table has no instrument_key column (this
+                # process's own real-order additions came after that schema
+                # was fixed) -- a position restored across a process restart
+                # gets re-anchored to whatever's CURRENTLY correct at startup
+                # (fine, since restarts happen between trading days, not
+                # mid-position, in normal operation). See _enter()'s comment
+                # for why this matters at all.
+                "instrument_key": self.symbol_map.get(p["symbol"]),
             }
             log.warning("Restored OPEN real position from DB on startup: %s %s qty=%s -- "
                         "verify this matches the actual Upstox position book before trusting it.",
@@ -251,103 +276,18 @@ class LiveTrader:
 
     # ---- entry signal (mirrors DryRunner.scan()'s per-symbol logic) --------
     def _entry_signal(self, sym: str, now: datetime) -> dict | None:
+        """Delegates to strategy.entry_signal.compute_entry_signal -- the
+        single shared decision function live_dryrun.py's DryRunner also
+        calls, eliminating the duplicated-logic drift risk this method used
+        to carry on its own (see that module's docstring)."""
         ikey = self.symbol_map.get(sym)
         candles = _fetch_candles(self.broker, sym, ikey, self.today)
-        if not candles or len(candles) < 25:
-            return None
-
-        raw_df = pd.DataFrame(candles)
-        feat_df = compute_commodity_features(raw_df, symbol=sym)
-        if feat_df is None or len(feat_df) < 25:
-            return None
-
-        t = len(feat_df) - 1
-        row = feat_df.iloc[t]
-        mins = int(row.get("minutes_since_open", 0))
-        is_curr = _is_currency(sym)
-
-        if is_curr:
-            if mins < 15 or mins > 460:
-                return None
-        else:
-            if self.full_session:
-                if mins < 60 or mins > 810:
-                    return None
-            else:
-                if mins < 570 or mins > 780:
-                    return None
-
-        model = self.commodity_models.get(sym)
-        if model:
-            try:
-                X_feat = feat_df[COMMODITY_FEATURE_COLUMNS].iloc[[t]]
-                p_up = float(model.predict_proba(X_feat)[0, 1])
-            except Exception:
-                p_up = 0.50
-        else:
-            p_up = 0.50
-
-        adx = float(row.get("adx", 25.0))
-        dmp = float(row.get("dmp", 25.0))
-        dmn = float(row.get("dmn", 25.0))
-        vol_s = float(row.get("vol_surge_ratio", 1.0))
-        vwap_d = float(row.get("vwap_dist_pct", 0.0))
-        ema_s = float(row.get("ema_slope_pct", 0.0))
-        orb_h_dist = float(row.get("orb_high_dist_pct", 0.0))
-        orb_l_dist = float(row.get("orb_low_dist_pct", 0.0))
-        entry = float(row["close"])
-        atr = float(row.get("atr", 0.005 * entry))
-
-        is_natgas = "NATGAS" in sym.upper() or "NATURALGAS" in sym.upper()
-        is_gold = "GOLD" in sym.upper()
-        is_silver = "SILVER" in sym.upper()
-        if is_curr:
-            _et = CURRENCY_ENTRY_THRESHOLDS.get(sym.upper(), CURRENCY_ENTRY_THRESHOLDS["USDINR"])
-            min_ml_l, max_ml_s = 0.54, 0.44
-            min_orb, min_stop_pct = CURRENCY_MIN_ORB, _et["min_stop_pct"]
-        else:
-            _key = "natgas" if is_natgas else "gold" if is_gold else "silver" if is_silver else "crude"
-            _et = COMMODITY_ENTRY_THRESHOLDS[_key]
-            min_ml_l, max_ml_s = _et["min_ml_l"], _et["max_ml_s"]
-            min_orb, min_stop_pct = _et["min_orb"], _et["min_stop_pct"]
-        min_adx, min_vol, min_vwap = _et["min_adx"], _et["min_vol"], _et["min_vwap"]
-        min_ema_slope = _et["min_ema_slope"]
-        tp_mult, stop_mult = _et["tp_mult"], _et["stop_mult"]
-
-        sdist = max(stop_mult * atr, min_stop_pct * entry)
-        if sdist <= 0 or entry <= 0:
-            return None
-
-        direction = None
-        ml_long_ok = (not self.use_ml_filter) or (p_up >= min_ml_l)
-        ml_short_ok = (not self.use_ml_filter) or (p_up <= max_ml_s)
-        if ml_long_ok and adx >= min_adx and dmp > dmn and ema_s > min_ema_slope and orb_h_dist >= min_orb and vwap_d >= min_vwap and vol_s >= min_vol:
-            direction = "long"
-        elif self.direction_filter != "long" and ml_short_ok and adx >= min_adx and dmn > dmp and ema_s < -min_ema_slope and orb_l_dist <= -min_orb and vwap_d <= -min_vwap and vol_s >= min_vol:
-            direction = "short"
-        if not direction:
-            return None
-        if self.direction_filter != "both" and direction != self.direction_filter:
-            return None
-
-        sym_risk_pct = _SYMBOL_RISK_PCT_OVERRIDE.get(sym.upper(), self.risk_pct)
-        if is_curr:
-            lots = size_currency_lots(self.capital, entry, sdist, sym_risk_pct, sym, self.leverage)
-        else:
-            lots = size_commodity_lots(self.capital, entry, sdist, sym_risk_pct, sym, self.leverage)
-        if lots <= 0:
-            return None
-
-        d = 1 if direction == "long" else -1
-        sl = round(entry - sdist * d, 2)
-        tp = round(entry + tp_mult * sdist * d, 2)
-        be = round(entry + 0.60 * sdist * d, 2)
-
-        return {
-            "symbol": sym, "direction": direction, "entry_price": entry,
-            "sl": sl, "tp": tp, "be": be, "lots": lots, "stop_dist": sdist,
-            "instrument_key": ikey,
-        }
+        sig = compute_entry_signal(
+            sym, candles, ikey, self.commodity_models, self.use_ml_filter,
+            self.full_session, self.direction_filter, self.capital,
+            _SYMBOL_RISK_PCT_OVERRIDE.get(sym.upper(), self.risk_pct), self.leverage,
+        )
+        return sig
 
     # ---- real order placement -----------------------------------------------
     def _enter(self, sig: dict, now: datetime) -> None:
@@ -454,6 +394,11 @@ class LiveTrader:
             "entry_price": fill_price, "current_stop": real_sl, "tp": real_tp, "be": real_be,
             "best_price": fill_price, "armed_be": False, "entry_time": now,
             "stop_dist": sig["stop_dist"], "entry_order_id": order_id,
+            # Pinned to the instrument this position was ACTUALLY opened on --
+            # see the day-rollover comment in scan() for why re-looking-up
+            # self.symbol_map at exit time instead would be wrong if a
+            # contract rolled over while this position was open.
+            "instrument_key": sig["instrument_key"],
         }
         log.warning("LIVE ENTRY FILLED: %s %s qty=%s @ %.2f (order_id=%s, SL=%.2f, TP=%.2f)",
                     sym, sig["direction"], sig["lots"], fill_price, order_id, real_sl, real_tp)
@@ -463,7 +408,7 @@ class LiveTrader:
     # ---- exit management (mirrors DryRunner._maybe_exit/_close_position) ----
     def _maybe_exit(self, sym: str, now: datetime) -> None:
         pos = self.positions[sym]
-        ikey = self.symbol_map.get(sym)
+        ikey = pos["instrument_key"]  # pinned at entry -- NOT a fresh self.symbol_map lookup, see _enter()'s comment
         candles = _fetch_candles(self.broker, sym, ikey, self.today)
         if not candles:
             return
@@ -514,7 +459,7 @@ class LiveTrader:
         # Exit is always the opposite side of entry.
         exit_side_is_buy = pos["direction"] == "short"
         tag = f"LIVE_X_{sym}"[:16]
-        ikey = self.symbol_map.get(sym)
+        ikey = pos["instrument_key"]  # pinned at entry -- see _maybe_exit's comment
 
         order_id = self.broker.place_buy_order(ikey, quantity, product="I", tag=tag) if exit_side_is_buy \
             else self.broker.place_sell_order(ikey, quantity, product="I", tag=tag)
@@ -661,6 +606,22 @@ class LiveTrader:
             self.symbol_daily_pnl = {s: 0.0 for s in self.symbols}
             self.symbol_kill_switch = {s: False for s in self.symbols}
 
+            # Refresh instrument_key resolution once per trading-day rollover
+            # -- MCX/NCD_FO contracts are monthly-expiry, and self.symbol_map
+            # was otherwise only ever built once at __init__ (fixed 2026-09-18,
+            # same bug live_dryrun.py's SYMBOL_MAP had before its own
+            # rollover fix). This only affects NEW entries going forward --
+            # any position already open keeps using its own pinned
+            # instrument_key (see _enter()'s comment), so a rollover can
+            # never retarget an exit order at the wrong contract.
+            fresh_map = _build_symbol_map()
+            changed = {k: v for k, v in fresh_map.items() if self.symbol_map.get(k) != v}
+            if changed:
+                log.warning("Instrument key(s) rolled over: %s", changed)
+                telegram.send(f"🔄 <b>CONTRACT ROLLOVER (LIVE)</b> — {len(changed)} instrument key(s) updated: "
+                              f"{', '.join(changed.keys())}")
+            self.symbol_map = fresh_map
+
         daily_loss_pct = ((self.day_start_capital - self.capital) / self.day_start_capital * 100
                            if self.day_start_capital > 0 else 0.0)
         if not self.kill_switch_active and daily_loss_pct >= self.max_daily_loss_pct:
@@ -679,6 +640,31 @@ class LiveTrader:
             sig = self._entry_signal(sym, now)
             if sig:
                 self._enter(sig, now)
+
+
+def _acquire_process_lock(account_id: str):
+    """Same pattern as live_dryrun.py's own _acquire_process_lock -- separate
+    lock filename (LIVE_ prefix) so a paper-trading dryrun process and a
+    real live_trading.py process for accounts that happen to share a name
+    don't collide with each other, while two live_trading.py processes for
+    the SAME account still correctly refuse to double-run (which, with real
+    orders, could double-size or double-enter positions)."""
+    import fcntl
+    lock_dir = Path(__file__).parent / "data"
+    lock_dir.mkdir(exist_ok=True)
+    lock_path = lock_dir / f".LIVE_{account_id}.lock"
+    fh = open(lock_path, "w")
+    try:
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        print(f"\033[91mERROR: Another live_trading process is already running for account "
+              f"'{account_id}' (lock: {lock_path}). Refusing to start a second one.\033[0m")
+        telegram.send(f"🔴 <b>LIVE TRADING STARTUP REFUSED</b> — another live_trading process is already "
+                      f"running for account '{account_id}'. This attempt was refused to prevent double-trading.")
+        sys.exit(1)
+    fh.write(f"{os.getpid()}\n")
+    fh.flush()
+    return fh  # caller must keep this referenced so the fd (and lock) stays alive
 
 
 def main() -> None:
@@ -704,6 +690,8 @@ def main() -> None:
         print("This is intentional -- this file is not meant to run live yet.")
         sys.exit(1)
 
+    _lock_fh = _acquire_process_lock(args.account)  # held for process lifetime
+
     token = ensure_fresh_upstox_token() or UpstoxConfig.ACCESS_TOKEN
     if not token:
         print("No valid Upstox access token available.")
@@ -719,17 +707,128 @@ def main() -> None:
     print(f"\033[91m\033[1mLIVE TRADING ARMED AND RUNNING -- REAL ORDERS WILL BE PLACED. Symbols: {symbols}\033[0m")
     telegram.send(f"🔴🔴 <b>LIVE TRADING STARTED</b> — real orders, account={args.account}, symbols={symbols}")
 
-    try:
-        while True:
+    # Same SIGTERM-as-clean-shutdown handling as live_dryrun.py's main() --
+    # see that file's comment for why the handler re-arms to SIG_IGN
+    # (prevents a second signal from re-raising KeyboardInterrupt mid-cleanup,
+    # which can otherwise land inside the shutdown Telegram call itself).
+    import signal
+    def _handle_sigterm(signum, frame):
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        raise KeyboardInterrupt()
+    signal.signal(signal.SIGTERM, _handle_sigterm)
+
+    token_check_interval_sec = int(os.environ.get("TOKEN_CHECK_INTERVAL_MIN", "15")) * 60
+    last_token_check = time.monotonic()
+
+    # 24/7 outer loop, same shape as live_dryrun.py's main(): sleeps through
+    # nights/weekends/holidays and rolls into the next trading day rather
+    # than exiting, so systemd (or a human) just needs to keep one
+    # long-running process alive -- IF this is ever actually wired up to run
+    # unattended, which it currently is not (see module docstring).
+    stopped_by_user = False
+    while not stopped_by_user:
+        now = datetime.now(IST)
+        mopen = now.replace(hour=9, minute=0, second=0, microsecond=0)
+        mclose = now.replace(hour=23, minute=30, second=0, microsecond=0)
+
+        if now > mclose:
+            from utils.market_holidays import get_trading_holidays
+            trading_holidays = get_trading_holidays()
+            next_day = now + timedelta(days=1)
+            while next_day.weekday() >= 5 or next_day.date() in trading_holidays:
+                next_day += timedelta(days=1)
+            mopen = mopen.replace(year=next_day.year, month=next_day.month, day=next_day.day)
+            mclose = mclose.replace(year=next_day.year, month=next_day.month, day=next_day.day)
+
+        trader.today = mopen.strftime("%Y-%m-%d")
+
+        now = datetime.now(IST)
+        if now < mopen:
+            wait = int((mopen - now).total_seconds())
+            print(f"  Market opens {mopen.strftime('%Y-%m-%d %H:%M')} IST "
+                  f"(in {wait // 3600}h {(wait % 3600) // 60}m) — sleeping...", flush=True)
+            try:
+                time.sleep(wait)
+            except KeyboardInterrupt:
+                print("\nStopped by user (during overnight wait).", flush=True)
+                stopped_by_user = True
+                continue
+
+        scan_n = 0
+        while datetime.now(IST) <= mclose:
+            scan_n += 1
+            now = datetime.now(IST)
+            print(f"\n-- LIVE Scan #{scan_n} @ {now.strftime('%Y-%m-%d %H:%M:%S')} IST "
+                  f"| Balance: ₹{trader.capital:,.2f} --", flush=True)
+
+            if token_invalid_event.is_set() or (time.monotonic() - last_token_check) >= token_check_interval_sec:
+                last_token_check = time.monotonic()
+                token_invalid_event.clear()
+                if UpstoxConfig.auto_login_configured():
+                    try:
+                        old_token = UpstoxConfig.ACCESS_TOKEN
+                        new_token = ensure_fresh_upstox_token(on_token_refreshed=broker.set_access_token)
+                        if new_token is None:
+                            log.error("Token refresh failed — trading may be blind until fixed.")
+                            telegram.send("🔴 <b>LIVE TRADING TOKEN REFRESH FAILED</b> — auto-login attempt failed. "
+                                          "Run `python3 -m auth.upstox_auth` manually or check credentials.")
+                        elif new_token != old_token:
+                            log.info("Token refreshed via scheduled check.")
+                            telegram.send("🔑 <b>LIVE TRADING TOKEN REFRESHED</b> (scheduled check) — continuing normally.")
+                    except Exception as exc:
+                        log.error("Token refresh raised: %s", exc, exc_info=True)
+                        telegram.alert_error("live_trading token refresh", exc)
+                elif not UpstoxConfig.ACCESS_TOKEN:
+                    telegram.send("🔴 <b>LIVE TRADING TOKEN INVALID</b> — auto-login not configured. "
+                                   "Run `python3 -m auth.upstox_auth` manually.")
+
             try:
                 trader.scan()
+            except KeyboardInterrupt:
+                print("\nStopped by user.", flush=True)
+                stopped_by_user = True
+                break
             except Exception as exc:
                 log.error("Scan error: %s", exc, exc_info=True)
-                telegram.alert_error("live_trading scan", exc)
-            time.sleep(args.interval)
-    except KeyboardInterrupt:
-        telegram.send("🔴 <b>LIVE TRADING STOPPED</b> (manual/shutdown signal). Open positions, if any, are NOT auto-closed -- check the real Upstox order book.")
+                telegram.alert_error(f"live_trading scan #{scan_n}", exc)
+
+            nxt = datetime.now(IST) + timedelta(seconds=args.interval)
+            sleep_until = min(nxt, mclose + timedelta(seconds=1))
+            secs = max(1, (sleep_until - datetime.now(IST)).total_seconds())
+            print(f"  Next scan in {secs:.0f}s...", flush=True)
+            time.sleep(secs)
+
+        # EOD summary for the day just finished
+        db.print_dashboard(args.account)
+        todays_trades = db.get_trades_for_date(trader.today, args.account)
+        total_pnl = sum(t.get("net_pnl", 0) for t in todays_trades)
+        telegram.send(
+            f"🏁 <b>LIVE TRADING SESSION COMPLETE</b> ({trader.today})\n"
+            f"Trades today: {len(todays_trades)}  Total PnL: ₹{total_pnl:+,.2f}\n"
+            f"Balance: ₹{trader.capital:,.2f}"
+        )
+        from utils.chart import generate_equity_curve
+        chart_path = generate_equity_curve(
+            db.get_snapshots(args.account), args.account,
+            Path(__file__).parent / "logs" / f"equity_{args.account}.png",
+        )
+        if chart_path:
+            telegram.send_photo(chart_path, caption=f"📈 Live Equity Curve — {args.account} ({trader.today})")
+
+    telegram.send("🔴 <b>LIVE TRADING STOPPED</b> (manual/shutdown signal). Open positions, if any, are NOT "
+                  "auto-closed -- check the real Upstox order book.")
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        # Same top-level safety net as live_dryrun.py -- see that file's
+        # comment: a SIGTERM-raised KeyboardInterrupt can land anywhere,
+        # including inside a Telegram call that only catches Exception.
+        print("\nShutting down.", flush=True)
+        try:
+            telegram.send("🔴 <b>LIVE TRADING STOPPED</b> (shutdown signal)")
+        except BaseException:
+            pass
+        sys.exit(0)

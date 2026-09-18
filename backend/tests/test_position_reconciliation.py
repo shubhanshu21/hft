@@ -70,6 +70,29 @@ class TestFindDiscrepancies(unittest.TestCase):
         broker = _FakeBroker({})
         self.assertEqual(find_discrepancies(broker, tracked, SYMBOL_MAP), {})
 
+    def test_position_own_instrument_key_wins_over_stale_symbol_map(self):
+        # SYMBOL_MAP says CRUDEOILM -> MCX_FO|1 (e.g. after a contract
+        # rollover), but this position was actually opened on the OLD
+        # contract MCX_FO|999 -- must be checked against that, not whatever
+        # CRUDEOILM currently resolves to.
+        pos = _tracked("long", 5)
+        pos["instrument_key"] = "MCX_FO|999"
+        tracked = {"CRUDEOILM": pos}
+        broker = _FakeBroker({"MCX_FO|999": 5, "MCX_FO|1": 0})
+        self.assertEqual(find_discrepancies(broker, tracked, SYMBOL_MAP), {})
+
+    def test_position_own_instrument_key_detects_real_discrepancy_stale_symbol_map_would_miss(self):
+        pos = _tracked("long", 5)
+        pos["instrument_key"] = "MCX_FO|999"
+        tracked = {"CRUDEOILM": pos}
+        # If this incorrectly checked SYMBOL_MAP's MCX_FO|1 instead, it would
+        # see 0 there too and wrongly conclude "matches" -- the whole point
+        # of pinning instrument_key is to catch this against the real
+        # contract that was actually traded.
+        broker = _FakeBroker({"MCX_FO|999": 0, "MCX_FO|1": 0})
+        disc = find_discrepancies(broker, tracked, SYMBOL_MAP)
+        self.assertEqual(disc["CRUDEOILM"]["kind"], "externally_closed")
+
 
 if __name__ == "__main__":
     unittest.main()
