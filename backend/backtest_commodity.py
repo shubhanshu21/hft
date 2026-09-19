@@ -89,7 +89,21 @@ ENTRY_THRESHOLDS = {
     # retracted; SILVER was briefly live on that basis and has been pulled.
     # tp_mult/stop_mult not re-swept this pass -- kept at the commodity
     # default pending a follow-up.
-    "silver": {"min_ml_l": 0.54, "max_ml_s": 0.44, "min_adx": 18.0, "min_vol": 1.10, "min_orb": 0.05, "min_vwap": 0.05, "min_stop_pct": 0.0035, "min_ema_slope": 0.050, "tp_mult": 1.80, "stop_mult": 1.4},
+    # RECALIBRATED AGAIN 2026-09-19: this whole sweep was previously run against
+    # the WRONG session window (evening-only default instead of the full-session
+    # DRYRUN_FULL_SESSION=true config actually live -- see conversation history,
+    # caught only when checking why GOLDM/SILVERMIC backtest numbers looked off).
+    # Re-swept correctly (full session) and re-optimized explicitly for win
+    # rate/drawdown rather than raw net profit, per an explicit user request for
+    # "less losses, more wins" over max total P&L. min_adx=22/min_vol=1.3/
+    # min_ema_slope=0.08 (up from 18/1.1/0.05) held up on BOTH train and test
+    # independently: TRAIN win 61.8%->66.2%, PF 1.56->1.92, DD 10.95%->8.93%;
+    # TEST win 58.8%->65.4%, PF 1.52->1.66, DD 10.57%->8.67% -- a real, genuine
+    # tradeoff, not a clean win: full-archive trade count drops 259->120 and net
+    # profit drops Rs106,290->Rs64,458 (fewer, higher-quality trades only).
+    # Deployed on explicit user instruction to prioritize win rate/DD over total
+    # profit. tp_mult/stop_mult left unchanged (1.8/1.4) -- not re-swept this pass.
+    "silver": {"min_ml_l": 0.54, "max_ml_s": 0.44, "min_adx": 22.0, "min_vol": 1.30, "min_orb": 0.05, "min_vwap": 0.05, "min_stop_pct": 0.0035, "min_ema_slope": 0.080, "tp_mult": 1.80, "stop_mult": 1.4},
     # COPPER surveyed the same (now-retracted) truncated-archive sweep: only
     # 36/180 credible combos profitable (20%) -- weaker than silver/gold even
     # before the truncation-bug correction. Not dedicated-calibrated or added
@@ -467,6 +481,16 @@ def run_commodity_backtest(
             min_ema_slope = _et["min_ema_slope"]
             tp_mult = _et.get("tp_mult", TAKE_PROFIT_MULT)
             stop_mult = _et.get("stop_mult", STOP_VOL_MULT)
+            # Optional volume-surge CEILING on top of the existing floor (min_vol).
+            # Added 2026-09-19 after a loss-pattern check found CRUDEOILM's losing
+            # trades average a HIGHER vol_surge at entry (3.08) than winning trades
+            # (2.33) -- the opposite of "more volume = more conviction". Hypothesis:
+            # an excessive spike looks more like exhaustion/a stop-run than genuine
+            # continuation. None (default, every existing symbol) = no ceiling, so
+            # this changes nothing unless a symbol's dict opts in after a sweep
+            # actually shows it helps -- see conversation history for the max_vol
+            # sweep result before trusting this for any symbol.
+            max_vol = _et.get("max_vol")
 
             sdist = max(stop_mult * atr, min_stop_pct * c_price)
             if sdist <= 0 or c_price <= 0:
@@ -475,10 +499,11 @@ def run_commodity_backtest(
             direction = None
             ml_long_ok = no_ml_filter or (p_up >= min_ml_l)
             ml_short_ok = no_ml_filter or (p_up <= max_ml_s)
+            vol_ok = vol_s >= min_vol and (max_vol is None or vol_s <= max_vol)
             # High-conviction Trend Expansion Setup
-            if ml_long_ok and adx >= min_adx and dmp > dmn and ema_s > min_ema_slope and orb_h_dist >= min_orb and vwap_d >= min_vwap and vol_s >= min_vol:
+            if ml_long_ok and adx >= min_adx and dmp > dmn and ema_s > min_ema_slope and orb_h_dist >= min_orb and vwap_d >= min_vwap and vol_ok:
                 direction = "long"
-            elif not long_only and ml_short_ok and adx >= min_adx and dmn > dmp and ema_s < -min_ema_slope and orb_l_dist <= -min_orb and vwap_d <= -min_vwap and vol_s >= min_vol:
+            elif not long_only and ml_short_ok and adx >= min_adx and dmn > dmp and ema_s < -min_ema_slope and orb_l_dist <= -min_orb and vwap_d <= -min_vwap and vol_ok:
                 direction = "short"
 
             if direction and is_silver and confirm_silver_with_gold:

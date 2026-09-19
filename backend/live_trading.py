@@ -117,8 +117,26 @@ log = get_logger("live_trading")
 
 
 # Same per-symbol risk override as live_dryrun.py -- see that file's comment
-# (SILVER re-added 2026-09-18 at half risk pending more live experience).
-_SYMBOL_RISK_PCT_OVERRIDE = {"SILVER": 5.0}
+# (SILVER re-added 2026-09-18 at half risk pending more live experience;
+# CRUDEOILM cut to 3.0 on 2026-09-19 after the full real archive showed the
+# deployed thresholds are a net loser overall at full risk -- mirrored here
+# 2026-09-19 to keep this file in sync, though it stays fully unwired
+# regardless). NOTE: live_dryrun.py's crude fix also requires
+# USE_CRUDE_REGIME_FILTER (a separate daily-regime check computed from real
+# candle history) to reach the backtested +17.20%/-37.96% DD result -- this
+# file has NO equivalent regime-filter wiring yet. Risk_pct alone without the
+# regime filter does NOT reproduce the validated fix; treat CRUDEOILM here as
+# still using the pre-fix (net-losing-overall) entry logic until that gap is
+# closed, on top of this module being completely unwired regardless.
+_SYMBOL_RISK_PCT_OVERRIDE = {"SILVER": 5.0, "CRUDEOILM": 3.0}
+
+# Same per-symbol leverage override as live_dryrun.py -- see that file's
+# comment. Added 2026-09-19: GBPINR's under-proven-sample sizing fix has to
+# go through leverage, not risk_pct, because margin sizing (not risk sizing)
+# binds every one of its real trades -- a risk_pct override is a confirmed
+# no-op for it (see live_dryrun.py's _SYMBOL_LEVERAGE_OVERRIDE comment for
+# the full story).
+_SYMBOL_LEVERAGE_OVERRIDE = {"GBPINR": 3.5}
 
 # How long to wait for a real order to reach 'complete' before attempting to
 # cancel it (see _wait_for_fill). Market orders on liquid MCX/NCD_FO
@@ -242,6 +260,20 @@ class LiveTrader:
         self.symbol_daily_pnl: dict[str, float] = {s: 0.0 for s in self.symbols}
         self.symbol_kill_switch: dict[str, bool] = {s: False for s in self.symbols}
 
+        # CRUDEOILM regime gate -- mirrors live_dryrun.py's DryRunner exactly
+        # (see that file's __init__ and _refresh_crude_regime for the full
+        # finding/rationale). Added 2026-09-19, the same day as this file's
+        # _SYMBOL_RISK_PCT_OVERRIDE CRUDEOILM entry -- without this, that
+        # risk_pct cut alone does NOT reproduce the validated backtest result
+        # (net +17.20%/-37.96% DD requires BOTH the reduced risk_pct AND this
+        # filter together; risk_pct alone leaves the pre-fix, net-losing-
+        # overall entry logic in place). This module stays fully unwired
+        # regardless of this fix -- see module docstring.
+        self.use_crude_regime_filter = os.environ.get("USE_CRUDE_REGIME_FILTER", "false").lower() in ("1", "true", "yes")
+        self.crude_regime_ok: bool | None = True
+        if self.use_crude_regime_filter:
+            self._refresh_crude_regime()
+
         self.commodity_models: dict[str, object] = {}
         import pickle
         mod_dir = Path(__file__).parent / "cache" / "commodity_models"
@@ -283,6 +315,31 @@ class LiveTrader:
                         "verify this matches the actual Upstox position book before trusting it.",
                         p["symbol"], p["direction"], p["qty"])
 
+    # ---- CRUDEOILM regime gate (mirrors DryRunner._refresh_crude_regime exactly) ----
+    def _refresh_crude_regime(self) -> None:
+        """Fetches real daily candles through YESTERDAY (never today's own
+        still-forming price -- causal by construction) and recomputes
+        self.crude_regime_ok. Fails open (leaves the previous value in
+        place, or True on the very first call) if the fetch fails -- a
+        broker hiccup should never silently start blocking every crude
+        entry for the day."""
+        ikey = self.symbol_map.get("CRUDEOILM")
+        if not ikey:
+            return
+        yesterday = (datetime.now(IST) - timedelta(days=1)).strftime("%Y-%m-%d")
+        try:
+            candles = self.broker.get_historical_candles(ikey, unit="days", interval=1, to_date=yesterday)
+        except Exception as exc:
+            log.warning("Could not fetch daily candles for crude regime gate: %s", exc)
+            return
+        if not candles:
+            return
+        closes = [float(c["close"]) for c in sorted(candles, key=lambda c: c["timestamp"])]
+        from strategy.regime import regime_ok as _regime_ok
+        self.crude_regime_ok = _regime_ok(closes, window=15, min_autocorr=0.0)
+        if self.crude_regime_ok is False:
+            log.warning("Crude regime gate: BLOCKED for today (recent daily-return autocorrelation < 0).")
+
     # ---- entry signal (mirrors DryRunner.scan()'s per-symbol logic) --------
     def _entry_signal(self, sym: str, now: datetime) -> dict | None:
         """Delegates to strategy.entry_signal.compute_entry_signal -- the
@@ -291,10 +348,13 @@ class LiveTrader:
         to carry on its own (see that module's docstring)."""
         ikey = self.symbol_map.get(sym)
         candles = _fetch_candles(self.broker, sym, ikey, self.today)
+        regime_ok = self.crude_regime_ok if (self.use_crude_regime_filter and sym.upper() == "CRUDEOILM") else True
         sig = compute_entry_signal(
             sym, candles, ikey, self.commodity_models, self.use_ml_filter,
             self.full_session, self.direction_filter, self.capital,
-            _SYMBOL_RISK_PCT_OVERRIDE.get(sym.upper(), self.risk_pct), self.leverage,
+            _SYMBOL_RISK_PCT_OVERRIDE.get(sym.upper(), self.risk_pct),
+            _SYMBOL_LEVERAGE_OVERRIDE.get(sym.upper(), self.leverage),
+            regime_ok=regime_ok,
         )
         return sig
 
@@ -320,7 +380,8 @@ class LiveTrader:
         # sizing logic above but a backstop on top of it. Fails safe: if the
         # funds API can't be reached at all, treat that as insufficient
         # rather than proceeding on an unknown balance.
-        required_margin = (sig["entry_price"] * quantity) / max(self.leverage, 1.0)
+        sym_leverage = _SYMBOL_LEVERAGE_OVERRIDE.get(sym.upper(), self.leverage)
+        required_margin = (sig["entry_price"] * quantity) / max(sym_leverage, 1.0)
         available_funds = self.broker.get_available_funds()
         if available_funds is None:
             msg = f"🔴 <b>LIVE ENTRY SKIPPED</b> — {sym}: could not fetch real available funds; refusing to size an order against an unknown balance."
@@ -642,6 +703,9 @@ class LiveTrader:
                 telegram.send(f"🔄 <b>CONTRACT ROLLOVER (LIVE)</b> — {len(changed)} instrument key(s) updated: "
                               f"{', '.join(changed.keys())}")
             self.symbol_map = fresh_map
+
+            if self.use_crude_regime_filter:
+                self._refresh_crude_regime()
 
         daily_loss_pct = ((self.day_start_capital - self.capital) / self.day_start_capital * 100
                            if self.day_start_capital > 0 else 0.0)

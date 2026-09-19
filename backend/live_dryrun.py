@@ -58,12 +58,47 @@ from strategy.entry_signal import compute_entry_signal, is_currency as _is_curre
 # Per-symbol risk-per-trade override (falls back to --risk-pct/DRYRUN_RISK_PCT
 # for anything not listed). SILVER re-added 2026-09-18 at half the account
 # default: its recalibrated thresholds passed a real train/test OOS split
-# (unlike crude's current thresholds, which didn't -- see
-# backtest_commodity.py's ENTRY_THRESHOLDS["crude"] comment) but only on a
-# single split with a meaningfully higher test-window drawdown (35.1%) than
-# gold's (~7%) -- sized down until it has real live experience behind it,
-# not treated as equally trusted as gold/crude yet.
-_SYMBOL_RISK_PCT_OVERRIDE = {"SILVER": 5.0}
+# but only on a single split with a meaningfully higher test-window drawdown
+# (35.1%) than gold's (~7%) -- sized down until it has real live experience
+# behind it, not treated as equally trusted as gold/crude yet.
+# CRUDEOILM cut to 3.0 on 2026-09-19: the full ~4-month real archive (not
+# just the recent favorable window) showed the deployed thresholds are a net
+# loser overall -- at the account-default 10% risk-per-trade with the regime
+# filter OFF (both matching the config that was actually live), the backtest
+# wipes the account out completely (-100.03%, max DD -100%). Turning
+# use_crude_regime_filter on (see below) improves every metric at once (win
+# rate 46.1%->56.5%, PF 0.79->1.17) but is still net -16.17% at 10% risk --
+# the position sizing itself, not just the entry filter, was too aggressive
+# for how much this symbol's edge swings by regime. risk-pct=3.0 with the
+# filter on was the best risk/DD tradeoff found: net +17.20%, PF 1.31, max DD
+# -37.96% (vs. +21.58%/-55.80% at 5%, +9.91%/-70.10% at 7%) -- see
+# backtest_commodity.py --use-crude-regime-filter sweep in conversation
+# history for the full risk-pct grid. Still not equally trusted as gold.
+# GBPINR intentionally NOT listed here (see _SYMBOL_LEVERAGE_OVERRIDE below
+# instead) -- a genuine train/test split couldn't be run on it (its full
+# ~28-day archive is only 17 trades, so splitting leaves 10/7, both below the
+# 15-trade credibility bar), so it needed the same "under-proven, size it
+# down" treatment as SILVER's single-fold case. But confirmed 2026-09-19 via
+# the real backtest engine (not just a formula read) that a risk-pct override
+# is a complete no-op for it: identical trades/net/DD at risk_pct=2 through
+# 20 (size_currency_lots' margin-derived cap, not the risk-derived one, binds
+# for every single one of its 17 trades at this account's capital/leverage --
+# unlike CRUDEOILM/SILVER above, confirmed by the SAME method to move real
+# lot counts here). A risk_pct entry was tried first and silently did
+# nothing; caught only because CRUDEOILM's risk_pct fix was re-verified the
+# same way and produced genuinely different backtest numbers, which GBPINR's
+# didn't. Leverage is what actually binds GBPINR's size -- see below.
+_SYMBOL_RISK_PCT_OVERRIDE = {"SILVER": 5.0, "CRUDEOILM": 3.0}
+
+# Per-symbol leverage override (falls back to --leverage/DRYRUN_LEVERAGE for
+# anything not listed). Added 2026-09-19 specifically because
+# _SYMBOL_RISK_PCT_OVERRIDE has no effect on GBPINR (see comment above) --
+# margin sizing there is driven by capital/entry_price/leverage, not
+# risk_pct, so leverage is the only lever that actually shrinks its lot
+# count. 3.5 (half the account default of 7.0) cuts its real backtested lot
+# count from 6 to 3 at this account's capital -- confirmed via
+# strategy.currency_costs.size_currency_lots directly, not assumed.
+_SYMBOL_LEVERAGE_OVERRIDE = {"GBPINR": 3.5}
 
 from broker.instruments import build_mcx_commodity_map, build_currency_map, ensure_master, get_instrument_key
 from utils.logger import get_logger, setup_logger
@@ -439,10 +474,11 @@ class DryRunner:
             # ENTRY_THRESHOLDS' own extraction eliminated one layer up, on 2026-09-18).
             candles = _fetch_candles(self.broker, sym, self.today)
             sym_risk_pct = _SYMBOL_RISK_PCT_OVERRIDE.get(sym.upper(), self.risk_pct)
+            sym_leverage = _SYMBOL_LEVERAGE_OVERRIDE.get(sym.upper(), self.leverage)
             regime_ok = self.crude_regime_ok if (self.use_crude_regime_filter and sym.upper() == "CRUDEOILM") else True
             sig_result = compute_entry_signal(
                 sym, candles, SYMBOL_MAP.get(sym), self.commodity_models, self.use_ml_filter,
-                self.full_session, self.direction_filter, self.capital, sym_risk_pct, self.leverage,
+                self.full_session, self.direction_filter, self.capital, sym_risk_pct, sym_leverage,
                 regime_ok=regime_ok,
             )
             if not sig_result:
@@ -513,7 +549,7 @@ class DryRunner:
                 # margin" -- those are different numbers. Shows the actual
                 # margin this trade blocks so that distinction is visible
                 # instead of implying it's already netted out of Balance.
-                "margin_used": round(trade_val / self.leverage, 2),
+                "margin_used": round(trade_val / sym_leverage, 2),
                 "stop_dist": round(sdist, 4),
                 "p_up": round(p_up, 3), "rsi": round(rsi, 1),
                 "vwap_dist_pct": round(vwap_d, 4),

@@ -79,8 +79,31 @@ BE_LOCK_BUFFER_PCT = 0.0020
 # 40/40 credible combos were profitable for every pair in that sweep -- currency's
 # low-win-rate/high-profit-factor payoff shape rewards a wider target much more than
 # commodities' tighter-R:R style did.
+#
+# Genuine train/test split attempted 2026-09-19 (train 2026-08-21..2026-09-07,
+# test 2026-09-08..2026-09-17 -- the full archive is only ~28 real days, so this
+# is a much smaller split than gold/silver/crude's ~4-month one). EURINR held up
+# cleanly on both sides of a real split: train 25 trades/PF 1.84/net +3.41%,
+# test 18 trades/PF 3.35/net +6.05% -- both independently clear the 15-trade
+# credibility bar. GBPINR could NOT be genuinely validated this way -- its full
+# archive is only 17 trades total, so splitting it leaves 10 (train) and 7
+# (test) trades, both below the credibility bar on their own. Both halves were
+# directionally profitable, but with samples this small that's not evidence,
+# just an inconclusive split -- treated the same as SILVER's under-proven
+# single-fold case, sized down rather than pulled since the full-period number is at
+# least real. The sizing fix is a leverage override, not risk_pct, though -- see
+# live_dryrun.py's _SYMBOL_LEVERAGE_OVERRIDE comment for why (a risk_pct override was
+# tried first and confirmed to be a complete no-op for this symbol).
+# USDINR re-tuned 2026-09-19 per an explicit user request to optimize for win
+# rate/fewer losses over raw total profit: min_vol 1.0->1.3, min_ema_slope
+# 0.004->0.003, tp_mult 2.6->3.5, stop_mult 2.0->1.0. Validated on a genuine
+# train/test split (train 2026-06-02..2026-08-10, test 2026-08-11..2026-09-17):
+# TRAIN win 47.0%->55.2% (PF 4.63->6.89, net +Rs27,553->+Rs34,827), TEST win
+# 52.0%->54.2% (PF 4.02->4.64, DD 1.44%->1.33%) -- improved on almost every
+# metric on BOTH windows, with only a negligible ~Rs300 dip in TEST net. About
+# as close to a clean win as this project's sweeps have found.
 ENTRY_THRESHOLDS = {
-    "USDINR": {"min_adx": 15.0, "min_vol": 1.0, "min_vwap": 0.04, "min_stop_pct": 0.0006, "min_ema_slope": 0.004, "tp_mult": 2.6, "stop_mult": 2.0},
+    "USDINR": {"min_adx": 15.0, "min_vol": 1.3, "min_vwap": 0.04, "min_stop_pct": 0.0006, "min_ema_slope": 0.003, "tp_mult": 3.5, "stop_mult": 1.0},
     "EURINR": {"min_adx": 10.0, "min_vol": 1.1, "min_vwap": 0.06, "min_stop_pct": 0.0006, "min_ema_slope": 0.008, "tp_mult": 3.0, "stop_mult": 1.0},
     "GBPINR": {"min_adx": 10.0, "min_vol": 1.0, "min_vwap": 0.04, "min_stop_pct": 0.0006, "min_ema_slope": 0.008, "tp_mult": 2.2, "stop_mult": 1.0},
     "JPYINR": {"min_adx": 12.0, "min_vol": 1.30, "min_vwap": 0.05, "min_stop_pct": 0.0006, "min_ema_slope": 0.008, "tp_mult": 1.80, "stop_mult": 1.4},  # unvalidated, see above -- left on the old shared default
