@@ -46,6 +46,8 @@ from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+import pandas as pd
+
 from broker.upstox_broker import UpstoxBroker, token_invalid_event
 from database import TradingDB
 from strategy.commodity_costs import compute_mcx_commodity_costs, COMMODITY_SPECS, get_contract_multiplier
@@ -54,6 +56,13 @@ from strategy.currency_costs import (
     get_contract_multiplier as get_currency_contract_multiplier,
 )
 from strategy.entry_signal import compute_entry_signal, is_currency as _is_currency
+from strategy.equity_entry_signal import (
+    compute_equity_entry_signal, is_equity as _is_equity,
+    MAX_CONCURRENT_EQUITY_POSITIONS, BE_LOCK_BUFFER_PCT as EQUITY_BE_LOCK_BUFFER_PCT,
+)
+from strategy.equity_costs import compute_nse_equity_costs
+from strategy.equity_features import compute_equity_features
+from strategy.equity_universe import NIFTY50_SYMBOLS
 
 # Per-symbol risk-per-trade override (falls back to --risk-pct/DRYRUN_RISK_PCT
 # for anything not listed). SILVER re-added 2026-09-18 at half the account
@@ -123,13 +132,19 @@ def _build_symbol_map() -> dict[str, str]:
     day-rollover loop) -- a value cached once at process startup would
     silently keep resolving an expired instrument_key for as long as the
     process runs without restarting."""
+    equity_map = {}
+    for sym in NIFTY50_SYMBOLS:
+        key = get_instrument_key(sym)
+        if key:
+            equity_map[sym] = key
     try:
-        return {**build_mcx_commodity_map(), **build_currency_map()}
+        return {**build_mcx_commodity_map(), **build_currency_map(), **equity_map}
     except Exception as _e:
         log.warning("Could not load Upstox master; falling back to hardcoded keys: %s", _e)
         return {
             **build_mcx_commodity_map(),
             **build_currency_map(),
+            **equity_map,
         }
 
 
@@ -467,6 +482,10 @@ class DryRunner:
             if self.kill_switch_active or self.symbol_kill_switch.get(sym, False) or not self.trading_enabled:
                 continue
 
+            if _is_equity(sym):
+                self._maybe_enter_equity(sym, now, signals)
+                continue
+
             # Entry decision delegated to strategy.entry_signal.compute_entry_signal
             # -- the single shared function live_trading.py's LiveTrader also calls,
             # eliminating what used to be near-identical logic hand-duplicated in
@@ -564,8 +583,122 @@ class DryRunner:
             }
         return signals
 
+    # ---- NSE equity entry (separate from the shared commodity/currency path
+    # above because equity's exit mechanics are structurally different -- see
+    # strategy/equity_entry_signal.py's module docstring) -----------------
+    def _maybe_enter_equity(self, sym: str, now: datetime, signals: list[dict]) -> None:
+        open_equity_count = sum(1 for s in self.positions if _is_equity(s))
+        if open_equity_count >= MAX_CONCURRENT_EQUITY_POSITIONS:
+            return
+
+        candles = _fetch_candles(self.broker, sym, self.today)
+        sig_result = compute_equity_entry_signal(
+            sym, candles, SYMBOL_MAP.get(sym), self.capital, self.risk_pct, self.leverage,
+            direction_filter=self.direction_filter,
+        )
+        if not sig_result:
+            return
+
+        direction = sig_result["direction"]
+        entry = sig_result["entry_price"]
+        sl = sig_result["sl"]
+        qty = sig_result["qty"]
+        sdist = sig_result["stop_dist"]
+        rsi, adx = sig_result["rsi"], sig_result["adx"]
+        vol_s = sig_result["vol_surge"]
+        vwap_d, ema_s = sig_result["vwap_dist_pct"], sig_result["ema_slope_pct"]
+        activation_price, trail_mult = sig_result["activation_price"], sig_result["trail_mult"]
+
+        trade_val = qty * entry
+        ts_tag = now.strftime('%Y%m%d_%H%M%S')
+        pos_id = f"POS_EQ_{ts_tag}_{sym}"
+        entry_order_id = f"ORD_E_EQ_{ts_tag}_{sym}"
+
+        order_side = "BUY" if direction == "long" else "SELL"
+        self.db.place_order(
+            order_id=entry_order_id, symbol=sym, direction=order_side, intent="ENTRY",
+            order_type="MARKET", qty=qty, requested_price=entry, fill_price=entry,
+            status="FILLED", tag="DRY_RUN_EQ_ENTRY", account_id=self.account_id,
+        )
+        # positions.target_price is NOT NULL and equity has no fixed profit
+        # target (see module docstring) -- store activation_price there
+        # instead (repurposed as "price where the trailing exit arms"), a
+        # real, meaningful number for this position rather than a fake TP or
+        # a constraint-violating NULL.
+        self.db.open_position(
+            position_id=pos_id, symbol=sym, direction=direction, qty=qty, entry_price=entry,
+            current_stop=sl, target_price=activation_price, breakeven_price=activation_price, account_id=self.account_id,
+        )
+
+        sig = {
+            "position_id": pos_id, "entry_order_id": entry_order_id,
+            "time": now.strftime("%H:%M:%S"), "symbol": sym, "direction": direction,
+            "entry_price": round(entry, 2), "sl": sl, "tp": activation_price,
+            "qty": qty, "lots": qty, "trade_value": round(trade_val, 2),
+            "margin_used": round(trade_val / self.leverage, 2),
+            "stop_dist": round(sdist, 4), "p_up": 0.5, "rsi": round(rsi, 1),
+            "vwap_dist_pct": round(vwap_d, 4), "ema_slope_pct": round(ema_s, 4),
+            "adx": round(adx, 1), "vol_surge": round(vol_s, 2),
+        }
+        signals.append(sig)
+        self.positions[sym] = {
+            **sig, "entry_time": now, "current_stop": sl, "best_price": entry,
+            "armed_trail": False, "activation_price": activation_price, "trail_mult": trail_mult,
+        }
+
+    # ---- NSE equity exit: dynamic ADX-scaled trailing, no fixed TP -- see
+    # strategy/equity_entry_signal.py's module docstring for why this is a
+    # separate method rather than another branch inside the shared one below.
+    def _maybe_exit_equity(self, sym: str, now: datetime):
+        pos = self.positions[sym]
+        candles = _fetch_candles(self.broker, sym, self.today)
+        if not candles or len(candles) < 25:
+            return
+        raw_df = pd.DataFrame(candles)
+        feat_df = compute_equity_features(raw_df)
+        latest = candles[-1]
+        high, low = float(latest["high"]), float(latest["low"])
+        cur_atr = float(feat_df["atr"].iloc[-1]) if len(feat_df) else pos["stop_dist"]
+        d = 1 if pos["direction"] == "long" else -1
+        fav = high if d == 1 else low
+        adv = low if d == 1 else high
+
+        market_close = datetime.now(IST).replace(hour=15, minute=15, second=0, microsecond=0)
+
+        exit_p = None; reason = None
+        if (adv <= pos["current_stop"] if d == 1 else adv >= pos["current_stop"]):
+            exit_p = pos["current_stop"]; reason = "trail_stop" if pos["armed_trail"] else "initial_stop"
+        elif (now - pos["entry_time"]).total_seconds() >= 80 * 60:
+            exit_p = float(latest["close"]); reason = "timeout_exit"
+        elif now >= market_close:
+            exit_p = float(latest["close"]); reason = "eod_squareoff"
+
+        if exit_p is not None:
+            self._close_position(sym, pos, exit_p, reason, now)
+            return
+
+        armed_before = pos["armed_trail"]
+        stop_before = pos["current_stop"]
+        if not pos["armed_trail"] and (fav >= pos["activation_price"] if d == 1 else fav <= pos["activation_price"]):
+            pos["armed_trail"] = True
+            pos["current_stop"] = pos["entry_price"] + EQUITY_BE_LOCK_BUFFER_PCT * pos["entry_price"] * d
+        if pos["armed_trail"]:
+            pos["best_price"] = max(pos["best_price"], fav) if d == 1 else min(pos["best_price"], fav)
+            trail_dist = pos["trail_mult"] * max(cur_atr, pos["stop_dist"] * 0.1)
+            trail = pos["best_price"] - trail_dist * d
+            pos["current_stop"] = (max(pos["current_stop"], trail) if d == 1 else min(pos["current_stop"], trail))
+
+        if pos["current_stop"] != stop_before or pos["armed_trail"] != armed_before:
+            self.db.update_position_stop(
+                position_id=pos["position_id"], current_stop=pos["current_stop"],
+                best_price=pos["best_price"], armed_be=pos["armed_trail"],
+            )
+
     # ---- exit check ---------------------------------------------------------
     def _maybe_exit(self, sym: str, now: datetime):
+        if _is_equity(sym):
+            self._maybe_exit_equity(sym, now)
+            return
         pos = self.positions[sym]
         candles = _fetch_candles(self.broker, sym, self.today)
         if not candles:
@@ -630,7 +763,9 @@ class DryRunner:
         kill switch (force_exit_all) -- one place that writes the DB order/
         position/trade/snapshot records, updates capital, and alerts."""
         # 1. Calculate Exact Itemized Costs
-        if _is_currency(sym):
+        if _is_equity(sym):
+            cost_info = compute_nse_equity_costs(pos["direction"], pos["entry_price"], exit_p, pos.get("lots", pos.get("qty", 1)))
+        elif _is_currency(sym):
             cost_info = compute_ncd_currency_costs(sym, pos["direction"], pos["entry_price"], exit_p, pos.get("lots", pos.get("qty", 1)))
         else:
             cost_info = compute_mcx_commodity_costs(sym, pos["direction"], pos["entry_price"], exit_p, pos.get("lots", pos.get("qty", 1)))
@@ -880,7 +1015,19 @@ def main():
     # Energy Contracts (Crude Oil Mini & Natural Gas Mini) default if --symbols not given
     default_symbols = ["CRUDEOILM", "NATGASMINI"]
     symbols = args.symbols or default_symbols
-    market_mode = "MCX COMMODITIES / NSE CURRENCY"
+    # NSE equity intraday scalper wired in 2026-09-19 (see
+    # strategy/equity_entry_signal.py's module docstring) -- opt-in via
+    # DRYRUN_INCLUDE_EQUITY=true rather than folded into DRYRUN_SYMBOLS,
+    # since the full validated universe is all 49 NIFTY50 names (see
+    # strategy/equity_universe.py) and hand-typing that into a symbols list
+    # would be unwieldy. Extends whatever commodity/currency symbols are
+    # already configured rather than replacing them -- equity runs
+    # alongside, not instead of.
+    if os.environ.get("DRYRUN_INCLUDE_EQUITY", "false").lower() in ("1", "true", "yes"):
+        symbols = list(symbols) + [s for s in NIFTY50_SYMBOLS if s not in symbols]
+        market_mode = "MCX COMMODITIES / NSE CURRENCY / NSE EQUITY"
+    else:
+        market_mode = "MCX COMMODITIES / NSE CURRENCY"
 
     direction_mode = "long" if args.long_only else args.direction
     runner = DryRunner(broker, db, symbols, args.capital, args.risk_pct, args.leverage,

@@ -3,6 +3,8 @@
 An institutional-grade, 100% configurable **quantitative trading framework for Indian markets**, focused on **MCX Commodity Futures** (crude oil, gold, natural gas), **NSE Currency Derivatives** (USDINR/EURINR/GBPINR/JPYINR), and **NSE Equities** (Cash/MIS), trading through Upstox.
 
 > **Scope note (2026-09-17):** this project previously also included a Binance USDT-M crypto perpetuals pipeline and an options analytics/trading module (`engine/`, `framework/`, `strategies/options/`, options Greeks/chain tooling). Both were removed to focus entirely on the Indian market path — see git history if you need to recover either. The crypto research findings (why 650+ tested strategy/indicator combinations found no scalping edge, and where the one real edge — funding-rate arbitrage — lived) are preserved in the git history's `docs/CRYPTO_RESEARCH_FINDINGS.md` if useful context for future work.
+>
+> **Equity note (2026-09-19):** the NSE equity scalper was ALSO removed once (2026-09-18) on the same "no real OOS edge" grounds, then rebuilt from scratch the next day once the root cause was found: the original universe was hand-picked *because* each stock already backtested well (a circular, survivorship-biased selection, not a real edge), and its untuned entry rules generated so many small trades that Upstox's flat brokerage cap exceeded the average trade's gross profit — capital was mathematically guaranteed to decay to zero regardless of risk-sizing. The rebuild fixed both: a fixed, performance-blind NIFTY50 universe (49 names — see [Supported Instruments & Trading Profiles](#supported-instruments--trading-profiles)) and higher-conviction thresholds validated across three independent train/test folds. It's live in paper trading now.
 
 ---
 
@@ -62,16 +64,21 @@ backend/
 ├── strategy/                        # Feature engineering & cost models
 │   ├── commodity_features.py        # ADX/DMI, VWAP distance, EMA slope, ORB, volume surge, RSI (shared by commodity + currency)
 │   ├── commodity_costs.py           # MCX statutory cost engine (CTT, stamp duty, exchange fee, SEBI, GST) + lot sizing
-│   └── currency_costs.py            # NSE currency derivatives cost engine (no STT/CTT, different stamp duty/exchange fee) + lot sizing
+│   ├── currency_costs.py            # NSE currency derivatives cost engine (no STT/CTT, different stamp duty/exchange fee) + lot sizing
+│   ├── equity_universe.py           # Fixed NIFTY50 list (49 names), decided BEFORE any backtest -- never edited by performance
+│   ├── equity_features.py           # Equity's own 09:15-anchored feature set (same core indicators, no MCX-only session/inventory constructs)
+│   ├── equity_costs.py              # NSE equity intraday (MIS) statutory cost engine (STT, stamp duty, exchange fee, SEBI, GST) + share sizing
+│   └── equity_entry_signal.py       # Shared entry/exit decision logic for equity (dynamic ADX-scaled trailing exits, no fixed TP)
 │
 ├── ml/                               # Machine Learning
 │   ├── train_commodity.py           # LightGBM training/fine-tuning pipeline for MCX Futures
+│   ├── train_equity.py              # LightGBM training on the POOLED NIFTY50 dataset (one shared model, not per-stock) -- trained, but not used live (see ML section)
 │   ├── experiment_high_winrate.py   # LightGBM/XGBoost/CatBoost/ensemble architecture comparison
 │   └── weekly_finetune.py           # Scheduled job: real-data top-up + incremental fine-tune
 │
 ├── systemd/                         # systemd --user unit files (symlinked from ~/.config/systemd/user/)
 │   ├── hft-dryrun.service                     # 24/7 paper-trading daemon
-│   ├── hft-daily-data-topup.service/.timer    # Nightly real MCX data top-up (00:30 IST)
+│   ├── hft-daily-data-topup.service/.timer    # Nightly real MCX/currency/equity data top-up (00:30 IST)
 │   └── hft-weekly-finetune.service/.timer     # Weekly ML fine-tune (Sunday 02:00 IST)
 │
 ├── tests/                           # Unit Testing Suite
@@ -85,12 +92,15 @@ backend/
 ├── cli.py                           # Master Unified CLI
 ├── backtest_commodity.py            # 5-Minute MCX Commodity Futures Backtest CLI (ENTRY_THRESHOLDS per symbol)
 ├── backtest_currency.py             # 5-Minute NSE Currency Derivatives Backtest CLI (ENTRY_THRESHOLDS per pair)
+├── backtest_equity.py               # 5-Minute NSE Equity Intraday Backtest CLI (ONE shared ENTRY_THRESHOLDS for the whole universe -- see Supported Instruments)
 ├── backtest_natgas_donchian.py      # Donchian trend-following research (negative result, kept for reproducibility)
 ├── backtest_natgas_meanrev.py       # VWAP/RSI mean-reversion research (negative result, kept for reproducibility)
 ├── backtest_natgas_patterns.py      # TA-Lib candlestick/oscillator sweep research (negative result, kept for reproducibility)
-├── live_dryrun.py                   # Live 24/7 Paper-Trading Daemon (commodity + currency)
+├── live_dryrun.py                   # Live 24/7 Paper-Trading Daemon (commodity + currency + equity)
+├── live_trading.py                  # Real-order execution engine -- fully unwired (see Safety Features); equity-capable but never invoked by anything
 ├── real_commodity_data.py           # Real MCX historical data downloader/top-up (via Upstox)
-└── real_currency_data.py            # Real NSE currency derivatives historical data downloader/top-up (via Upstox, chunked fetch)
+├── real_currency_data.py            # Real NSE currency derivatives historical data downloader/top-up (via Upstox, chunked fetch)
+└── real_equity_data.py              # Real NSE equity (NIFTY50) historical data downloader/top-up (via Upstox, ~76.5k candles/symbol back to 2022-08)
 ```
 
 ---
@@ -129,6 +139,24 @@ Same feature engine and entry-rule shape as commodities, with pair-specific thre
 | `JPYINR` | Not added | — | 0/375 combos reached the 15-trade credibility bar — youngest contract, not enough real days yet. Not a negative finding, just insufficient data; revisit once its archive grows. |
 
 **Important shape difference from commodities**: all three live pairs win *under 50%* of trades but are solidly profitable (profit factors 2.2–3.8x) — winners run 2-4x bigger than losers, the opposite payoff shape from crude/gold's 65-70%-win-rate/tight-R:R style. Don't judge these by win rate alone.
+
+### NSE Equity: NIFTY50 Intraday Scalping (`backtest_equity.py`, ONE shared `ENTRY_THRESHOLDS`)
+
+Structurally different from commodity/currency in three ways, all deliberate:
+
+1. **One shared entry-rule set for the entire 49-stock universe, not per-symbol tuning.** The original version of this scalper (removed 2026-09-18) hand-curated a small "best" universe *because* those stocks already backtested well — a circular selection that guarantees an inflated result regardless of whether any real edge exists. The rebuild fixes this by deciding the universe (`strategy/equity_universe.py` — all NIFTY50 names except `TATAMOTORS`, which no longer resolves in Upstox's instrument master) *before* any backtest, and applying identical thresholds to every stock. A stock trades often or rarely purely because its own price action does or doesn't clear the bar — nothing is ever pruned after the fact based on how it performed.
+2. **Dynamic ADX-scaled trailing exits, no fixed take-profit.** Once a trade proves itself (moves favorably past an activation threshold that itself scales with how strong the trend looked at entry), a trailing stop — recomputed from the *current* bar's ATR every bar, not frozen at entry — manages the rest of the trade. A strong trend can run well past where a fixed target would have capped it.
+3. **A hard cap of 3 concurrent open positions across the whole universe.** An earlier, uncapped version of this backtest allowed up to 10 simultaneous positions at 5% risk each — correlated market-wide moves hit many of them at once on the same bad days (worst single day: -₹11,053 across 16 trades, ~11% of capital), nearly wiping the account despite a profit factor above 1 in aggregate. The cap is a real portfolio-concentration constraint, not a backtest artifact.
+
+| | Status | Result |
+|---|---|---|
+| **Full NIFTY50 (49 names)** | Live (`DRYRUN_INCLUDE_EQUITY=true`) | Validated across **3 independent train/test folds** (2023-09→2024-08, 2024-07→2025-06, 2025-07→2026-09): win rate 64.7–68.0%, profit factor 1.41–1.56, all three net-positive with no exceptions. |
+
+**Why the original version failed, root-caused (not just re-asserted):** beyond the circular universe selection above, its untuned entry rules generated ~7,700 trades over 4 years averaging just ₹4.07 gross profit each — but ₹17.02 in fees each (mostly Upstox's flat ~₹20-per-leg brokerage cap). Every trade had negative expected value after costs, so capital was mathematically guaranteed to decay toward zero over enough trades, confirmed by testing risk-per-trade from 0.5% to 5% and concurrency caps from 3 to 10 — all converged to the same near-total wipeout. The fix wasn't better risk management, it was fewer, higher-conviction trades (`min_ema_slope` raised to 0.22, a much stronger trend-strength requirement) so each trade's edge meaningfully exceeds the flat fee floor.
+
+**ML was tried and deliberately NOT used.** A LightGBM model trained on the pooled 2.64M-row dataset (`ml/train_equity.py`) shows real signal (ROC-AUC 0.81, ~3x precision lift over the 4.3% base rate) — but adding it as an entry filter made results *worse* on 1 of 3 test folds, including flipping the most recent period from a +₹195k profit to a -₹15k loss. Equity runs rule-based only, same posture as currency.
+
+**Session**: 09:15–15:30 IST (NSE cash hours), entries gated 09:30–15:15, square-off 15:15.
 
 ---
 
@@ -185,6 +213,7 @@ Everything the CLI needs to run with **zero flags** lives in `backend/.env` (cop
 | `DRYRUN_SYMBOLS` | `CRUDEOILM GOLDM USDINR EURINR GBPINR` | Space-separated symbol override. Currency pairs are auto-detected by symbol name (`USDINR`/`EURINR`/`GBPINR`/`JPYINR`) and routed to the currency cost model + 09:00-17:00 session automatically — no separate `--asset currency` flag needed, just list them alongside commodity symbols. |
 | `DRYRUN_FULL_SESSION` | `true` | See [Session window](#session-window) above. |
 | `DRYRUN_USE_ML_FILTER` | `false` | Mirrors `BACKTEST_USE_ML_FILTER`. |
+| `DRYRUN_INCLUDE_EQUITY` | `true` | Extends whichever symbols `DRYRUN_SYMBOLS` already lists with the full NIFTY50 universe (49 names — see [NSE Equity](#nse-equity-nifty50-intraday-scalping-backtest_equitypy-one-shared-entry_thresholds)) rather than replacing them; equity runs alongside commodity/currency, not instead of. Set `false` to disable equity without touching `DRYRUN_SYMBOLS`. |
 
 ### Safety Limits (dry run daemon)
 | Variable | Default | Meaning |
@@ -294,7 +323,7 @@ python3 live_dryrun.py --report --account DRYRUN_ACCOUNT
 python3 live_dryrun.py --reset-db --capital 100000
 ```
 
-### 6. Backtest scripts directly (`backtest_commodity.py`, `backtest_currency.py`)
+### 6. Backtest scripts directly (`backtest_commodity.py`, `backtest_currency.py`, `backtest_equity.py`)
 
 Same engines `cli.py backtest` delegates to, callable directly when you want their full native flag set:
 
@@ -307,6 +336,11 @@ python3 backtest_commodity.py --symbols CRUDEOILM --capital 100000 --risk-pct 10
 # NSE Currency Derivatives Scalper
 python3 backtest_currency.py --symbols USDINR --capital 100000 --risk-pct 10.0 --leverage 7.0
 python3 backtest_currency.py --symbols USDINR EURINR GBPINR --capital 100000 --risk-pct 10.0 --leverage 7.0
+
+# NSE Equity Intraday Scalper (full NIFTY50 universe if --symbols omitted)
+python3 backtest_equity.py --capital 100000 --risk-pct 5.0 --leverage 5.0
+python3 backtest_equity.py --symbols RELIANCE TCS HDFCBANK --capital 100000 --risk-pct 5.0 --leverage 5.0
+python3 backtest_equity.py --capital 100000 --risk-pct 5.0 --leverage 5.0 --from 2025-07-01 --to 2026-09-18   # one of the 3 validated OOS folds
 ```
 
 ---
@@ -430,6 +464,16 @@ The commodity scalper's `p_up` signal comes from a per-symbol LightGBM classifie
 
 **Data note**: `archive_commodities/*.csv` holds **genuine historical MCX candles fetched from Upstox** (`real_commodity_data.py`), not synthetic data — see [Real MCX Data via Upstox](#real-mcx-data-via-upstox) below. Because MCX commodity futures are monthly-expiry contracts, real history is capped at roughly a month per contract; it grows by one real trading day nightly via the scheduled top-up. `download_commodity_data.py`'s random-walk generator still exists in the codebase but is no longer used for training/backtesting as of 2026-09-10 — don't reach for it.
 
+### Equity's ML model: trained, but deliberately not used live
+
+`ml/train_equity.py` trains ONE LightGBM model on rows **pooled across all 49 NIFTY50 stocks** (not per-symbol, unlike commodity — see [NSE Equity](#nse-equity-nifty50-intraday-scalping-backtest_equitypy-one-shared-entry_thresholds) for why per-stock anything reopens the original circular-selection problem), on 2.64M triple-barrier-labeled decision points from the TRAIN window only (2022-08-01 to 2025-06-30 — the three held-out test folds used to validate the live thresholds stay completely unseen). It shows real, genuine signal: ROC-AUC 0.81, and precision at high confidence (P≥0.60) of 14.7% against a 4.3% base positive rate — roughly a 3x lift over random.
+
+Despite that, **it is not wired into the live entry decision.** Added as a filter on top of the already-validated rule-only thresholds and re-evaluated on the same 3 independent OOS folds, it helped on 2 of 3 (higher win rate, better profit factor) but actively hurt on the third — the most recent period, flipping a +₹195,313 profit into a -₹15,075 loss. A filter that's net-positive on average but can silently turn the *next* period you'd actually trade into a loser isn't a safe addition; equity runs rule-based only, same posture `DRYRUN_USE_ML_FILTER=false` already applies to commodity.
+
+```bash
+python3 -m ml.train_equity   # trains and saves cache/equity_models/lgb_equity_pooled.pkl -- for research/inspection, not consumed by live_dryrun.py
+```
+
 ### Manual full training
 ```bash
 python3 -m ml.train_commodity --symbol CRUDEOILM   # full from-scratch train, one symbol
@@ -482,21 +526,29 @@ python3 -m real_currency_data           # full initial backfill, all 4 pairs, al
 python3 -m real_currency_data --topup     # incremental (what the daily timer runs)
 ```
 
+**NSE equity** (`archive_equity/*.csv`, via `real_equity_data.py`) does NOT hit the monthly-expiry wall above — NSE cash equities are continuously-listed, not futures/derivatives contracts, so real history goes back to each stock's own genuine listing/data-availability date. Confirmed directly: ~76,500 real 5-minute candles per symbol, 2022-08-01 through today, for all 49 NIFTY50 names. Uses the same shared `fetch_real_history_backward` chunked-fetch utility as commodity/currency (a hard per-chunk timeout with retry-then-gap logic was added here specifically — a genuine network hang was found and fixed while building this downloader; a timed-out chunk is now retried and, if still stuck, left as an honest gap rather than being misread as "end of history" and silently truncating everything older).
+
+```bash
+python3 -m real_equity_data              # full initial backfill, all 49 NIFTY50 symbols
+python3 -m real_equity_data --topup        # incremental (what the daily timer runs)
+python3 -m real_equity_data --symbols RELIANCE TCS   # subset
+```
+
 ---
 
 ## Statutory Taxation & Friction Schedule
 
-| Cost Head | MCX Futures (`CRUDEOILM`) | NSE Currency Derivatives |
-|---|---|---|
-| **CTT / STT** | **0.010%** on Sell turnover | **None — exempt** |
-| **Brokerage** | **₹20 flat cap** per order leg | **₹20 flat cap** per order leg |
-| **Stamp Duty** | **0.002%** on Buy turnover | **0.0001%** (₹10/crore) on Buy turnover |
-| **Exchange Turnover** | **0.0021%** on total turnover | **0.0009%** on total turnover |
-| **SEBI Regulatory Fee** | **₹10 per Crore** (0.0001%) | **₹10 per Crore** (0.0001%) |
-| **GST** | **18%** on (Brokerage + Exch + SEBI) | **18%** on (Brokerage + Exch + SEBI) |
-| **Slippage Buffer** | **½-tick per leg** | **½-tick per leg** |
+| Cost Head | MCX Futures (`CRUDEOILM`) | NSE Currency Derivatives | NSE Equity (Intraday MIS) |
+|---|---|---|---|
+| **CTT / STT** | **0.010%** on Sell turnover | **None — exempt** | **0.025%** on Sell turnover |
+| **Brokerage** | **₹20 flat cap** per order leg | **₹20 flat cap** per order leg | **₹20 flat cap** per order leg |
+| **Stamp Duty** | **0.002%** on Buy turnover | **0.0001%** (₹10/crore) on Buy turnover | **0.003%** on Buy turnover |
+| **Exchange Turnover** | **0.0021%** on total turnover | **0.0009%** on total turnover | **0.00325%** on total turnover |
+| **SEBI Regulatory Fee** | **₹10 per Crore** (0.0001%) | **₹10 per Crore** (0.0001%) | **₹10 per Crore** (0.0001%) |
+| **GST** | **18%** on (Brokerage + Exch + SEBI) | **18%** on (Brokerage + Exch + SEBI) | **18%** on (Brokerage + Exch + SEBI) |
+| **Slippage Buffer** | **½-tick per leg** | **½-tick per leg** | **½-tick per leg** |
 
-Currency derivatives carry the lighter friction of the two — no STT/CTT at all, and a much lower stamp duty (reduced from ₹200/crore to ₹10/crore specifically for currency & interest-rate derivatives).
+Currency derivatives carry the lightest friction of the three — no STT/CTT at all, and a much lower stamp duty (reduced from ₹200/crore to ₹10/crore specifically for currency & interest-rate derivatives). Equity carries the heaviest STT (0.025% vs. commodity's 0.010%) — this is exactly why the original equity scalper's high-frequency/small-edge approach failed (see [NSE Equity](#nse-equity-nifty50-intraday-scalping-backtest_equitypy-one-shared-entry_thresholds)): the ₹20 flat brokerage cap alone exceeded the average trade's entire gross edge at that trade frequency.
 
 ---
 
@@ -531,6 +583,18 @@ Same capital/risk/leverage as above; `backtest_currency.py`, no ML filter (no tr
 | `GBPINR` | 17 | 41.2% | 2.87 | **+₹4,678.85 (+4.68%)** | -1.80% |
 
 Note the win rates: all under 50%, yet all profitable with strong profit factors — see [NSE Currency Derivatives](#nse-currency-derivatives-backtest_currencypy-entry_thresholds-per-pair) above for why. `USDINR`/`GBPINR` had every one of their credible sweep combinations profitable (100%); `EURINR` had 56%. Same small-sample caveat as commodities applies.
+
+### NSE Equity — full NIFTY50 universe (2022-08 to 2026-09, 3 independent train/test folds)
+
+Unlike commodity/currency, equity has a genuine multi-year real archive (NSE cash has no monthly-expiry cap), so this was validated with real out-of-sample folds rather than one short window. Capital ₹100,000, risk 5%, leverage 5x, max 3 concurrent positions, `backtest_equity.py`, no ML filter (see [Equity's ML model](#equitys-ml-model-trained-but-deliberately-not-used-live) for why).
+
+| Fold | Test period | Trades | Win Rate | Profit Factor | Net Realized |
+|---|---|---|---|---|---|
+| 1 | 2025-07-01 to 2026-09-18 | 422 | 64.7% | 1.43 | **+₹195,313 (+195.31%)** |
+| 2 | 2024-07-01 to 2025-06-30 | 453 | 68.0% | 1.56 | **+₹345,530 (+345.53%)** |
+| 3 | 2023-09-01 to 2024-08-31 | 599 | 65.8% | 1.41 | **+₹236,449 (+236.45%)** |
+
+All three folds are independently seeded at ₹100,000 (not chained/compounded across folds) specifically so each fold's win rate/PF is a fair, comparable measurement — win rate holds in a tight 64.7–68.0% band and profit factor in 1.41–1.56 across three non-overlapping multi-month periods, the strongest cross-period consistency found anywhere in this project. Max drawdown is real and significant on all three (33–43%) — this is a genuinely rougher ride than the commodity/currency numbers above, consistent with equity's higher-beta, high-conviction-but-fewer-trades shape (see [NSE Equity](#nse-equity-nifty50-intraday-scalping-backtest_equitypy-one-shared-entry_thresholds) for the concentration-risk cap that keeps it from being worse). Not yet proven with real capital — currently paper-trading only.
 
 ---
 

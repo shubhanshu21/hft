@@ -1,5 +1,5 @@
 [Unit]
-Description=Daily real MCX commodity + NSE currency + NSE index futures data top-up (CRUDEOILM/NATGASMINI/GOLDM/SILVERMIC/COPPER, USDINR/EURINR/GBPINR/JPYINR, NIFTY/BANKNIFTY, via Upstox)
+Description=Daily real MCX commodity + NSE currency + NSE index futures + NSE equity data top-up (CRUDEOILM/NATGASMINI/GOLDM/SILVERMIC/COPPER, USDINR/EURINR/GBPINR/JPYINR, NIFTY/BANKNIFTY, NIFTY50 equities, via Upstox)
 
 [Service]
 Type=oneshot
@@ -16,3 +16,8 @@ ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m real_index_futures_data
 # Added 2026-09-18: daily paper_trading.db backup -- previously no backup
 # existed at all for the entire trading history.
 ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m backup_db
+# Added 2026-09-19: NSE equity (NIFTY50) top-up, now live in paper trading
+# (see .env's DRYRUN_INCLUDE_EQUITY) -- keeps all 49 archives current so the
+# validated entry thresholds keep seeing fresh real data, same as every
+# other asset here.
+ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m real_equity_data --topup
