@@ -1018,7 +1018,7 @@ def main() -> None:
         print("This is intentional -- this file is not meant to run live yet.")
         sys.exit(1)
 
-    _lock_fh = _acquire_process_lock(args.account)  # held for process lifetime
+    _lock_fh = _acquire_process_lock(args.account)  # noqa: F841 – held for process lifetime; fd must stay open to keep fcntl lock alive
 
     token = ensure_fresh_upstox_token() or UpstoxConfig.ACCESS_TOKEN
     if not token:

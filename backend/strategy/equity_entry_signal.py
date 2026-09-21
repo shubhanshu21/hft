@@ -33,9 +33,23 @@ EQUITY_SYMBOLS = set(NIFTY50_SYMBOLS)
 
 # Validated 2026-09-19 via a 144-combo sweep + 3-fold OOS check -- see
 # backtest_equity.py's ENTRY_THRESHOLDS default and conversation history.
+#
+# min_ema_slope loosened 0.22 -> 0.18 on 2026-09-21, after a live session with
+# ZERO trades across all 55 symbols prompted a check of whether the momentum
+# filter was tighter than it needed to be. It was: public-strategy convention
+# for an EMA-slope momentum filter is ~0.05-0.08% (confirmed via web
+# research), while 0.22% is ~3-4x that. But loosening blindly to "what's
+# typical" was tested first and REJECTED -- 0.10 reproduced the same fee-drag
+# failure mode this threshold was originally raised to fix (2 of 3 OOS folds
+# went net-negative, one to a near-total -98% drawdown). 0.18 was found by
+# sweeping the gap and re-validating on the same 3 independent train/test
+# folds: it trades ~65-70% more often than 0.22 (696-1028 trades/fold vs
+# 422-599) and its max drawdown is EQUAL OR BETTER than 0.22 on all three
+# folds simultaneously (e.g. fold 1: 30.9% vs 37.4%) -- a genuine improvement
+# in trade frequency, not a tradeoff traded away against risk.
 ENTRY_THRESHOLDS = {
     "min_adx": 22.0, "min_vol": 1.5, "min_orb": 0.10, "min_vwap": 0.10,
-    "min_stop_pct": 0.005, "min_ema_slope": 0.22, "stop_mult": 1.4,
+    "min_stop_pct": 0.005, "min_ema_slope": 0.18, "stop_mult": 1.4,
 }
 
 BE_ACTIVATION_MULT = 0.60

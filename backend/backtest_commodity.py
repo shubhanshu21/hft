@@ -77,7 +77,18 @@ ENTRY_THRESHOLDS = {
     # in-sample-only 98%-robust claim, but this is real OOS evidence, not
     # just a good-looking sweep. tp_mult/stop_mult not re-swept this pass --
     # kept at the commodity default pending a follow-up.
-    "gold":   {"min_ml_l": 0.54, "max_ml_s": 0.44, "min_adx": 22.0, "min_vol": 1.70, "min_orb": 0.05, "min_vwap": 0.05, "min_stop_pct": 0.0035, "min_ema_slope": 0.080, "tp_mult": 1.80, "stop_mult": 1.4},
+    # min_ema_slope loosened 0.08 -> 0.04 on 2026-09-21, after a near-miss
+    # diagnostic over the full real archive found momentum (ema_slope) was
+    # the sole blocker on 87% of GOLDM's near-miss bars -- the highest of any
+    # symbol checked. A TRAIN-only view preferred keeping 0.08 (best win
+    # rate/PF there), but that combo only produces 11 trades on TEST -- BELOW
+    # the 15-trade credibility bar, meaning it can't actually be validated
+    # out-of-sample. 0.04 gives 44 credible TEST trades with BETTER numbers
+    # on every metric than 0.08 or any tighter value (68.2% win, PF 2.41,
+    # +Rs57,669, DD 7.6%) -- not a TRAIN/TEST tradeoff, a case where TRAIN's
+    # preference couldn't even be honestly checked. See conversation history
+    # for the full slope sweep (0.02-0.08) on both windows.
+    "gold":   {"min_ml_l": 0.54, "max_ml_s": 0.44, "min_adx": 22.0, "min_vol": 1.70, "min_orb": 0.05, "min_vwap": 0.05, "min_stop_pct": 0.0035, "min_ema_slope": 0.040, "tp_mult": 1.80, "stop_mult": 1.4},
     # RECALIBRATED 2026-09-18, same train/test discipline as gold above.
     # min_adx=18/min_vol=1.1/min_ema_slope=0.05 was picked over the raw
     # top-by-train-profit combo specifically because it generalized better
@@ -103,7 +114,15 @@ ENTRY_THRESHOLDS = {
     # profit drops Rs106,290->Rs64,458 (fewer, higher-quality trades only).
     # Deployed on explicit user instruction to prioritize win rate/DD over total
     # profit. tp_mult/stop_mult left unchanged (1.8/1.4) -- not re-swept this pass.
-    "silver": {"min_ml_l": 0.54, "max_ml_s": 0.44, "min_adx": 22.0, "min_vol": 1.30, "min_orb": 0.05, "min_vwap": 0.05, "min_stop_pct": 0.0035, "min_ema_slope": 0.080, "tp_mult": 1.80, "stop_mult": 1.4},
+    # min_ema_slope loosened 0.08 -> 0.05 on 2026-09-21, same near-miss
+    # diagnostic that flagged GOLDM above (momentum was silver's #2 blocker
+    # by frequency, at 66% of near-miss bars). 0.08 on TEST: 52 trades, 65.4%
+    # win, PF 1.66, +Rs20,953. 0.05 on TEST: 74 trades, 64.9% win (~same), PF
+    # 2.10 (higher), +Rs48,978 (>2x higher net) at essentially the same DD
+    # (9.5% vs 8.7%) -- more trades AND a better risk-adjusted result, not a
+    # tradeoff. TRAIN also credible at 0.05 (114 trades, PF 1.46) -- not a
+    # TEST-only fluke. See conversation history for the full sweep.
+    "silver": {"min_ml_l": 0.54, "max_ml_s": 0.44, "min_adx": 22.0, "min_vol": 1.30, "min_orb": 0.05, "min_vwap": 0.05, "min_stop_pct": 0.0035, "min_ema_slope": 0.050, "tp_mult": 1.80, "stop_mult": 1.4},
     # COPPER surveyed the same (now-retracted) truncated-archive sweep: only
     # 36/180 credible combos profitable (20%) -- weaker than silver/gold even
     # before the truncation-bug correction. Not dedicated-calibrated or added

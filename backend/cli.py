@@ -40,8 +40,6 @@ if _venv_py.exists() and sys.executable != str(_venv_py):
     os.execv(str(_venv_py), [str(_venv_py)] + sys.argv)
 
 import argparse
-from datetime import datetime
-import pandas as pd
 from dotenv import load_dotenv
 
 load_dotenv(dotenv_path=Path(__file__).parent / ".env")
@@ -54,14 +52,11 @@ def _env(key: str, default: str) -> str:
 sys.path.insert(0, str(Path(__file__).parent))
 
 from database import TradingDB
-from broker.upstox_broker import UpstoxBroker
-from broker.instruments import ensure_master, get_instrument_key
-from live_dryrun import _load_token
 
 
 def cmd_backtest(args):
     from backtest_commodity import run_commodity_backtest
-    res = run_commodity_backtest(
+    run_commodity_backtest(
         symbols=args.symbols,
         capital=args.capital,
         risk_pct=args.risk_pct,

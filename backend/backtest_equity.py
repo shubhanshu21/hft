@@ -101,14 +101,19 @@ _ADX_SCALE_MAX = 1.8   # strong-trend entry -> more room to run (wider trail, ar
 def _dynamic_exit_scale(entry_adx: float) -> float:
     return float(np.clip(entry_adx / _ADX_SCALE_REF, _ADX_SCALE_MIN, _ADX_SCALE_MAX))
 
-# ONE shared, unvalidated starting point across the whole universe -- see
-# module docstring for why this is deliberately not per-symbol. Seeded from
-# crude's commodity default as a reasonable starting shape (same as how
-# currency's very first pass borrowed gold's calibration) -- NOT yet swept
-# or validated. Treat any run against these as a first honest baseline.
+# ONE shared threshold set across the whole universe -- see module docstring
+# for why this is deliberately not per-symbol. Originally seeded from crude's
+# commodity default as an unvalidated starting point; validated 2026-09-19
+# via a 144-combo sweep + 3-fold OOS check, then min_ema_slope loosened
+# 0.22->0.18 on 2026-09-21 after re-validating on the same 3 folds (more
+# trades, equal-or-better drawdown on every fold -- see
+# strategy/equity_entry_signal.py's ENTRY_THRESHOLDS comment for the full
+# story, which is the copy live_dryrun.py actually imports; this one is kept
+# in sync by hand so `python3 backtest_equity.py` with no threshold override
+# reflects the same config that's actually live).
 ENTRY_THRESHOLDS = {
-    "min_adx": 18.0, "min_vol": 1.10, "min_orb": 0.05, "min_vwap": 0.05,
-    "min_stop_pct": 0.0035, "min_ema_slope": 0.050, "tp_mult": 1.80, "stop_mult": 1.4,
+    "min_adx": 22.0, "min_vol": 1.5, "min_orb": 0.10, "min_vwap": 0.10,
+    "min_stop_pct": 0.005, "min_ema_slope": 0.18, "tp_mult": 1.80, "stop_mult": 1.4,
 }
 
 _ENTRY_GATE_MIN = 15    # skip first 15 min (09:15-09:30) -- opening volatility, thin ORB sample

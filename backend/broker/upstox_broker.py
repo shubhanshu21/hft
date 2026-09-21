@@ -162,8 +162,6 @@ class UpstoxBroker(BaseBroker):
         self._user_api = upstox_client.UserApi(self._api_client)
         # Real historical OHLC candles — see get_historical_candles().
         self._history_v3_api = upstox_client.HistoryV3Api(self._api_client)
-        # Real historical OHLC candles — see get_historical_candles().
-        self._history_v3_api = upstox_client.HistoryV3Api(self._api_client)
 
         # Instrument master cache (downloaded daily before market open)
         self._cache = InstrumentCache()

@@ -14,7 +14,7 @@ import argparse
 import sqlite3
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 from zoneinfo import ZoneInfo
 
 IST = ZoneInfo("Asia/Kolkata")
@@ -469,7 +469,7 @@ class TradingDB:
         print(f"  Securities STT:      {RED}₹{stt_sum:,.2f}{R} (0.025% sell-side)")
         print(f"  Statutory Taxes/GST: {RED}₹{taxes_sum:,.2f}{R} (Stamp duty, SEBI, Exch, GST)")
         print(f"  Estimated Slippage:  {RED}₹{slip_sum:,.2f}{R}")
-        print(f"  --------------------------------------------------")
+        print("  --------------------------------------------------")
         print(f"  Total All Friction:  {BOLD}{RED}₹{fees_sum:,.2f}{R}")
 
         if positions:

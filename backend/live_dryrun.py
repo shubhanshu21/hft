@@ -41,7 +41,7 @@ import fcntl
 import json
 import time
 from datetime import date, datetime, timedelta
-from typing import Optional
+
 from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -50,10 +50,9 @@ import pandas as pd
 
 from broker.upstox_broker import UpstoxBroker, token_invalid_event
 from database import TradingDB
-from strategy.commodity_costs import compute_mcx_commodity_costs, COMMODITY_SPECS, get_contract_multiplier
+from strategy.commodity_costs import compute_mcx_commodity_costs, COMMODITY_SPECS
 from strategy.currency_costs import (
     compute_ncd_currency_costs, CURRENCY_SPECS,
-    get_contract_multiplier as get_currency_contract_multiplier,
 )
 from strategy.entry_signal import compute_entry_signal, is_currency as _is_currency
 from strategy.equity_entry_signal import (
@@ -109,7 +108,7 @@ _SYMBOL_RISK_PCT_OVERRIDE = {"SILVER": 5.0, "CRUDEOILM": 3.0}
 # strategy.currency_costs.size_currency_lots directly, not assumed.
 _SYMBOL_LEVERAGE_OVERRIDE = {"GBPINR": 3.5}
 
-from broker.instruments import build_mcx_commodity_map, build_currency_map, ensure_master, get_instrument_key
+from broker.instruments import build_mcx_commodity_map, build_currency_map, get_instrument_key
 from utils.logger import get_logger, setup_logger
 from utils import telegram
 from utils.market_holidays import get_trading_holidays
@@ -513,8 +512,6 @@ class DryRunner:
             adx, vol_s = sig_result["adx"], sig_result["vol_surge"]
             vwap_d, ema_s = sig_result["vwap_dist_pct"], sig_result["ema_slope_pct"]
 
-            multiplier = get_currency_contract_multiplier(sym) if is_curr else get_contract_multiplier(sym)
-            qty = lots
             lot_size = CURRENCY_SPECS.get(sym.upper(), {}).get("lot_size", 1000) if is_curr \
                 else COMMODITY_SPECS.get(sym, {}).get("lot_size", 1)
             trade_val = lots * lot_size * entry
@@ -978,7 +975,7 @@ def main():
             print(f"{GY}Equity curve chart saved: {WH}{chart_path}{R}")
         return
 
-    _lock_fh = _acquire_process_lock(args.account)  # held for process lifetime; see _acquire_process_lock
+    _lock_fh = _acquire_process_lock(args.account)  # noqa: F841 – held for process lifetime; fd must stay open to keep fcntl lock alive
 
     token = args.token or _load_token()
 
@@ -1113,7 +1110,6 @@ def main():
             # not just at process startup -- so a monthly contract expiry is
             # picked up within a day instead of depending on the weekly
             # finetune job's incidental restart to notice it (found 2026-09-18).
-            global SYMBOL_MAP
             fresh_map = _build_symbol_map()
             changed = {k: v for k, v in fresh_map.items() if SYMBOL_MAP.get(k) != v}
             if changed:
