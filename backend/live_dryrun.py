@@ -545,7 +545,9 @@ class DryRunner:
                 current_stop=sl,
                 target_price=tp,
                 breakeven_price=be,
-                account_id=self.account_id
+                account_id=self.account_id,
+                instrument_key=SYMBOL_MAP.get(sym),
+                entry_order_id=entry_order_id,
             )
 
             sig = {
@@ -624,7 +626,10 @@ class DryRunner:
         # a constraint-violating NULL.
         self.db.open_position(
             position_id=pos_id, symbol=sym, direction=direction, qty=qty, entry_price=entry,
-            current_stop=sl, target_price=activation_price, breakeven_price=activation_price, account_id=self.account_id,
+            current_stop=sl, target_price=activation_price, breakeven_price=activation_price,
+            account_id=self.account_id,
+            instrument_key=SYMBOL_MAP.get(sym),
+            entry_order_id=entry_order_id,
         )
 
         sig = {
@@ -833,6 +838,7 @@ class DryRunner:
             capital_after=self.capital,
             p_up=pos.get("p_up"),
             rsi=pos.get("rsi"),
+            adx=pos.get("adx"),
             vwap_dist_pct=pos.get("vwap_dist_pct"),
             ema_slope_pct=pos.get("ema_slope_pct"),
             account_id=self.account_id
@@ -1163,6 +1169,24 @@ def main():
                         runner.start_trading()
                         print(f"  {BOLD}{GR}TRADING STARTED via Telegram{R}", flush=True)
                         telegram.send("🟢 <b>TRADING STARTED</b> (manual) — resuming normal entries.")
+                    elif cmd in ("/status", "status"):
+                        open_syms = list(runner.positions.keys())
+                        regime_line = ""
+                        if runner.use_crude_regime_filter:
+                            regime_line = f"\nCrude regime gate: {'🟢 OK' if runner.crude_regime_ok is not False else '🔴 BLOCKED'}"
+                        pos_lines = ""
+                        for s, p in runner.positions.items():
+                            pnl_est = (p.get("best_price", p["entry_price"]) - p["entry_price"]) * (1 if p["direction"] == "long" else -1)
+                            pos_lines += f"\n  • {s} {p['direction'].upper()} @ ₹{p['entry_price']:.2f} | stop ₹{p['current_stop']:.2f}"
+                        telegram.send(
+                            f"📊 <b>DRYRUN STATUS</b>\n"
+                            f"Balance: ₹{runner.capital:,.2f}\n"
+                            f"Trading: {'🟢 ENABLED' if runner.trading_enabled else '🛑 HALTED'}\n"
+                            f"Scan #{scan_n} @ {now.strftime('%H:%M:%S')} IST\n"
+                            f"Open positions ({len(open_syms)}): {', '.join(open_syms) or 'none'}"
+                            f"{pos_lines}"
+                            f"{regime_line}"
+                        )
             except Exception as exc:
                 log.error("Telegram command poll raised: %s", exc, exc_info=True)
 

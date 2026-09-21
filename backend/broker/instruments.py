@@ -15,7 +15,6 @@ from __future__ import annotations
 import csv
 import re
 import gzip
-import io
 import json
 import logging
 import time

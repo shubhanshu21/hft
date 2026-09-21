@@ -90,6 +90,8 @@ class TradingDB:
                 gross_pnl REAL DEFAULT 0.0,
                 net_pnl REAL DEFAULT 0.0,
                 total_fees REAL DEFAULT 0.0,
+                instrument_key TEXT,      -- Upstox token pinned at entry; used by reconciliation
+                entry_order_id TEXT,      -- broker order_id that opened this position
                 updated_at TEXT NOT NULL
             );
 
@@ -119,6 +121,7 @@ class TradingDB:
                 capital_after REAL NOT NULL,
                 p_up REAL,
                 rsi REAL,
+                adx REAL,
                 vwap_dist_pct REAL,
                 ema_slope_pct REAL,
                 created_at TEXT NOT NULL
@@ -148,6 +151,18 @@ class TradingDB:
             CREATE INDEX IF NOT EXISTS idx_trades_symbol ON trades(symbol);
             CREATE INDEX IF NOT EXISTS idx_trades_date ON trades(exit_dt);
             """)
+            # Migrations for existing DBs: add columns that didn't exist in
+            # earlier schema versions. ALTER TABLE ADD COLUMN is idempotent-safe
+            # (we catch OperationalError for "duplicate column" and ignore it).
+            for migration_sql in [
+                "ALTER TABLE positions ADD COLUMN instrument_key TEXT",
+                "ALTER TABLE positions ADD COLUMN entry_order_id TEXT",
+                "ALTER TABLE trades    ADD COLUMN adx REAL",
+            ]:
+                try:
+                    conn.execute(migration_sql)
+                except Exception:
+                    pass  # column already exists on an up-to-date DB
 
     # -------------------------------------------------------------------------
     # Account Management
@@ -234,22 +249,24 @@ class TradingDB:
     def open_position(self, position_id: str, symbol: str, direction: str,
                       qty: int, entry_price: float, current_stop: float,
                       target_price: float, breakeven_price: float,
-                      account_id: str = "DRYRUN_ACCOUNT") -> None:
+                      account_id: str = "DRYRUN_ACCOUNT",
+                      instrument_key: Optional[str] = None,
+                      entry_order_id: Optional[str] = None) -> None:
         now_str = datetime.now(IST).isoformat()
         with self._get_conn() as conn:
             conn.execute("""
             INSERT INTO positions (
                 position_id, account_id, symbol, direction, qty, entry_price,
                 current_stop, target_price, breakeven_price, best_price, armed_be,
-                status, entry_time, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'OPEN', ?, ?)
+                status, entry_time, instrument_key, entry_order_id, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'OPEN', ?, ?, ?, ?)
             ON CONFLICT(position_id) DO UPDATE SET
                 current_stop = excluded.current_stop,
                 updated_at = excluded.updated_at
             """, (
                 position_id, account_id, symbol, direction.lower(), qty,
                 entry_price, current_stop, target_price, breakeven_price,
-                entry_price, now_str, now_str
+                entry_price, now_str, instrument_key, entry_order_id, now_str
             ))
 
     def update_position_stop(self, position_id: str, current_stop: float,
@@ -300,6 +317,7 @@ class TradingDB:
                      exit_reason: str, gross_pnl: float, costs_dict: dict,
                      net_pnl: float, capital_after: float,
                      p_up: Optional[float] = None, rsi: Optional[float] = None,
+                     adx: Optional[float] = None,
                      vwap_dist_pct: Optional[float] = None,
                      ema_slope_pct: Optional[float] = None,
                      account_id: str = "DRYRUN_ACCOUNT") -> int:
@@ -311,9 +329,9 @@ class TradingDB:
                 entry_price, exit_price, entry_dt, exit_dt, hold_minutes,
                 exit_reason, gross_pnl, brokerage, stt, stamp_duty,
                 exchange_txn_fee, sebi_charges, gst, slippage, total_friction,
-                net_pnl, capital_after, p_up, rsi, vwap_dist_pct,
+                net_pnl, capital_after, p_up, rsi, adx, vwap_dist_pct,
                 ema_slope_pct, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 position_id, account_id, symbol, direction.lower(), qty,
                 entry_price, exit_price, entry_dt, exit_dt, hold_minutes,
@@ -327,7 +345,7 @@ class TradingDB:
                 costs_dict.get("slippage", 0.0),
                 costs_dict.get("total", 0.0),
                 net_pnl, capital_after,
-                p_up, rsi, vwap_dist_pct, ema_slope_pct, now_str
+                p_up, rsi, adx, vwap_dist_pct, ema_slope_pct, now_str
             ))
             trade_id = cur.lastrowid
 

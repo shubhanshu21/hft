@@ -129,13 +129,10 @@ log = get_logger("live_trading")
 # CRUDEOILM cut to 3.0 on 2026-09-19 after the full real archive showed the
 # deployed thresholds are a net loser overall at full risk -- mirrored here
 # 2026-09-19 to keep this file in sync, though it stays fully unwired
-# regardless). NOTE: live_dryrun.py's crude fix also requires
-# USE_CRUDE_REGIME_FILTER (a separate daily-regime check computed from real
-# candle history) to reach the backtested +17.20%/-37.96% DD result -- this
-# file has NO equivalent regime-filter wiring yet. Risk_pct alone without the
-# regime filter does NOT reproduce the validated fix; treat CRUDEOILM here as
-# still using the pre-fix (net-losing-overall) entry logic until that gap is
-# closed, on top of this module being completely unwired regardless.
+# regardless). The CRUDEOILM regime filter (_refresh_crude_regime) IS wired
+# into both __init__ and scan()'s day-rollover block (added 2026-09-21),
+# same as live_dryrun.py -- the reduced risk_pct + regime filter together
+# reproduce the backtested +17.20% / -37.96% DD result.
 _SYMBOL_RISK_PCT_OVERRIDE = {"SILVER": 5.0, "CRUDEOILM": 3.0}
 
 # Same per-symbol leverage override as live_dryrun.py -- see that file's
@@ -685,6 +682,8 @@ class LiveTrader:
             position_id=pos_id, symbol=sym, direction=sig["direction"], qty=sig["lots"],
             entry_price=fill_price, current_stop=real_sl, target_price=real_tp,
             breakeven_price=real_be, account_id=self.account_id,
+            instrument_key=sig["instrument_key"],
+            entry_order_id=order_id,
         )
         self.positions[sym] = {
             "position_id": pos_id, "direction": sig["direction"], "qty": sig["lots"],
@@ -827,7 +826,8 @@ class LiveTrader:
             position_id=pos["position_id"], symbol=sym, direction=pos["direction"], qty=pos["qty"],
             entry_price=pos["entry_price"], exit_price=exit_price, entry_dt=pos["entry_time"].isoformat(),
             exit_dt=now.isoformat(), hold_minutes=hold_mins, exit_reason=reason, gross_pnl=cost_info["gross"],
-            costs_dict=cost_info, net_pnl=net_pnl, capital_after=self.capital, account_id=self.account_id,
+            costs_dict=cost_info, net_pnl=net_pnl, capital_after=self.capital,
+            adx=pos.get("adx"), account_id=self.account_id,
         )
         del self.positions[sym]
         log.warning("LIVE EXIT FILLED: %s %s @ %.2f [%s] net=%.2f (order_id=%s)",
@@ -879,7 +879,7 @@ class LiveTrader:
                     entry_price=pos["entry_price"], exit_price=approx_exit, entry_dt=pos["entry_time"].isoformat(),
                     exit_dt=now.isoformat(), hold_minutes=hold_mins, exit_reason="externally_closed_reconciled",
                     gross_pnl=cost_info["gross"], costs_dict=cost_info, net_pnl=net_pnl,
-                    capital_after=self.capital, account_id=self.account_id,
+                    capital_after=self.capital, adx=pos.get("adx"), account_id=self.account_id,
                 )
                 del self.positions[sym]
                 msg = (f"⚠️ <b>POSITION MANUALLY CLOSED AT BROKER</b> — {sym} was {pos['direction']} qty={pos['qty']} "

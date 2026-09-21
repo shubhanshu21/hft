@@ -16,7 +16,6 @@ Handles Official Indian MCX Market Structure (09:00 AM to 11:30 PM IST):
 """
 from __future__ import annotations
 
-import numpy as np
 import pandas as pd
 
 COMMODITY_UNIVERSE = ["CRUDEOILM", "NATGASMINI"]
