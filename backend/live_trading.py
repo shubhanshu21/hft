@@ -143,6 +143,16 @@ _SYMBOL_RISK_PCT_OVERRIDE = {"SILVER": 5.0, "CRUDEOILM": 3.0}
 # the full story).
 _SYMBOL_LEVERAGE_OVERRIDE = {"GBPINR": 3.5}
 
+
+def _get_market(sym: str) -> str:
+    """Classify a trading symbol into its asset class: 'equity', 'currency', or 'commodity'."""
+    if _is_equity(sym):
+        return "equity"
+    elif _is_currency(sym):
+        return "currency"
+    return "commodity"
+
+
 # How long to wait for a real order to reach 'complete' before attempting to
 # cancel it (see _wait_for_fill). Market orders on liquid MCX/NCD_FO
 # contracts should fill in well under this; a slower fill is itself a signal
@@ -274,6 +284,12 @@ class LiveTrader:
         self.symbol_daily_pnl: dict[str, float] = {s: 0.0 for s in self.symbols}
         self.symbol_kill_switch: dict[str, bool] = {s: False for s in self.symbols}
 
+        # Market-specific daily loss limits & cooldown timers (added 2026-09-22):
+        self.max_market_daily_loss_pct = float(os.environ.get("MAX_MARKET_DAILY_LOSS_PCT", "3.0"))
+        self.market_cooldown_minutes = int(os.environ.get("MARKET_COOLDOWN_MINUTES", "60"))
+        self.market_daily_pnl: dict[str, float] = {"commodity": 0.0, "currency": 0.0, "equity": 0.0}
+        self.market_cooldown_until: dict[str, datetime | None] = {"commodity": None, "currency": None, "equity": None}
+
         # CRUDEOILM regime gate -- mirrors live_dryrun.py's DryRunner exactly
         # (see that file's __init__ and _refresh_crude_regime for the full
         # finding/rationale). Added 2026-09-19, the same day as this file's
@@ -316,18 +332,25 @@ class LiveTrader:
                 "entry_time": datetime.fromisoformat(p["entry_time"]),
                 "stop_dist": abs(p["entry_price"] - p["current_stop"]) or p["entry_price"] * 0.005,
                 "entry_order_id": p.get("entry_order_id", ""),
-                # The positions table has no instrument_key column (this
-                # process's own real-order additions came after that schema
-                # was fixed) -- a position restored across a process restart
-                # gets re-anchored to whatever's CURRENTLY correct at startup
-                # (fine, since restarts happen between trading days, not
-                # mid-position, in normal operation). See _enter()'s comment
-                # for why this matters at all.
                 "instrument_key": self.symbol_map.get(p["symbol"]),
             }
             log.warning("Restored OPEN real position from DB on startup: %s %s qty=%s -- "
                         "verify this matches the actual Upstox position book before trusting it.",
                         p["symbol"], p["direction"], p["qty"])
+
+    def _is_market_on_cooldown(self, market: str, now: datetime) -> bool:
+        """Checks whether the given market ('commodity', 'currency', 'equity')
+        is currently on a loss-triggered cooldown. Automatically clears expired cooldowns."""
+        expiry = self.market_cooldown_until.get(market)
+        if expiry is None:
+            return False
+        if now < expiry:
+            return True
+        self.market_cooldown_until[market] = None
+        log.info("%s cooldown expired (LIVE). Resuming %s entry evaluation.", market.upper(), market)
+        telegram.send(f"▶ <b>{market.upper()} COOLDOWN EXPIRED (LIVE)</b>\n"
+                      f"Cooldown has ended. New {market} setups will now be evaluated.")
+        return False
 
     # ---- CRUDEOILM regime gate (mirrors DryRunner._refresh_crude_regime exactly) ----
     def _refresh_crude_regime(self) -> None:
@@ -552,6 +575,22 @@ class LiveTrader:
         cost_info = compute_nse_equity_costs(pos["direction"], pos["entry_price"], exit_price, quantity)
         net_pnl = cost_info["net"]
         self.capital += net_pnl
+
+        # Market-specific daily loss limit & cooldown timer
+        self.market_daily_pnl["equity"] = self.market_daily_pnl.get("equity", 0.0) + net_pnl
+        if self.day_start_capital > 0:
+            mkt_loss_pct = -self.market_daily_pnl["equity"] / self.day_start_capital * 100
+            if mkt_loss_pct >= self.max_market_daily_loss_pct:
+                cooldown_expiry = now + timedelta(minutes=self.market_cooldown_minutes)
+                if self.market_cooldown_until.get("equity") is None or self.market_cooldown_until["equity"] < now:
+                    self.market_cooldown_until["equity"] = cooldown_expiry
+                    expiry_time_str = cooldown_expiry.strftime("%H:%M:%S")
+                    telegram.send(
+                        f"⏸ <b>EQUITY COOLDOWN ACTIVATED (LIVE)</b> — {mkt_loss_pct:.2f}% loss "
+                        f"(limit {self.max_market_daily_loss_pct}%)\n"
+                        f"New equity entries paused for {self.market_cooldown_minutes}m until <b>{expiry_time_str} IST</b>.\n"
+                        f"Other markets continue normally."
+                    )
 
         self.symbol_daily_pnl[sym] = self.symbol_daily_pnl.get(sym, 0.0) + net_pnl
         if not self.symbol_kill_switch.get(sym, False) and self.day_start_capital > 0:
@@ -806,6 +845,23 @@ class LiveTrader:
         net_pnl = cost_info["net"]
         self.capital += net_pnl
 
+        # Market-specific daily loss limit & cooldown timer
+        market = _get_market(sym)
+        self.market_daily_pnl[market] = self.market_daily_pnl.get(market, 0.0) + net_pnl
+        if self.day_start_capital > 0:
+            mkt_loss_pct = -self.market_daily_pnl[market] / self.day_start_capital * 100
+            if mkt_loss_pct >= self.max_market_daily_loss_pct:
+                cooldown_expiry = now + timedelta(minutes=self.market_cooldown_minutes)
+                if self.market_cooldown_until.get(market) is None or self.market_cooldown_until[market] < now:
+                    self.market_cooldown_until[market] = cooldown_expiry
+                    expiry_time_str = cooldown_expiry.strftime("%H:%M:%S")
+                    telegram.send(
+                        f"⏸ <b>{market.upper()} COOLDOWN ACTIVATED (LIVE)</b> — {mkt_loss_pct:.2f}% loss "
+                        f"(limit {self.max_market_daily_loss_pct}%)\n"
+                        f"New {market} entries paused for {self.market_cooldown_minutes}m until <b>{expiry_time_str} IST</b>.\n"
+                        f"Other markets continue normally."
+                    )
+
         self.symbol_daily_pnl[sym] = self.symbol_daily_pnl.get(sym, 0.0) + net_pnl
         if not self.symbol_kill_switch.get(sym, False) and self.day_start_capital > 0:
             sym_loss_pct = -self.symbol_daily_pnl[sym] / self.day_start_capital * 100
@@ -916,6 +972,8 @@ class LiveTrader:
             self.kill_switch_active = False
             self.symbol_daily_pnl = {s: 0.0 for s in self.symbols}
             self.symbol_kill_switch = {s: False for s in self.symbols}
+            self.market_daily_pnl = {"commodity": 0.0, "currency": 0.0, "equity": 0.0}
+            self.market_cooldown_until = {"commodity": None, "currency": None, "equity": None}
 
             # Refresh instrument_key resolution once per trading-day rollover
             # -- MCX/NCD_FO contracts are monthly-expiry, and self.symbol_map
@@ -946,6 +1004,15 @@ class LiveTrader:
         self._reconcile_positions(now)
 
         for sym in self.symbols:
+            market = _get_market(sym)
+            if self._is_market_on_cooldown(market, now):
+                if sym in self.positions:
+                    if _is_equity(sym):
+                        self._maybe_exit_equity(sym, now)
+                    else:
+                        self._maybe_exit(sym, now)
+                continue
+
             if _is_equity(sym):
                 if sym in self.positions:
                     self._maybe_exit_equity(sym, now)

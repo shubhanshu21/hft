@@ -108,6 +108,16 @@ _SYMBOL_RISK_PCT_OVERRIDE = {"SILVER": 5.0, "CRUDEOILM": 3.0}
 # strategy.currency_costs.size_currency_lots directly, not assumed.
 _SYMBOL_LEVERAGE_OVERRIDE = {"GBPINR": 3.5}
 
+
+def _get_market(sym: str) -> str:
+    """Classify a trading symbol into its asset class: 'equity', 'currency', or 'commodity'."""
+    if _is_equity(sym):
+        return "equity"
+    elif _is_currency(sym):
+        return "currency"
+    return "commodity"
+
+
 from broker.instruments import build_mcx_commodity_map, build_currency_map, get_instrument_key
 from utils.logger import get_logger, setup_logger
 from utils import telegram
@@ -325,6 +335,37 @@ class DryRunner:
         self.trades: list[dict] = []
         self.today = date.today().isoformat()
 
+        # ---- Money management, added 2026-09-22 -----------------------------
+        # Per-trade risk sizing and the daily-loss kill switch already existed,
+        # but neither is what professional/prop-desk risk management actually
+        # means -- researched real conventions (portfolio heat caps, drawdown-
+        # scaled position sizing) rather than guessing, see the two methods
+        # below for the sourced numbers. Both apply on top of (not instead of)
+        # the existing per-trade sizing and kill switches.
+        # Trailing high-water mark for drawdown-scaled sizing below. Derived
+        # from portfolio_snapshots (MAX(current_capital) ever recorded) rather
+        # than a new DB column -- must survive process restarts, or a restart
+        # right after a loss would reset the peak to the now-lower capital
+        # and silently erase the drawdown this whole feature exists to react
+        # to. Falls back to current capital if no snapshot history exists yet.
+        self.peak_capital = self.capital
+        try:
+            _historical_peak = self.db.get_peak_capital(self.account_id)
+            if _historical_peak is not None:
+                self.peak_capital = max(self.peak_capital, _historical_peak)
+        except Exception as exc:
+            log.warning("Could not load historical peak capital from snapshots (starting from current capital): %s", exc)
+        # Portfolio heat cap: total open risk (sum of stop-distance-based Rs
+        # risk across EVERY open position, commodity+currency+equity combined)
+        # must never exceed this % of capital. Researched convention: swing
+        # traders commonly cap at 4-8%, short-term scalpers with tight stops
+        # up to ~10% (Alexander Elder's widely-cited 6% rule is the canonical
+        # reference point). 8% chosen as the middle of that range -- this
+        # system runs a selective, high-conviction cadence (not ultra-HFT), so
+        # scalpers' 10% ceiling felt too loose but conservative swing-traders'
+        # 4% felt tighter than the existing per-trade sizing already implies.
+        self.max_portfolio_heat_pct = float(os.environ.get("MAX_PORTFOLIO_HEAT_PCT", "8.0"))
+
         # Full-day vs evening-only trading window -- see backtest_commodity.py's
         # us_session_only for the matching backtest flag/comparison. Switched
         # to full-session by default 2026-09-17 per user decision: real
@@ -354,6 +395,16 @@ class DryRunner:
         # backstop for a bad day across the whole book.
         self.symbol_daily_pnl: dict[str, float] = {s: 0.0 for s in self.symbols}
         self.symbol_kill_switch: dict[str, bool] = {s: False for s in self.symbols}
+
+        # Market-specific daily loss limits & cooldown timers (added 2026-09-22):
+        # Instead of shutting down all trading for the day across decoupled markets,
+        # each market (commodity, currency, equity) tracks its own daily loss.
+        # When a market crosses MAX_MARKET_DAILY_LOSS_PCT, that specific market
+        # enters a MARKET_COOLDOWN_MINUTES pause, while other markets continue trading.
+        self.max_market_daily_loss_pct = float(os.environ.get("MAX_MARKET_DAILY_LOSS_PCT", "3.0"))
+        self.market_cooldown_minutes = int(os.environ.get("MARKET_COOLDOWN_MINUTES", "60"))
+        self.market_daily_pnl: dict[str, float] = {"commodity": 0.0, "currency": 0.0, "equity": 0.0}
+        self.market_cooldown_until: dict[str, datetime | None] = {"commodity": None, "currency": None, "equity": None}
 
         # CRUDEOILM regime gate (see strategy/regime.py's docstring for the
         # full finding and backtest_commodity.py's use_crude_regime_filter
@@ -389,6 +440,65 @@ class DryRunner:
         logs_dir = Path(__file__).parent / "logs"
         logs_dir.mkdir(exist_ok=True)
         self.log_path = logs_dir / f"dryrun_{self.today}.csv"
+
+    # ---- Money management (see __init__'s comment) -----------------------
+    def _portfolio_heat_pct(self) -> float:
+        """Total open risk across every currently-open position (all asset
+        classes combined), as a % of current capital -- if every stop hit at
+        once, this is roughly how much of the account would be lost. Equity
+        positions store share qty directly; commodity/currency store lot qty
+        needing their own contract multiplier."""
+        if self.capital <= 0:
+            return 0.0
+        total_risk_rupees = 0.0
+        for sym, pos in self.positions.items():
+            stop_dist = abs(pos["entry_price"] - pos.get("sl", pos["current_stop"]))
+            if _is_equity(sym):
+                multiplier = 1  # shares, no lot multiplier
+            elif _is_currency(sym):
+                multiplier = CURRENCY_SPECS.get(sym.upper(), {}).get("lot_size", 1000)
+            else:
+                multiplier = COMMODITY_SPECS.get(sym, {}).get("lot_size", 1)
+            total_risk_rupees += stop_dist * pos["qty"] * multiplier
+        return total_risk_rupees / self.capital * 100
+
+    def _drawdown_risk_scale(self) -> float:
+        """Anti-martingale position-size scaling: shrink new trades'
+        risk-per-trade the further capital sits below its own trailing peak,
+        restore automatically as capital recovers -- protects capital during
+        a losing stretch without trying to predict/avoid any individual
+        losing trade (already tried and found not to work for this system,
+        see conversation history's cooldown/regime-filter tests). Researched,
+        sourced tiered schedule (5%/10%/15% drawdown -> 10%/25%/50% size cut)
+        rather than an invented one."""
+        if self.peak_capital <= 0:
+            return 1.0
+        drawdown_pct = (self.peak_capital - self.capital) / self.peak_capital * 100
+        if drawdown_pct >= 15.0:
+            return 0.50
+        if drawdown_pct >= 10.0:
+            return 0.75
+        if drawdown_pct >= 5.0:
+            return 0.90
+        return 1.0
+
+    def _is_market_on_cooldown(self, market: str, now: datetime) -> bool:
+        """Checks whether the given market ('commodity', 'currency', 'equity')
+        is currently on a loss-triggered cooldown. Automatically clears expired cooldowns."""
+        expiry = self.market_cooldown_until.get(market)
+        if expiry is None:
+            return False
+        if now < expiry:
+            return True
+        # Cooldown expired!
+        self.market_cooldown_until[market] = None
+        log.info("%s cooldown expired. Resuming %s entry evaluation.", market.upper(), market)
+        print(f"\n{BOLD}{GR}▶ {market.upper()} COOLDOWN EXPIRED -- {market} setups will now be evaluated.{R}\n")
+        telegram.send(
+            f"▶ <b>{market.upper()} COOLDOWN EXPIRED</b>\n"
+            f"Cooldown has ended. New {market} setups will now be evaluated."
+        )
+        return False
 
     # ---- CRUDEOILM regime gate (see __init__'s comment) -----------------------
     def _refresh_crude_regime(self) -> None:
@@ -456,6 +566,8 @@ class DryRunner:
             self.kill_switch_active = False
             self.symbol_daily_pnl = {s: 0.0 for s in self.symbols}
             self.symbol_kill_switch = {s: False for s in self.symbols}
+            self.market_daily_pnl = {"commodity": 0.0, "currency": 0.0, "equity": 0.0}
+            self.market_cooldown_until = {"commodity": None, "currency": None, "equity": None}
             if self.use_crude_regime_filter:
                 self._refresh_crude_regime()
 
@@ -481,6 +593,10 @@ class DryRunner:
             if self.kill_switch_active or self.symbol_kill_switch.get(sym, False) or not self.trading_enabled:
                 continue
 
+            market = _get_market(sym)
+            if self._is_market_on_cooldown(market, now):
+                continue
+
             if _is_equity(sym):
                 self._maybe_enter_equity(sym, now, signals)
                 continue
@@ -491,7 +607,7 @@ class DryRunner:
             # both files (the exact "keep two files in sync by hand" drift risk
             # ENTRY_THRESHOLDS' own extraction eliminated one layer up, on 2026-09-18).
             candles = _fetch_candles(self.broker, sym, self.today)
-            sym_risk_pct = _SYMBOL_RISK_PCT_OVERRIDE.get(sym.upper(), self.risk_pct)
+            sym_risk_pct = _SYMBOL_RISK_PCT_OVERRIDE.get(sym.upper(), self.risk_pct) * self._drawdown_risk_scale()
             sym_leverage = _SYMBOL_LEVERAGE_OVERRIDE.get(sym.upper(), self.leverage)
             regime_ok = self.crude_regime_ok if (self.use_crude_regime_filter and sym.upper() == "CRUDEOILM") else True
             sig_result = compute_entry_signal(
@@ -503,6 +619,12 @@ class DryRunner:
                 continue
 
             is_curr = _is_currency(sym)
+            _mult = CURRENCY_SPECS.get(sym.upper(), {}).get("lot_size", 1000) if is_curr \
+                else COMMODITY_SPECS.get(sym, {}).get("lot_size", 1)
+            _new_risk_rupees = sig_result["stop_dist"] * sig_result["lots"] * _mult
+            if self.capital > 0 and (self._portfolio_heat_pct() + _new_risk_rupees / self.capital * 100) > self.max_portfolio_heat_pct:
+                log.info("%s: entry skipped -- would push total portfolio risk past the %.1f%% heat cap.", sym, self.max_portfolio_heat_pct)
+                continue
             direction = sig_result["direction"]
             entry = sig_result["entry_price"]
             sl, tp, be = sig_result["sl"], sig_result["tp"], sig_result["be"]
@@ -591,11 +713,17 @@ class DryRunner:
             return
 
         candles = _fetch_candles(self.broker, sym, self.today)
+        sym_risk_pct = self.risk_pct * self._drawdown_risk_scale()
         sig_result = compute_equity_entry_signal(
-            sym, candles, SYMBOL_MAP.get(sym), self.capital, self.risk_pct, self.leverage,
+            sym, candles, SYMBOL_MAP.get(sym), self.capital, sym_risk_pct, self.leverage,
             direction_filter=self.direction_filter,
         )
         if not sig_result:
+            return
+
+        _new_risk_rupees = sig_result["stop_dist"] * sig_result["qty"]  # equity: shares, no lot multiplier
+        if self.capital > 0 and (self._portfolio_heat_pct() + _new_risk_rupees / self.capital * 100) > self.max_portfolio_heat_pct:
+            log.info("%s: equity entry skipped -- would push total portfolio risk past the %.1f%% heat cap.", sym, self.max_portfolio_heat_pct)
             return
 
         direction = sig_result["direction"]
@@ -775,6 +903,27 @@ class DryRunner:
         net_pnl = cost_info["net"]
         gross_pnl = cost_info["gross"]
         self.capital += net_pnl
+        self.peak_capital = max(self.peak_capital, self.capital)
+
+        # Market-specific daily loss limit & cooldown timer
+        market = _get_market(sym)
+        self.market_daily_pnl[market] = self.market_daily_pnl.get(market, 0.0) + net_pnl
+        if self.day_start_capital > 0:
+            mkt_loss_pct = -self.market_daily_pnl[market] / self.day_start_capital * 100
+            if mkt_loss_pct >= self.max_market_daily_loss_pct:
+                cooldown_expiry = now + timedelta(minutes=self.market_cooldown_minutes)
+                if self.market_cooldown_until.get(market) is None or self.market_cooldown_until[market] < now:
+                    self.market_cooldown_until[market] = cooldown_expiry
+                    expiry_time_str = cooldown_expiry.strftime("%H:%M:%S")
+                    print(f"\n{BOLD}{YL}⏸ {market.upper()} COOLDOWN ACTIVATED ({mkt_loss_pct:.2f}% loss >= "
+                          f"{self.max_market_daily_loss_pct}%) -- {market} entries paused until {expiry_time_str} IST. "
+                          f"Other markets continue normally.{R}\n")
+                    telegram.send(
+                        f"⏸ <b>{market.upper()} COOLDOWN ACTIVATED</b> — {mkt_loss_pct:.2f}% loss "
+                        f"(limit {self.max_market_daily_loss_pct}%)\n"
+                        f"New {market} entries paused for {self.market_cooldown_minutes}m until <b>{expiry_time_str} IST</b>.\n"
+                        f"Other markets continue normally."
+                    )
 
         # Per-symbol daily-loss kill switch (see __init__'s comment) --
         # tracked independently of the account-wide one above.

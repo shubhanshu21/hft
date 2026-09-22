@@ -359,6 +359,19 @@ class TradingDB:
     # -------------------------------------------------------------------------
     # Snapshots & Dashboard Reporting
     # -------------------------------------------------------------------------
+    def get_peak_capital(self, account_id: str = "DRYRUN_ACCOUNT") -> float | None:
+        """Highest current_capital ever recorded in portfolio_snapshots for
+        this account, or None if no snapshot history exists yet. Used for
+        drawdown-scaled position sizing (see DryRunner._drawdown_risk_scale)
+        -- must survive process restarts, so it's derived from persisted
+        snapshot history rather than kept only in memory."""
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT MAX(current_capital) as peak FROM portfolio_snapshots WHERE account_id = ?",
+                (account_id,),
+            ).fetchone()
+            return row["peak"] if row and row["peak"] is not None else None
+
     def record_snapshot(self, account_id: str = "DRYRUN_ACCOUNT") -> None:
         now = datetime.now(IST)
         now_str = now.isoformat()

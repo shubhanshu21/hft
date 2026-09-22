@@ -218,7 +218,10 @@ Everything the CLI needs to run with **zero flags** lives in `backend/.env` (cop
 ### Safety Limits (dry run daemon)
 | Variable | Default | Meaning |
 |---|---|---|
-| `MAX_DAILY_LOSS_PCT` | `5.0` | Halts **new entries** for the rest of the day once realized loss hits this % of the capital the process started the day with. Open positions still exit normally — only new entries stop. Resets automatically at the next trading day. |
+| `MAX_MARKET_DAILY_LOSS_PCT` | `3.0` | Threshold (% of day's starting capital) of realized loss in a specific market (Commodity, Currency, or Equity) that triggers a market-specific cooldown. |
+| `MARKET_COOLDOWN_MINUTES` | `60` | Duration (minutes) to pause new entries in the tripped market. Other markets remain fully active. Automatically resumes when expired. |
+| `MAX_PORTFOLIO_HEAT_PCT` | `8.0` | Portfolio heat cap: total open risk (sum of stop distances) across all open positions cannot exceed this % of capital. |
+| `MAX_DAILY_LOSS_PCT` | `5.0` | Global account-wide daily loss kill switch threshold (% of starting capital). |
 | `TOKEN_CHECK_INTERVAL_MIN` | `15` | How often (minutes) the running daemon proactively re-validates its Upstox token; also re-checked immediately if the broker's 401 circuit breaker trips. Auto-refreshes via headless login if `UPSTOX_USERNAME`/`PIN`/`TOTP_SECRET` are set, otherwise alerts you via Telegram to refresh manually. |
 
 ### Telegram Alerts (optional)
