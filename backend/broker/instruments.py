@@ -215,22 +215,45 @@ def _load_mcx_master() -> None:
 
 
 def ensure_master(force: bool = False) -> None:
-    """Ensure the instruments masters (NSE & MCX) are fresh and loaded in memory."""
-    if force or not _cache_is_fresh(_META_FILE, _CACHE_FILE):
+    """Ensure the instruments masters (NSE & MCX) are fresh and loaded in memory.
+
+    Bug fixed 2026-09-22: this used to gate every _load_*_master() call on
+    "if the in-memory map is still empty" -- which meant that once a map was
+    populated ONCE, it was NEVER re-parsed again for the rest of that
+    process's life, even on a day where the underlying cache file WAS
+    freshly re-downloaded (e.g. after a monthly MCX contract rollover).
+    live_dryrun.py's day-rollover loop calls this daily specifically to stay
+    "rollover-safe" (see its own _build_symbol_map() docstring), but that
+    safety net was silently defeated by this short-circuit the whole time --
+    a long-running process would keep resolving whatever contract was
+    current when it first started, forever. Caught directly: a MCX
+    CRUDEOILM candle fetch started failing with Upstox's "Invalid
+    Instrument key" (UDAPI100011) on every single scan after ~11 hours of
+    uptime, tracked back to build_mcx_commodity_map() falling through to its
+    hardcoded stale-key fallback (also fixed below) because _MCX_KEY_MAP
+    never got a chance to re-populate from the freshly-downloaded file.
+    Now each master's in-memory map is force-reloaded whenever its file was
+    ACTUALLY just (re-)downloaded, not only when the map happens to be
+    empty -- restoring the rollover-safety this function's callers already
+    assume it provides."""
+    nse_downloaded = force or not _cache_is_fresh(_META_FILE, _CACHE_FILE)
+    if nse_downloaded:
         _download_master()
-    if not _SYMBOL_KEY_MAP:
+    if nse_downloaded or not _SYMBOL_KEY_MAP:
         _load_master()
-    
-    if force or not _cache_is_fresh(_MCX_META_FILE, _MCX_CACHE_FILE):
+
+    mcx_downloaded = force or not _cache_is_fresh(_MCX_META_FILE, _MCX_CACHE_FILE)
+    if mcx_downloaded:
         try:
             _download_mcx_master()
         except Exception as e:
             log.warning("Could not download MCX master: %s", e)
-    if not _MCX_KEY_MAP and _MCX_CACHE_FILE.exists():
+            mcx_downloaded = False  # the on-disk file wasn't actually refreshed -- don't force a reparse of it below
+    if (mcx_downloaded or not _MCX_KEY_MAP) and _MCX_CACHE_FILE.exists():
         _load_mcx_master()
-    if not _CURRENCY_KEY_MAP and _CACHE_FILE.exists():
+    if (nse_downloaded or not _CURRENCY_KEY_MAP) and _CACHE_FILE.exists():
         _load_currency_master()
-    if not _INDEX_FUT_KEY_MAP and _CACHE_FILE.exists():
+    if (nse_downloaded or not _INDEX_FUT_KEY_MAP) and _CACHE_FILE.exists():
         _load_index_futures_master()
 
 
@@ -283,13 +306,23 @@ def build_mcx_commodity_map() -> dict[str, str]:
     ensure_master()
     if _MCX_KEY_MAP:
         return _MCX_KEY_MAP
-    # Fallback to standard aliases if offline
-    return {
-        "CRUDEOILM":  "MCX_FO|565900",
-        "NATGASMINI": "MCX_FO|570751",
-        "CRUDEOIL":   "MCX_FO|565899",
-        "NATURALGAS": "MCX_FO|570750",
-    }
+    # Bug fixed 2026-09-22: this used to fall back to a hardcoded dict of
+    # instrument keys "if offline" -- but those keys are for whichever MCX
+    # contract happened to be current when this fallback was written, and
+    # MCX contracts are monthly-expiry. Once that month rolled over, the
+    # fallback silently pointed at an EXPIRED, delisted contract -- caught
+    # directly when a live process fell through to this path (see
+    # ensure_master()'s docstring for how) and every candle fetch for
+    # CRUDEOILM started failing with Upstox's "Invalid Instrument key"
+    # (UDAPI100011). A stale-but-plausible-looking key is worse than no key
+    # at all here -- it fails loudly at the API instead of silently trading
+    # (or in live_trading.py's case, ATTEMPTING TO PLACE A REAL ORDER
+    # against) the wrong contract. Log clearly and return empty instead, same
+    # safe-degradation pattern build_currency_map()/build_index_futures_map()
+    # already use.
+    log.error("MCX instrument master unavailable (no cached data and download failed) -- "
+              "returning no MCX symbols rather than stale hardcoded contract keys.")
+    return {}
 
 
 if __name__ == "__main__":
