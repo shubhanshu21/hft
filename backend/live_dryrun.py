@@ -446,6 +446,13 @@ class DryRunner:
         if self.use_equity_regime_filter:
             self._refresh_equity_regime()
 
+        # Market Segment Trading Toggles (added 2026-09-22)
+        self.segment_enabled: dict[str, bool] = {
+            "commodity": os.environ.get("ENABLE_COMMODITY_TRADING", "true").lower() in ("1", "true", "yes"),
+            "currency": os.environ.get("ENABLE_CURRENCY_TRADING", "true").lower() in ("1", "true", "yes"),
+            "equity": os.environ.get("ENABLE_EQUITY_TRADING", os.environ.get("DRYRUN_INCLUDE_EQUITY", "true")).lower() in ("1", "true", "yes"),
+        }
+
         # Real bid-ask spread sampling (added 2026-09-18): every cost model in
         # this project assumes a flat half-tick-per-leg slippage guess, never
         # measured against a real order book. A one-off check found real
@@ -469,6 +476,22 @@ class DryRunner:
         logs_dir = Path(__file__).parent / "logs"
         logs_dir.mkdir(exist_ok=True)
         self.log_path = logs_dir / f"dryrun_{self.today}.csv"
+
+    def _get_segment_risk_and_leverage(self, sym: str) -> tuple[float, float]:
+        market = _get_market(sym)
+        if market == "commodity":
+            r = float(os.environ.get("COMMODITY_RISK_PCT", self.risk_pct))
+            l = float(os.environ.get("COMMODITY_LEVERAGE", self.leverage))
+        elif market == "currency":
+            r = float(os.environ.get("CURRENCY_RISK_PCT", self.risk_pct))
+            l = float(os.environ.get("CURRENCY_LEVERAGE", self.leverage))
+        else:
+            r = float(os.environ.get("EQUITY_RISK_PCT", self.risk_pct))
+            l = float(os.environ.get("EQUITY_LEVERAGE", self.leverage))
+
+        r = _SYMBOL_RISK_PCT_OVERRIDE.get(sym.upper(), r)
+        l = _SYMBOL_LEVERAGE_OVERRIDE.get(sym.upper(), l)
+        return r, l
 
     # ---- Money management (see __init__'s comment) -----------------------
     def _portfolio_heat_pct(self) -> float:
@@ -676,6 +699,8 @@ class DryRunner:
                 continue
 
             market = _get_market(sym)
+            if not self.segment_enabled.get(market, True):
+                continue
             if self._is_market_on_cooldown(market, now):
                 continue
 
@@ -689,8 +714,8 @@ class DryRunner:
             # both files (the exact "keep two files in sync by hand" drift risk
             # ENTRY_THRESHOLDS' own extraction eliminated one layer up, on 2026-09-18).
             candles = _fetch_candles(self.broker, sym, self.today)
-            sym_risk_pct = _SYMBOL_RISK_PCT_OVERRIDE.get(sym.upper(), self.risk_pct) * self._drawdown_risk_scale()
-            sym_leverage = _SYMBOL_LEVERAGE_OVERRIDE.get(sym.upper(), self.leverage)
+            base_risk_pct, sym_leverage = self._get_segment_risk_and_leverage(sym)
+            sym_risk_pct = base_risk_pct * self._drawdown_risk_scale()
             regime_ok = self.commodity_regime_ok.get(sym.upper(), None) if self.use_commodity_regime_filter else True
             sig_result = compute_entry_signal(
                 sym, candles, SYMBOL_MAP.get(sym), self.commodity_models, self.use_ml_filter,
@@ -798,9 +823,10 @@ class DryRunner:
             return
 
         candles = _fetch_candles(self.broker, sym, self.today)
-        sym_risk_pct = self.risk_pct * self._drawdown_risk_scale()
+        base_risk_pct, sym_leverage = self._get_segment_risk_and_leverage(sym)
+        sym_risk_pct = base_risk_pct * self._drawdown_risk_scale()
         sig_result = compute_equity_entry_signal(
-            sym, candles, SYMBOL_MAP.get(sym), self.capital, sym_risk_pct, self.leverage,
+            sym, candles, SYMBOL_MAP.get(sym), self.capital, sym_risk_pct, sym_leverage,
             direction_filter=self.direction_filter,
         )
         if not sig_result:
@@ -1422,9 +1448,28 @@ def main():
                         runner.start_trading()
                         print(f"  {BOLD}{GR}TRADING STARTED via Telegram{R}", flush=True)
                         telegram.send("🟢 <b>TRADING STARTED</b> (manual) — resuming normal entries.")
+                    elif cmd in ("/stop commodity", "/disable commodity", "stop commodity"):
+                        runner.segment_enabled["commodity"] = False
+                        telegram.send("⏸ <b>COMMODITY TRADING PAUSED</b> (manual) — new commodity entries halted.")
+                    elif cmd in ("/start commodity", "/enable commodity", "start commodity"):
+                        runner.segment_enabled["commodity"] = True
+                        telegram.send("▶ <b>COMMODITY TRADING RESUMED</b> (manual) — evaluating new commodity entries.")
+                    elif cmd in ("/stop currency", "/disable currency", "stop currency"):
+                        runner.segment_enabled["currency"] = False
+                        telegram.send("⏸ <b>CURRENCY TRADING PAUSED</b> (manual) — new currency entries halted.")
+                    elif cmd in ("/start currency", "/enable currency", "start currency"):
+                        runner.segment_enabled["currency"] = True
+                        telegram.send("▶ <b>CURRENCY TRADING RESUMED</b> (manual) — evaluating new currency entries.")
+                    elif cmd in ("/stop equity", "/disable equity", "stop equity"):
+                        runner.segment_enabled["equity"] = False
+                        telegram.send("⏸ <b>EQUITY TRADING PAUSED</b> (manual) — new equity entries halted.")
+                    elif cmd in ("/start equity", "/enable equity", "start equity"):
+                        runner.segment_enabled["equity"] = True
+                        telegram.send("▶ <b>EQUITY TRADING RESUMED</b> (manual) — evaluating new equity entries.")
                     elif cmd in ("/status", "status"):
                         open_syms = list(runner.positions.keys())
-                        regime_line = ""
+                        seg_status_str = ", ".join([f"{m.capitalize()}: {'🟢' if v else '🛑 PAUSED'}" for m, v in runner.segment_enabled.items()])
+                        regime_line = f"\nSegments: {seg_status_str}"
                         if runner.use_commodity_regime_filter:
                             regime_str = ", ".join([f"{s}: {'🟢' if v is not False else '🔴'}" for s, v in runner.commodity_regime_ok.items()])
                             regime_line += f"\nCommodity regimes: {regime_str or 'N/A'}"

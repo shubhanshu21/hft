@@ -310,6 +310,13 @@ class LiveTrader:
         if self.use_equity_regime_filter:
             self._refresh_equity_regime()
 
+        # Market Segment Trading Toggles (added 2026-09-22)
+        self.segment_enabled: dict[str, bool] = {
+            "commodity": os.environ.get("ENABLE_COMMODITY_TRADING", "true").lower() in ("1", "true", "yes"),
+            "currency": os.environ.get("ENABLE_CURRENCY_TRADING", "true").lower() in ("1", "true", "yes"),
+            "equity": os.environ.get("ENABLE_EQUITY_TRADING", os.environ.get("DRYRUN_INCLUDE_EQUITY", "true")).lower() in ("1", "true", "yes"),
+        }
+
         self.max_portfolio_heat_pct = float(os.environ.get("MAX_PORTFOLIO_HEAT_PCT", "8.0"))
         self._midday_summary_sent = False
 
@@ -400,6 +407,22 @@ class LiveTrader:
             return 0.90
         return 1.0
 
+    def _get_segment_risk_and_leverage(self, sym: str) -> tuple[float, float]:
+        market = _get_market(sym)
+        if market == "commodity":
+            r = float(os.environ.get("COMMODITY_RISK_PCT", self.risk_pct))
+            l = float(os.environ.get("COMMODITY_LEVERAGE", self.leverage))
+        elif market == "currency":
+            r = float(os.environ.get("CURRENCY_RISK_PCT", self.risk_pct))
+            l = float(os.environ.get("CURRENCY_LEVERAGE", self.leverage))
+        else:
+            r = float(os.environ.get("EQUITY_RISK_PCT", self.risk_pct))
+            l = float(os.environ.get("EQUITY_LEVERAGE", self.leverage))
+
+        r = _SYMBOL_RISK_PCT_OVERRIDE.get(sym.upper(), r)
+        l = _SYMBOL_LEVERAGE_OVERRIDE.get(sym.upper(), l)
+        return r, l
+
     def _send_midday_summary(self, now: datetime) -> None:
         self._midday_summary_sent = True
         open_syms = list(self.positions.keys())
@@ -453,12 +476,13 @@ class LiveTrader:
         ikey = self.symbol_map.get(sym)
         candles = _fetch_candles(self.broker, sym, ikey, self.today)
         regime_ok = self.commodity_regime_ok.get(sym.upper(), None) if self.use_commodity_regime_filter else True
-        sym_risk_pct = _SYMBOL_RISK_PCT_OVERRIDE.get(sym.upper(), self.risk_pct) * self._drawdown_risk_scale()
+        base_risk_pct, sym_leverage = self._get_segment_risk_and_leverage(sym)
+        sym_risk_pct = base_risk_pct * self._drawdown_risk_scale()
         sig = compute_entry_signal(
             sym, candles, ikey, self.commodity_models, self.use_ml_filter,
             self.full_session, self.direction_filter, self.capital,
             sym_risk_pct,
-            _SYMBOL_LEVERAGE_OVERRIDE.get(sym.upper(), self.leverage),
+            sym_leverage,
             regime_ok=regime_ok,
         )
         return sig
@@ -476,9 +500,10 @@ class LiveTrader:
             return None
         ikey = self.symbol_map.get(sym)
         candles = _fetch_candles(self.broker, sym, ikey, self.today)
-        scaled_risk_pct = self.risk_pct * self._drawdown_risk_scale()
+        base_risk_pct, sym_leverage = self._get_segment_risk_and_leverage(sym)
+        scaled_risk_pct = base_risk_pct * self._drawdown_risk_scale()
         return compute_equity_entry_signal(
-            sym, candles, ikey, self.capital, scaled_risk_pct, self.leverage,
+            sym, candles, ikey, self.capital, scaled_risk_pct, sym_leverage,
             direction_filter=self.direction_filter,
         )
 
@@ -1102,7 +1127,7 @@ class LiveTrader:
 
         for sym in self.symbols:
             market = _get_market(sym)
-            if self._is_market_on_cooldown(market, now):
+            if not self.segment_enabled.get(market, True) or self._is_market_on_cooldown(market, now):
                 if sym in self.positions:
                     if _is_equity(sym):
                         self._maybe_exit_equity(sym, now)
