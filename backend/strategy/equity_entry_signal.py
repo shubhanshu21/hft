@@ -22,6 +22,8 @@ conversation history for the full 3-fold comparison).
 """
 from __future__ import annotations
 
+import os
+
 import numpy as np
 import pandas as pd
 
@@ -124,7 +126,8 @@ def compute_equity_entry_signal(
 
     lt = LONG_THRESHOLDS
     st = SHORT_THRESHOLDS
-    enable_mean_rev = True
+    # Reads from .env; was previously hardcoded True (2026-09-22 fix).
+    enable_mean_rev = os.environ.get("ENABLE_MEAN_REVERSION", "true").lower() in ("1", "true", "yes")
 
     direction = None
     setup_type = "trend_breakout"

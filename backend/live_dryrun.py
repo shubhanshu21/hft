@@ -445,6 +445,10 @@ class DryRunner:
         self._last_spread_sample: dict[str, datetime] = {}
         self.spread_log_path = Path(__file__).parent / "logs" / "spread_samples.csv"
 
+        # Midday summary flag -- initialized here so scan() can read it without
+        # the getattr workaround (which was masking the missing init).
+        self._midday_summary_sent = False
+
         # Manual Telegram kill switch -- separate from the automatic daily-loss
         # one above. Loaded from disk so a "stop" sent before a restart is
         # still honored after it.
@@ -647,9 +651,9 @@ class DryRunner:
                 self._refresh_commodity_regimes()
             if self.use_equity_regime_filter:
                 self._refresh_equity_regime()
-            self._midday_summary_sent = False  # reset for new trading day
+            self._midday_summary_sent = False  # reset for new trading day (attr exists from __init__)
 
-        if now.hour >= 12 and now.minute >= 30 and not getattr(self, "_midday_summary_sent", False):
+        if now.hour >= 12 and now.minute >= 30 and not self._midday_summary_sent:
             self._send_midday_summary(now)
 
         if self.day_start_capital > 0:
@@ -1169,6 +1173,13 @@ class DryRunner:
 # ---------------------------------------------------------------------------
 
 def _print_sig(sig: dict, cap: float):
+    # col and arrow must be derived locally here -- they are NOT in scope from
+    # anywhere else in this module (col is defined only inside _close_position).
+    # Bug fixed 2026-09-22: previously referenced undefined variables, causing
+    # a NameError crash on every virtual entry signal.
+    _is_long = sig["direction"] == "long"
+    col = GR if _is_long else RED
+    arrow = "🟢 LONG ↑" if _is_long else "🔴 SHORT ↓"
     stype = sig.get('setup_type', 'trend_breakout').replace('_', ' ').upper()
     print(f"\n  {BOLD}VIRTUAL ORDER PLACED  {WH}{sig['symbol']:12s}{R} {col}{arrow}{R} "
           f"@ {YL}₹{sig['entry_price']:.2f}{R} [{CY}{stype}{R}]")

@@ -17,6 +17,8 @@ HOW that decision gets acted on (simulated fill vs real order).
 """
 from __future__ import annotations
 
+import os
+
 import pandas as pd
 
 from strategy.commodity_costs import size_commodity_lots
@@ -125,6 +127,9 @@ def compute_entry_signal(
 
     direction = None
     setup_type = "trend_breakout"
+    # ENABLE_MEAN_REVERSION in .env gates Setup 2. Read once here, before the
+    # if/elif chain, so the elif branch is syntactically valid Python.
+    _enable_mr = os.environ.get("ENABLE_MEAN_REVERSION", "true").lower() in ("1", "true", "yes")
 
     # Setup 1 (LONG): Trend Expansion Breakout (steady accumulation)
     if adx >= min_adx and dmp > dmn and ema_s > min_ema_slope and orb_h_dist >= min_orb and vwap_d >= min_vwap and vol_s >= min_vol:
@@ -137,8 +142,11 @@ def compute_entry_signal(
         setup_type = "trend_breakout"
         tp_mult = max(1.4, tp_mult * 0.80)  # quicker profit lock on shorts
 
-    # Setup 2: Statistical VWAP Mean-Reversion Extremes (MCX Commodities)
-    elif not is_curr:
+    # Setup 2: Statistical VWAP Mean-Reversion Extremes (MCX Commodities only, not currencies).
+    # Deliberately NOT blocked by regime_ok: mean-reversion BENEFITS from choppy/mean-reverting
+    # regimes (exactly the conditions the regime gate blocks trend breakouts for). Controlled
+    # independently by ENABLE_MEAN_REVERSION in .env.
+    elif not is_curr and _enable_mr:
         if vwap_d <= -1.2 and rsi <= 25.0:
             direction = "long"
             setup_type = "mean_reversion"
