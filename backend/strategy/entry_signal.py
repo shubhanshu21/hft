@@ -124,11 +124,9 @@ def compute_entry_signal(
         return None
 
     direction = None
-    ml_long_ok = (not use_ml_filter) or (p_up >= min_ml_l)
-    ml_short_ok = (not use_ml_filter) or (p_up <= max_ml_s)
-    if ml_long_ok and adx >= min_adx and dmp > dmn and ema_s > min_ema_slope and orb_h_dist >= min_orb and vwap_d >= min_vwap and vol_s >= min_vol:
+    if adx >= min_adx and dmp > dmn and ema_s > min_ema_slope and orb_h_dist >= min_orb and vwap_d >= min_vwap and vol_s >= min_vol:
         direction = "long"
-    elif direction_filter != "long" and ml_short_ok and adx >= min_adx and dmn > dmp and ema_s < -min_ema_slope and orb_l_dist <= -min_orb and vwap_d <= -min_vwap and vol_s >= min_vol:
+    elif direction_filter != "long" and adx >= min_adx and dmn > dmp and ema_s < -min_ema_slope and orb_l_dist <= -min_orb and vwap_d <= -min_vwap and vol_s >= min_vol:
         direction = "short"
     if not direction:
         return None
