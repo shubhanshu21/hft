@@ -10,9 +10,15 @@
 *.hdf5
 archive/
 archive_commodities/
+archive_currency/
+archive_equity/
+archive_index_futures/
 archive_crypto/
 backend/archive/
 backend/archive_commodities/
+backend/archive_currency/
+backend/archive_equity/
+backend/archive_index_futures/
 backend/archive_crypto/
 data/
 backend/data/

@@ -320,28 +320,7 @@ class LiveTrader:
         self.max_portfolio_heat_pct = float(os.environ.get("MAX_PORTFOLIO_HEAT_PCT", "8.0"))
         self._midday_summary_sent = False
 
-        self.commodity_models: dict[str, object] = {}
-        import pickle, json
-        mod_dir = Path(__file__).parent / "cache" / "commodity_models"
-        for s in self.symbols:
-            p = mod_dir / f"lgb_{s.lower()}.pkl"
-            if p.exists():
-                try:
-                    with open(p, "rb") as f:
-                        self.commodity_models[s] = pickle.load(f)
-                    meta_p = mod_dir / f"lgb_{s.lower()}.meta.json"
-                    trained_through = "unknown"
-                    if meta_p.exists():
-                        try:
-                            trained_through = json.loads(meta_p.read_text()).get("trained_through", "unknown")
-                        except Exception:
-                            pass
-                    log.info("ML model loaded for %s (trained through %s). ML filter active: %s",
-                             s, trained_through, self.use_ml_filter)
-                except Exception as e:
-                    log.warning("Failed to load ML model for %s: %s", s, e)
-            elif not _is_currency(s) and not _is_equity(s):
-                log.info("No ML model found for %s (will use p_up=0.50 neutral).", s)
+        log.info("Rule-based LiveTrader signal engine initialized across %d symbols.", len(self.symbols))
 
         self.db.init_account(account_id=self.account_id, capital=self.capital,
                               leverage=self.leverage, risk_pct=self.risk_pct)
@@ -479,7 +458,7 @@ class LiveTrader:
         base_risk_pct, sym_leverage = self._get_segment_risk_and_leverage(sym)
         sym_risk_pct = base_risk_pct * self._drawdown_risk_scale()
         sig = compute_entry_signal(
-            sym, candles, ikey, self.commodity_models, self.use_ml_filter,
+            sym, candles, ikey,
             self.full_session, self.direction_filter, self.capital,
             sym_risk_pct,
             sym_leverage,

@@ -517,13 +517,11 @@ def run_commodity_backtest(
                 continue
 
             direction = None
-            ml_long_ok = no_ml_filter or (p_up >= min_ml_l)
-            ml_short_ok = no_ml_filter or (p_up <= max_ml_s)
             vol_ok = vol_s >= min_vol and (max_vol is None or vol_s <= max_vol)
             # High-conviction Trend Expansion Setup
-            if ml_long_ok and adx >= min_adx and dmp > dmn and ema_s > min_ema_slope and orb_h_dist >= min_orb and vwap_d >= min_vwap and vol_ok:
+            if adx >= min_adx and dmp > dmn and ema_s > min_ema_slope and orb_h_dist >= min_orb and vwap_d >= min_vwap and vol_ok:
                 direction = "long"
-            elif not long_only and ml_short_ok and adx >= min_adx and dmn > dmp and ema_s < -min_ema_slope and orb_l_dist <= -min_orb and vwap_d <= -min_vwap and vol_ok:
+            elif not long_only and adx >= min_adx and dmn > dmp and ema_s < -min_ema_slope and orb_l_dist <= -min_orb and vwap_d <= -min_vwap and vol_ok:
                 direction = "short"
 
             if direction and is_silver and confirm_silver_with_gold:

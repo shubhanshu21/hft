@@ -289,31 +289,7 @@ class DryRunner:
         # value over the rule-based filter alone.
         self.use_ml_filter = os.environ.get("DRYRUN_USE_ML_FILTER", "true").lower() in ("1", "true", "yes")
 
-        self.commodity_models = {}
-        from pathlib import Path
-        import pickle
-        mod_dir = Path(__file__).parent / "cache" / "commodity_models"
-        for s in self.symbols:
-            p = mod_dir / f"lgb_{s.lower()}.pkl"
-            if p.exists():
-                try:
-                    with open(p, "rb") as f:
-                        self.commodity_models[s] = pickle.load(f)
-                    # Load meta for startup log
-                    import json
-                    meta_p = mod_dir / f"lgb_{s.lower()}.meta.json"
-                    trained_through = "unknown"
-                    if meta_p.exists():
-                        try:
-                            trained_through = json.loads(meta_p.read_text()).get("trained_through", "unknown")
-                        except Exception:
-                            pass
-                    log.info("ML model loaded for %s (trained through %s). ML filter active: %s",
-                             s, trained_through, self.use_ml_filter)
-                except Exception as e:
-                    log.warning("Failed to load ML model for %s: %s", s, e)
-            elif not _is_currency(s) and not _is_equity(s):
-                log.info("No ML model found for %s (will use p_up=0.50 neutral).", s)
+        log.info("Rule-based signal engine initialized across %d symbols.", len(self.symbols))
 
         # Wire the spread log path into the adaptive slippage module so it reads
         # the same file this process writes.
@@ -718,7 +694,7 @@ class DryRunner:
             sym_risk_pct = base_risk_pct * self._drawdown_risk_scale()
             regime_ok = self.commodity_regime_ok.get(sym.upper(), None) if self.use_commodity_regime_filter else True
             sig_result = compute_entry_signal(
-                sym, candles, SYMBOL_MAP.get(sym), self.commodity_models, self.use_ml_filter,
+                sym, candles, SYMBOL_MAP.get(sym),
                 self.full_session, self.direction_filter, self.capital, sym_risk_pct, sym_leverage,
                 regime_ok=regime_ok,
             )

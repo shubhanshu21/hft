@@ -36,8 +36,6 @@ def compute_entry_signal(
     sym: str,
     candles: list[dict],
     instrument_key: str,
-    commodity_models: dict,
-    use_ml_filter: bool,
     full_session: bool,
     direction_filter: str,
     capital: float,
@@ -91,15 +89,7 @@ def compute_entry_signal(
             if mins < 570 or mins > 780:
                 return None
 
-    model = commodity_models.get(sym)
-    if model:
-        try:
-            X_feat = feat_df[COMMODITY_FEATURE_COLUMNS].iloc[[t]]
-            p_up = float(model.predict_proba(X_feat)[0, 1])
-        except Exception:
-            p_up = 0.50
-    else:
-        p_up = 0.50
+    p_up = 0.50
 
     adx = float(row.get("adx", 25.0))
     dmp = float(row.get("dmp", 25.0))

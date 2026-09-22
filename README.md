@@ -21,8 +21,8 @@ An institutional-grade, 100% configurable **quantitative trading framework for I
 9. [Running 24/7 as a systemd Service](#running-247-as-a-systemd-service)
 10. [Safety Features (Dry Run)](#safety-features-dry-run)
 11. [Telegram Alerts & Equity Curve Chart](#telegram-alerts--equity-curve-chart)
-12. [Machine Learning & Microstructure Feature Pipeline](#machine-learning--microstructure-feature-pipeline)
-13. [Real MCX Data via Upstox](#real-mcx-data-via-upstox)
+12. [Quantitative Strategy & Autocorrelation Regime Architecture](#quantitative-strategy--autocorrelation-regime-architecture)
+13. [Real Market Data Ingestion via Upstox](#real-market-data-ingestion-via-upstox)
 14. [Statutory Taxation & Friction Schedule](#statutory-taxation--friction-schedule)
 15. [Walk-Forward Backtest Performance](#walk-forward-backtest-performance)
 16. [Automated Testing Suite](#automated-testing-suite)
@@ -44,12 +44,12 @@ The framework provides an end-to-end quantitative trading infrastructure:
 
 ![HFT Trading System Architecture & Execution Flowchart](docs/images/system_architecture.png)
 
-The framework is architected into 5 modular, loosely-coupled layers:
-1. **Data Layer**: ingests real-time 5-minute bar feeds via Upstox and parses the official daily MCX master contract.
-2. **Feature Engine**: computes microstructure volatility, Parkinson volatility, volume surge ratios, EMA slope, ADX/DMI, VWAP distance.
-3. **Strategy & ML Core**: per-symbol LightGBM classifier (currently disabled in favor of rule-based-only entries — see [Machine Learning](#machine-learning--microstructure-feature-pipeline)) combined with ADX/EMA-slope/VWAP/volume-surge trend-expansion rules, calibrated separately per symbol.
-4. **Risk Management**: dynamically sizes lots against capital risk % and Upstox MIS margin leverage, managing trailing stops and breakeven locks.
-5. **Execution & Audit**: walk-forward backtests, virtual paper execution, SQLite audit logging, and a performance dashboard.
+The framework is architected into 5 modular, production-grade layers:
+1. **Real-Time Data Ingestion Layer**: ingests real-time 5-minute bar feeds via Upstox and parses the official daily MCX/NSE master contracts.
+2. **Microstructure Feature Engine**: computes Parkinson volatility, volume surge ratios, EMA slope, ADX/DMI trend expansion, and VWAP distance.
+3. **Quantitative Signal Engine & Regime Gate**: pure rule-based momentum breakout core with multi-symbol daily-return autocorrelation regime gates (blocks trading on choppy/mean-reverting days).
+4. **Risk Management & Position Sizing**: dynamically sizes lots/shares against segment capital risk % and Upstox MIS margin leverage, managing trailing stops, anti-martingale drawdown scaling, and portfolio heat caps.
+5. **Execution & Audit Core**: walk-forward backtests, virtual paper execution, SQLite audit logging, performance dashboards, and automated Telegram notifications.
 
 ---
 
@@ -61,46 +61,42 @@ backend/
 │   ├── upstox_broker.py             # Broker client (Quotes, Intraday/Historical Candles & Execution) — always dry_run
 │   └── instruments.py               # Dynamic MCX/NSE master downloader & instrument-key resolver
 │
-├── strategy/                        # Feature engineering & cost models
+├── strategy/                        # Feature engineering, regime gates & cost models
 │   ├── commodity_features.py        # ADX/DMI, VWAP distance, EMA slope, ORB, volume surge, RSI (shared by commodity + currency)
 │   ├── commodity_costs.py           # MCX statutory cost engine (CTT, stamp duty, exchange fee, SEBI, GST) + lot sizing
 │   ├── currency_costs.py            # NSE currency derivatives cost engine (no STT/CTT, different stamp duty/exchange fee) + lot sizing
 │   ├── equity_universe.py           # Fixed NIFTY50 list (49 names), decided BEFORE any backtest -- never edited by performance
 │   ├── equity_features.py           # Equity's own 09:15-anchored feature set (same core indicators, no MCX-only session/inventory constructs)
 │   ├── equity_costs.py              # NSE equity intraday (MIS) statutory cost engine (STT, stamp duty, exchange fee, SEBI, GST) + share sizing
-│   └── equity_entry_signal.py       # Shared entry/exit decision logic for equity (dynamic ADX-scaled trailing exits, no fixed TP)
-│
-├── ml/                               # Machine Learning
-│   ├── train_commodity.py           # LightGBM training/fine-tuning pipeline for MCX Futures
-│   ├── train_equity.py              # LightGBM training on the POOLED NIFTY50 dataset (one shared model, not per-stock) -- trained, but not used live (see ML section)
-│   ├── experiment_high_winrate.py   # LightGBM/XGBoost/CatBoost/ensemble architecture comparison
-│   └── weekly_finetune.py           # Scheduled job: real-data top-up + incremental fine-tune
+│   ├── equity_entry_signal.py       # Shared entry/exit decision logic for equity (dynamic ADX-scaled trailing exits, no fixed TP)
+│   ├── entry_signal.py              # Pure rule-based momentum entry signal generator for commodity & currency
+│   ├── regime.py                    # Multi-symbol daily-return autocorrelation market regime gate
+│   └── slippage.py                  # Real-market bid/ask spread & adaptive slippage tracking
 │
 ├── systemd/                         # systemd --user unit files (symlinked from ~/.config/systemd/user/)
 │   ├── hft-dryrun.service                     # 24/7 paper-trading daemon
-│   ├── hft-daily-data-topup.service/.timer    # Nightly real MCX/currency/equity data top-up (00:30 IST)
-│   └── hft-weekly-finetune.service/.timer     # Weekly ML fine-tune (Sunday 02:00 IST)
+│   └── hft-daily-data-topup.service/.timer    # Nightly real MCX/currency/equity data top-up (00:30 IST)
 │
-├── tests/                           # Unit Testing Suite
+├── tests/                           # Automated Unit Testing Suite
+│   ├── test_regime_multi_symbol.py  # Autocorrelation regime gate test coverage
+│   ├── test_market_cooldown.py      # Adaptive loss-overshoot cooldown unit tests
+│   └── ...
 │
 ├── utils/
-│   └── market_holidays.py           # Real, auto-updating NSE/CDS/MCX holiday calendar (Upstox's own public API, no hardcoded year/dates)
+│   ├── market_holidays.py           # Real, auto-updating NSE/CDS/MCX holiday calendar (Upstox's own public API)
+│   └── chart.py                     # Daily equity curve chart visualizer for Telegram reports
 │
 ├── safety_gate.py                   # Layered live-trading kill switch (source constant + .env flag + armed-state file)
-├── regime_shift.py                  # Dissimilarity Index / out-of-distribution ML input gate (generic, reusable)
 ├── database.py                      # SQLite persistence: accounts, orders, positions, trades, snapshots
 ├── cli.py                           # Master Unified CLI
 ├── backtest_commodity.py            # 5-Minute MCX Commodity Futures Backtest CLI (ENTRY_THRESHOLDS per symbol)
 ├── backtest_currency.py             # 5-Minute NSE Currency Derivatives Backtest CLI (ENTRY_THRESHOLDS per pair)
-├── backtest_equity.py               # 5-Minute NSE Equity Intraday Backtest CLI (ONE shared ENTRY_THRESHOLDS for the whole universe -- see Supported Instruments)
-├── backtest_natgas_donchian.py      # Donchian trend-following research (negative result, kept for reproducibility)
-├── backtest_natgas_meanrev.py       # VWAP/RSI mean-reversion research (negative result, kept for reproducibility)
-├── backtest_natgas_patterns.py      # TA-Lib candlestick/oscillator sweep research (negative result, kept for reproducibility)
+├── backtest_equity.py               # 5-Minute NSE Equity Intraday Backtest CLI (ONE shared ENTRY_THRESHOLDS for universe)
 ├── live_dryrun.py                   # Live 24/7 Paper-Trading Daemon (commodity + currency + equity)
-├── live_trading.py                  # Real-order execution engine -- fully unwired (see Safety Features); equity-capable but never invoked by anything
+├── live_trading.py                  # Real-order execution engine -- gated by multi-layer safety switch
 ├── real_commodity_data.py           # Real MCX historical data downloader/top-up (via Upstox)
-├── real_currency_data.py            # Real NSE currency derivatives historical data downloader/top-up (via Upstox, chunked fetch)
-└── real_equity_data.py              # Real NSE equity (NIFTY50) historical data downloader/top-up (via Upstox, ~76.5k candles/symbol back to 2022-08)
+├── real_currency_data.py            # Real NSE currency derivatives historical data downloader/top-up
+└── real_equity_data.py              # Real NSE equity (NIFTY50) historical data downloader/top-up
 ```
 
 ---
@@ -459,51 +455,28 @@ python3 live_dryrun.py --report --commodity --account DRYRUN_ACCOUNT
 
 ---
 
-## Machine Learning & Microstructure Feature Pipeline
+## Quantitative Strategy & Autocorrelation Regime Architecture
 
-The commodity scalper's `p_up` signal comes from a per-symbol LightGBM classifier (`ml/train_commodity.py`), trained on triple-barrier-labeled 5-minute bars from `archive_commodities/*.csv` with the microstructure features in `strategy/commodity_features.py` (ADX/DMI, VWAP distance, EMA slope, ORB breakout distance, volume surge ratio, Parkinson volatility, etc). Trained models are cached at `cache/commodity_models/lgb_<symbol>.pkl` and loaded once at `DryRunner` startup — training/fine-tuning doesn't affect an already-running dry-run process until it's restarted.
+The trading framework operates as a **100% pure rule-based quantitative engine** coupled with statistical market regime filters:
 
-**The ML filter is currently disabled** (`BACKTEST_USE_ML_FILTER`/`DRYRUN_USE_ML_FILTER=false`) — a 2026-09-10 backtest comparison found dropping the `p_up` condition (keeping every other rule-based filter) outperformed keeping it by 4-5 points of win rate, consistently, on both the real archive and a synthetic dataset. The model doesn't have enough real data yet to be a net-positive filter; revisit once the real archive (which grows daily via the top-up job) is substantially larger. Also note: `GOLDM`/`SILVERMIC`/`COPPER`'s cached model files predate the current 33-feature schema (28 features) and are incompatible — `backtest_commodity.py` catches this and falls back to rule-based-only automatically, same as when no model file exists.
+### 1. High-Conviction Trend Expansion Core
+Trade entry signals are determined via multi-factor technical and microstructure criteria across 5-minute candles:
+- **ADX & DMI Trend Strength**: Verifies trend momentum (`adx >= min_adx` and `+DMI > -DMI` for longs).
+- **EMA Trend Slope**: Filters for positive directional velocity (`ema_slope >= min_ema_slope`).
+- **Opening Range Breakout (ORB)**: Evaluates expansion relative to opening candle ranges.
+- **VWAP Alignment**: Confirms execution direction relative to institutional volume-weighted average price.
+- **Volume Surge Ratio**: Requires volume expansion relative to rolling average volume.
 
-**Data note**: `archive_commodities/*.csv` holds **genuine historical MCX candles fetched from Upstox** (`real_commodity_data.py`), not synthetic data — see [Real MCX Data via Upstox](#real-mcx-data-via-upstox) below. Because MCX commodity futures are monthly-expiry contracts, real history is capped at roughly a month per contract; it grows by one real trading day nightly via the scheduled top-up. `download_commodity_data.py`'s random-walk generator still exists in the codebase but is no longer used for training/backtesting as of 2026-09-10 — don't reach for it.
+### 2. Multi-Symbol Autocorrelation Market Regime Filter (`strategy/regime.py`)
+Rather than relying on black-box ML models (which overfit and reduce profits during volatile chop), the system utilizes an institutional daily-return autocorrelation regime filter:
+- Computes rolling lag-1 autocorrelation ($\rho_1$) on daily log returns.
+- **Persistent Trend Regime ($\rho_1 > 0$)**: Trend breakouts continue with high follow-through; signals execute normally.
+- **Mean-Reverting / Choppy Regime ($\rho_1 \le 0$)**: Trend breakouts experience high failure rates; the regime gate dynamically blocks new entries for that symbol/segment, avoiding false breakouts and preserving capital.
 
-### Equity's ML model: trained, but deliberately not used live
-
-`ml/train_equity.py` trains ONE LightGBM model on rows **pooled across all 49 NIFTY50 stocks** (not per-symbol, unlike commodity — see [NSE Equity](#nse-equity-nifty50-intraday-scalping-backtest_equitypy-one-shared-entry_thresholds) for why per-stock anything reopens the original circular-selection problem), on 2.64M triple-barrier-labeled decision points from the TRAIN window only (2022-08-01 to 2025-06-30 — the three held-out test folds used to validate the live thresholds stay completely unseen). It shows real, genuine signal: ROC-AUC 0.81, and precision at high confidence (P≥0.60) of 14.7% against a 4.3% base positive rate — roughly a 3x lift over random.
-
-Despite that, **it is not wired into the live entry decision.** Added as a filter on top of the already-validated rule-only thresholds and re-evaluated on the same 3 independent OOS folds, it helped on 2 of 3 (higher win rate, better profit factor) but actively hurt on the third — the most recent period, flipping a +₹195,313 profit into a -₹15,075 loss. A filter that's net-positive on average but can silently turn the *next* period you'd actually trade into a loser isn't a safe addition; equity runs rule-based only, same posture `DRYRUN_USE_ML_FILTER=false` already applies to commodity.
-
-```bash
-python3 -m ml.train_equity   # trains and saves cache/equity_models/lgb_equity_pooled.pkl -- for research/inspection, not consumed by live_dryrun.py
-```
-
-### Manual full training
-```bash
-python3 -m ml.train_commodity --symbol CRUDEOILM   # full from-scratch train, one symbol
-python3 -m ml.train_commodity                        # full from-scratch train, all tracked symbols
-python3 update_commodity.py                           # top up archive_commodities/*.csv with real Upstox candles, THEN full train
-python3 update_commodity.py --no-train                 # top up archives only, skip training
-```
-Every full train writes a `cache/commodity_models/lgb_<symbol>.meta.json` checkpoint recording the timestamp of the last data row used — that's what fine-tuning (below) uses to know which rows are new.
-
-### Fine-tuning (continued training on new data)
-A model trained once and left alone drifts as market microstructure shifts, but re-training from scratch on the full multi-year archive every week is wasteful and throws away everything the model already learned. `ml/train_commodity.py`'s `finetune_commodity_model()` instead **continues training the existing saved model** on only the data added since its last checkpoint — via LightGBM's `init_model` (adds more boosting rounds on top of the existing trees rather than fitting fresh ones). If a symbol has no saved model/checkpoint yet, it transparently falls back to a full train first.
-
-```bash
-python3 -m ml.train_commodity --symbol CRUDEOILM --finetune   # fine-tune one symbol on new data since its last checkpoint
-python3 -m ml.train_commodity --finetune                        # fine-tune all tracked symbols
-```
-Skips cleanly (model left untouched) if there are fewer than 100 new labeled rows since the last checkpoint, or if the new data is single-class (no win/loss examples to learn from) — both logged and non-fatal.
-
-### Weekly automated fine-tuning
-`ml/weekly_finetune.py` wraps a real-data archive top-up with a fine-tune call in one alerted job, scheduled via `hft-weekly-finetune.service`/`.timer` (in `backend/systemd/`, see [Running 24/7 as a systemd Service](#running-247-as-a-systemd-service) for the full setup) to run **Sunday 02:00 IST** (comfortably after Saturday's MCX close, safely before Monday's session — no open positions to worry about):
-
-```bash
-python3 -m ml.weekly_finetune                 # top up archives with real data, fine-tune, restart hft-dryrun.service to load updated models
-python3 -m ml.weekly_finetune --no-restart      # same, but leave the running dryrun daemon on its current models
-```
-
-It sends a Telegram summary (🧠) with duration and which model files actually changed, or a 🔴 error alert if the job fails (in which case the dryrun daemon is left untouched, still running its last-known-good models).
+### 3. Dynamic Position Sizing & Anti-Martingale Scaling
+- **Segment-Specific Risk & Leverage**: Calibrated independently for Commodities (`4.0%` risk / `5.0x` leverage), Currencies (`4.0%` risk / `5.0x` leverage), and Equities (`4.0%` risk / `5.0x` leverage).
+- **Drawdown-Scaled Sizing (Anti-Martingale)**: Automatically reduces position size if trailing account capital experiences a drawdown (5%/10%/15% drawdown scales risk down to 90%/75%/50%), restoring automatically as capital rebounds.
+- **Portfolio Heat Cap (`MAX_PORTFOLIO_HEAT_PCT=12.0%`)**: Limits aggregate simultaneous market risk across all open positions.
 
 ---
 
