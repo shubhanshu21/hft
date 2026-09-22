@@ -124,15 +124,35 @@ def compute_entry_signal(
         return None
 
     direction = None
+    setup_type = "trend_breakout"
+
+    # Setup 1 (LONG): Trend Expansion Breakout (steady accumulation)
     if adx >= min_adx and dmp > dmn and ema_s > min_ema_slope and orb_h_dist >= min_orb and vwap_d >= min_vwap and vol_s >= min_vol:
         direction = "long"
-    elif direction_filter != "long" and adx >= min_adx and dmn > dmp and ema_s < -min_ema_slope and orb_l_dist <= -min_orb and vwap_d <= -min_vwap and vol_s >= min_vol:
+        setup_type = "trend_breakout"
+
+    # Setup 1 (SHORT): Panic Liquidation Breakdown (requires 25% higher volume surge & steeper velocity)
+    elif direction_filter != "long" and adx >= (min_adx + 3.0) and dmn > dmp and ema_s < (-min_ema_slope * 1.2) and orb_l_dist <= (-min_orb * 1.1) and vwap_d <= (-min_vwap * 1.1) and vol_s >= (min_vol * 1.25):
         direction = "short"
+        setup_type = "trend_breakout"
+        tp_mult = max(1.4, tp_mult * 0.80)  # quicker profit lock on shorts
+
+    # Setup 2: Statistical VWAP Mean-Reversion Extremes (MCX Commodities)
+    elif not is_curr:
+        if vwap_d <= -1.2 and rsi <= 25.0:
+            direction = "long"
+            setup_type = "mean_reversion"
+            tp_mult = 1.5
+        elif direction_filter != "long" and vwap_d >= 1.5 and rsi >= 78.0:
+            direction = "short"
+            setup_type = "mean_reversion"
+            tp_mult = 1.4
+
     if not direction:
         return None
     if direction_filter != "both" and direction != direction_filter:
         return None
-    if regime_ok is False:
+    if regime_ok is False and setup_type == "trend_breakout":
         return None
 
     if is_curr:
@@ -145,12 +165,15 @@ def compute_entry_signal(
     d = 1 if direction == "long" else -1
     sl = round(entry - sdist * d, 2)
     tp = round(entry + tp_mult * sdist * d, 2)
-    be = round(entry + 0.60 * sdist * d, 2)
+    # Asymmetric breakeven lock: 0.40R on shorts to protect against violent short squeeze, 0.60R on longs
+    be_mult = 0.40 if direction == "short" else 0.60
+    be = round(entry + be_mult * sdist * d, 2)
 
     return {
         "symbol": sym, "direction": direction, "entry_price": entry,
         "sl": sl, "tp": tp, "be": be, "lots": lots, "stop_dist": sdist,
         "instrument_key": instrument_key,
+        "setup_type": setup_type,
         "p_up": p_up, "rsi": rsi, "adx": adx, "vol_surge": vol_s,
         "vwap_dist_pct": vwap_d, "ema_slope_pct": ema_s,
     }

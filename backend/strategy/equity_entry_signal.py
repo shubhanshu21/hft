@@ -47,10 +47,23 @@ EQUITY_SYMBOLS = set(NIFTY50_SYMBOLS)
 # 422-599) and its max drawdown is EQUAL OR BETTER than 0.22 on all three
 # folds simultaneously (e.g. fold 1: 30.9% vs 37.4%) -- a genuine improvement
 # in trade frequency, not a tradeoff traded away against risk.
-ENTRY_THRESHOLDS = {
-    "min_adx": 22.0, "min_vol": 1.5, "min_orb": 0.10, "min_vwap": 0.10,
-    "min_stop_pct": 0.005, "min_ema_slope": 0.18, "stop_mult": 1.4,
+# Asymmetric Long vs Short Thresholds:
+# Longs ride gradual institutional accumulation (moderate ADX, steady volume, wider trail)
+# Shorts capture rapid liquidation panics (heavy volume cascade, steep drop, fast BE lock)
+LONG_THRESHOLDS = {
+    "min_adx": 20.0, "min_vol": 1.3, "min_orb": 0.08, "min_vwap": 0.08,
+    "min_stop_pct": 0.005, "min_ema_slope": 0.15, "stop_mult": 1.4,
+    "be_activation_mult": 0.60, "trail_dist_mult": 0.35,
 }
+
+SHORT_THRESHOLDS = {
+    "min_adx": 26.0, "min_vol": 1.8, "min_orb": 0.12, "min_vwap": 0.12,
+    "min_stop_pct": 0.005, "min_ema_slope": 0.22, "stop_mult": 1.2,
+    "be_activation_mult": 0.40, "trail_dist_mult": 0.20,
+}
+
+# Legacy fallback for test compatibility
+ENTRY_THRESHOLDS = LONG_THRESHOLDS
 
 BE_ACTIVATION_MULT = 0.60
 TRAIL_DIST_MULT = 0.30
@@ -82,11 +95,7 @@ def compute_equity_entry_signal(
     direction_filter: str = "both",
 ) -> dict | None:
     """Returns a signal dict if a qualifying setup exists on the latest
-    closed 5-min bar, else None. Shape deliberately differs from
-    compute_entry_signal()'s: no "tp" key (no fixed target -- see module
-    docstring), instead "activation_price" and "trail_mult" for the
-    dynamic trailing exit the caller (DryRunner) must implement for equity
-    positions specifically."""
+    closed 5-min bar, else None. Uses asymmetric long vs short criteria."""
     if not candles or len(candles) < 25:
         return None
 
@@ -113,21 +122,45 @@ def compute_equity_entry_signal(
     entry = float(row["close"])
     atr = float(row.get("atr", 0.005 * entry))
 
-    et = ENTRY_THRESHOLDS
-    sdist = max(et["stop_mult"] * atr, et["min_stop_pct"] * entry)
-    if sdist <= 0 or entry <= 0:
-        return None
+    lt = LONG_THRESHOLDS
+    st = SHORT_THRESHOLDS
+    enable_mean_rev = True
 
     direction = None
-    if (adx >= et["min_adx"] and dmp > dmn and ema_s > et["min_ema_slope"]
-            and orb_h_dist >= et["min_orb"] and vwap_d >= et["min_vwap"] and vol_s >= et["min_vol"]):
+    setup_type = "trend_breakout"
+
+    # Setup 1 (LONG): Trend Accumulation (steady volume, trend alignment)
+    if (adx >= lt["min_adx"] and dmp > dmn and ema_s > lt["min_ema_slope"]
+            and orb_h_dist >= lt["min_orb"] and vwap_d >= lt["min_vwap"] and vol_s >= lt["min_vol"]):
         direction = "long"
-    elif (direction_filter != "long" and adx >= et["min_adx"] and dmn > dmp and ema_s < -et["min_ema_slope"]
-            and orb_l_dist <= -et["min_orb"] and vwap_d <= -et["min_vwap"] and vol_s >= et["min_vol"]):
+        setup_type = "trend_breakout"
+
+    # Setup 1 (SHORT): Panic Liquidation (stricter volume surge & drop momentum)
+    elif (direction_filter != "long" and adx >= st["min_adx"] and dmn > dmp and ema_s < -st["min_ema_slope"]
+            and orb_l_dist <= -st["min_orb"] and vwap_d <= -st["min_vwap"] and vol_s >= st["min_vol"]):
         direction = "short"
+        setup_type = "trend_breakout"
+
+    # Setup 2: Statistical VWAP Mean-Reversion Extremes
+    elif enable_mean_rev:
+        # Long mean-reversion on panic flush
+        if vwap_d <= -1.2 and rsi <= 25.0:
+            direction = "long"
+            setup_type = "mean_reversion"
+        # Short mean-reversion requires higher exhaustion threshold
+        elif direction_filter != "long" and vwap_d >= 1.5 and rsi >= 78.0:
+            direction = "short"
+            setup_type = "mean_reversion"
+
     if not direction:
         return None
     if direction_filter != "both" and direction != direction_filter:
+        return None
+
+    # Asymmetric stop & exit management per direction
+    th = lt if direction == "long" else st
+    sdist = max(th["stop_mult"] * atr, th["min_stop_pct"] * entry)
+    if sdist <= 0 or entry <= 0:
         return None
 
     qty = size_equity_shares(capital, entry, sdist, risk_pct, leverage)
@@ -137,14 +170,16 @@ def compute_equity_entry_signal(
     d = 1 if direction == "long" else -1
     sl = round(entry - sdist * d, 4)
     exit_scale = dynamic_exit_scale(adx)
-    activation_mult = BE_ACTIVATION_MULT / exit_scale
-    trail_mult = TRAIL_DIST_MULT * exit_scale
+    activation_mult = th["be_activation_mult"] / exit_scale
+    trail_mult = th["trail_dist_mult"] * exit_scale
     activation_price = round(entry + activation_mult * sdist * d, 4)
+    tp = round(entry + 1.5 * sdist * d, 4) if setup_type == "mean_reversion" else None
 
     return {
         "symbol": sym, "direction": direction, "entry_price": entry,
-        "sl": sl, "activation_price": activation_price, "trail_mult": trail_mult,
+        "sl": sl, "tp": tp, "activation_price": activation_price, "trail_mult": trail_mult,
         "qty": qty, "stop_dist": sdist, "instrument_key": instrument_key,
+        "setup_type": setup_type,
         "p_up": 0.50, "rsi": rsi, "adx": adx, "vol_surge": vol_s,
         "vwap_dist_pct": vwap_d, "ema_slope_pct": ema_s,
     }

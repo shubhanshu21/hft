@@ -115,15 +115,15 @@ def alert_error(context: str, exc: Exception) -> None:
 
 def alert_entry(sig: dict, capital: float) -> None:
     arrow = "🟢 LONG" if sig["direction"] == "long" else "🔴 SHORT"
-    # "Balance" is realized equity -- it only changes when a position
-    # CLOSES, never on entry (see DryRunner._close_position). Shown
-    # alongside this trade's own margin, not netted out of it, so the two
-    # numbers aren't mistaken for the same thing.
+    stype = sig.get('setup_type', 'trend_breakout').replace('_', ' ').title()
     margin_line = f"\nMargin Used (this trade): ₹{sig['margin_used']:,.2f}" if "margin_used" in sig else ""
+    tp_val = sig.get('tp')
+    tp_str = f"₹{tp_val:.2f}" if tp_val is not None else "Dynamic Trail"
     send(
         f"📥 <b>ENTRY</b> {sig['symbol']} {arrow}\n"
+        f"Strategy: <b>{stype}</b>\n"
         f"Price: ₹{sig['entry_price']:.2f}  Qty: {sig['qty']}\n"
-        f"SL: ₹{sig['sl']:.2f}  TP: ₹{sig['tp']:.2f}{margin_line}\n"
+        f"SL: ₹{sig['sl']:.2f}  TP: {tp_str}{margin_line}\n"
         f"Balance (realized equity): ₹{capital:,.2f}"
     )
 

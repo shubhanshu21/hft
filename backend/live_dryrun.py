@@ -764,6 +764,7 @@ class DryRunner:
                 "entry_price": round(entry, 2),
                 "sl": sl, "tp": tp, "be": be,
                 "qty": lots, "lots": lots,
+                "setup_type": sig_result.get("setup_type", "trend_breakout"),
                 "trade_value": round(trade_val, 2),
                 # Balance/capital only ever changes on a CLOSE (see
                 # _close_position -- self.capital += net_pnl), never on
@@ -852,6 +853,7 @@ class DryRunner:
             "time": now.strftime("%H:%M:%S"), "symbol": sym, "direction": direction,
             "entry_price": round(entry, 2), "sl": sl, "tp": activation_price,
             "qty": qty, "lots": qty, "trade_value": round(trade_val, 2),
+            "setup_type": sig_result.get("setup_type", "trend_breakout"),
             "margin_used": round(trade_val / self.leverage, 2),
             "stop_dist": round(sdist, 4), "p_up": 0.5, "rsi": round(rsi, 1),
             "vwap_dist_pct": round(vwap_d, 4), "ema_slope_pct": round(ema_s, 4),
@@ -1167,13 +1169,12 @@ class DryRunner:
 # ---------------------------------------------------------------------------
 
 def _print_sig(sig: dict, cap: float):
-    col = GR if sig["direction"] == "long" else RED
-    arrow = "LONG  " if sig["direction"] == "long" else "SHORT "
+    stype = sig.get('setup_type', 'trend_breakout').replace('_', ' ').upper()
     print(f"\n  {BOLD}VIRTUAL ORDER PLACED  {WH}{sig['symbol']:12s}{R} {col}{arrow}{R} "
-          f"@ {YL}₹{sig['entry_price']:.2f}{R}")
+          f"@ {YL}₹{sig['entry_price']:.2f}{R} [{CY}{stype}{R}]")
     print(f"     Order ID: {CY}{sig.get('entry_order_id', 'N/A')}{R} | Position ID: {CY}{sig.get('position_id', 'N/A')}{R}")
-    print(f"     SL: {RED}₹{sig['sl']:.2f}{R}  TP: {GR}₹{sig['tp']:.2f}{R}  "
-          f"BE: ₹{sig['be']:.2f}")
+    print(f"     Strategy: {CY}{stype}{R} | SL: {RED}₹{sig['sl']:.2f}{R}  TP: {GR}₹{sig.get('tp') or 0:.2f}{R}  "
+          f"BE: ₹{sig.get('be', sig.get('activation_price', 0)):.2f}")
     print(f"     Qty: {sig['qty']}  Val: ₹{sig['trade_value']:,.0f}  "
           f"Score: {sig['p_up']:.3f}  RSI: {sig['rsi']:.1f}")
     print(f"     VWAP: {sig['vwap_dist_pct']:+.3f}%  EMA: {sig['ema_slope_pct']:+.4f}%  "
