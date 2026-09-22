@@ -10,6 +10,8 @@ current public rate source if this goes stale.
 """
 from __future__ import annotations
 
+from strategy.slippage import adaptive_slippage_per_leg
+
 RATES_LAST_VERIFIED = "2026-09-19"
 
 EQUITY_STT_PCT_SELL_SIDE   = 0.025   # 0.025% on sell-side turnover (intraday equity delivery STT differs -- this is intraday MIS)
@@ -26,7 +28,7 @@ def compute_equity_brokerage(trade_val: float) -> float:
     return base * (1 + GST_RATE)
 
 
-def compute_nse_equity_costs(direction: str, entry: float, exit_p: float, qty: int, tick_size: float = 0.05) -> dict:
+def compute_nse_equity_costs(direction: str, entry: float, exit_p: float, qty: int, tick_size: float = 0.05, symbol: str = "") -> dict:
     """Computes exact itemized costs for an NSE equity intraday (MIS) trade.
     `qty`: number of shares (equity has no lot-size multiplier -- 1 share = 1 unit)."""
     d = 1 if direction.lower() == "long" else -1
@@ -41,8 +43,9 @@ def compute_nse_equity_costs(direction: str, entry: float, exit_p: float, qty: i
     sebi = (ev + xv) * (EQUITY_SEBI_PCT / 100)
     gst_charges = (exch + sebi) * GST_RATE
 
-    # Half-tick-per-leg slippage estimate, same convention as commodity_costs.py
-    slip = (0.5 * tick_size * qty) * 2
+    # Equity slippage: empirical median half-spread when available; fall back to ½ tick.
+    slip_per_leg = adaptive_slippage_per_leg(symbol, tick_size * 0.5) if symbol else tick_size * 0.5
+    slip = slip_per_leg * qty * 2  # entry leg + exit leg
 
     total_friction = brok + stt + stamp + exch + sebi + gst_charges + slip
     net = gross - total_friction

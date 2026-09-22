@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import math
 
+from strategy.slippage import adaptive_slippage_per_leg
+
 # See strategy/commodity_costs.py's RATES_LAST_VERIFIED comment -- same
 # freshness discipline, checked by tests/test_rate_freshness.py.
 RATES_LAST_VERIFIED = "2026-09-18"
@@ -81,9 +83,10 @@ def compute_ncd_currency_costs(
     sebi = (ev + xv) * (NCD_SEBI_PCT / 100)
     gst_charges = (exch + sebi) * GST_RATE
 
-    # Half-tick slippage per leg, same convention as commodity/equity
+    # Currency slippage: empirical median half-spread when available; fall back to ½ tick.
     tick = CURRENCY_SPECS.get(symbol.upper(), {}).get("tick_size", 0.0025)
-    slip = (0.5 * tick * qty) * 2
+    slip_per_leg = adaptive_slippage_per_leg(symbol, 0.5 * tick)
+    slip = slip_per_leg * qty * 2  # entry leg + exit leg
 
     total_friction = brok + stamp + exch + sebi + gst_charges + slip
     net = gross - total_friction

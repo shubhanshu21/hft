@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import math
 
+from strategy.slippage import adaptive_slippage_per_leg
+
 # Statutory rates drift -- e.g. the 2026-04-01 Union Budget hiked index-futures
 # STT from 0.02% to 0.05% (found 2026-09-18 only via a manual web search while
 # building the index-futures cost model; nothing in this codebase would have
@@ -196,9 +198,12 @@ def compute_mcx_commodity_costs(
     sebi = (ev + xv) * (MCX_SEBI_PCT / 100)
     gst_charges = (exch + sebi) * GST_RATE
 
-    # Commodity tick slippage: ½ tick per leg
+    # Commodity slippage: use empirical median half-spread from spread_samples.csv
+    # when >= 20 real observations exist for this symbol; fall back to ½ tick otherwise.
     tick = COMMODITY_SPECS.get(symbol, {}).get("tick_size", 1.0)
-    slip = (0.5 * tick * qty) * 2
+    fallback_half_tick = 0.5 * tick
+    slip_per_leg = adaptive_slippage_per_leg(symbol, fallback_half_tick)
+    slip = slip_per_leg * qty * 2  # entry leg + exit leg
 
     total_friction = brok + ctt + stamp + exch + sebi + gst_charges + slip
     net = gross - total_friction

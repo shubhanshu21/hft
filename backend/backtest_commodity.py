@@ -205,21 +205,22 @@ def run_commodity_backtest(
             _gold_feat = compute_commodity_features(_gold_raw, symbol="GOLD")
             _gold_ema_by_ts = dict(zip(_gold_feat["timestamp"], _gold_feat["ema_slope_pct"]))
 
-    _crude_regime_by_date: dict = {}
-    if use_crude_regime_filter and any("CRUDE" in s.upper() for s in target_symbols):
+    _commodity_regime_by_sym_date: dict = {}
+    if (use_crude_regime_filter or os.environ.get("USE_COMMODITY_REGIME_FILTER", "true").lower() in ("1", "true", "yes")):
         from strategy.regime import regime_ok as _regime_ok
-        _crude_path = ARCHIVE_DIR / "CRUDEOIL_5minute.csv"
-        if _crude_path.exists():
-            _crude_raw = pd.read_csv(_crude_path)
-            _ts_col = "timestamp" if "timestamp" in _crude_raw.columns else "date"
-            _crude_raw["_dt"] = pd.to_datetime(_crude_raw[_ts_col])
-            _daily = _crude_raw.set_index("_dt")["close"].resample("1D").last().dropna()
-            _closes = list(_daily.values)
-            _dates = list(_daily.index.date)
-            for _i, _d in enumerate(_dates):
-                # Regime as of end of the PRIOR day only -- never includes
-                # today's own close, so this is causal/no-lookahead.
-                _crude_regime_by_date[_d] = _regime_ok(_closes[:_i], window=15, min_autocorr=0.0)
+        for _s in target_symbols:
+            _s_clean = _s.upper().split("|")[-1].split("2")[0]
+            _canon = {"CRUDEOILM": "CRUDEOIL", "NATGASMINI": "NATURALGAS", "GOLDM": "GOLD", "SILVERM": "SILVER"}.get(_s_clean, _s_clean)
+            _s_path = ARCHIVE_DIR / f"{_canon}_5minute.csv"
+            if _s_path.exists():
+                _s_raw = pd.read_csv(_s_path)
+                _ts_col = "timestamp" if "timestamp" in _s_raw.columns else "date"
+                _s_raw["_dt"] = pd.to_datetime(_s_raw[_ts_col])
+                _daily = _s_raw.set_index("_dt")["close"].resample("1D").last().dropna()
+                _closes = list(_daily.values)
+                _dates = list(_daily.index.date)
+                for _i, _d in enumerate(_dates):
+                    _commodity_regime_by_sym_date[(_s.upper(), _d)] = _regime_ok(_closes[:_i], window=15, min_autocorr=0.0)
 
     all_trades: list[dict] = []
     current_capital = capital
@@ -534,11 +535,8 @@ def run_commodity_backtest(
                 elif direction == "short" and _g_ema >= 0:
                     direction = None
 
-            if direction and is_crude and use_crude_regime_filter:
-                _regime = _crude_regime_by_date.get(pd.Timestamp(c_time).date())
-                # None (not enough daily history) or True lets the trade
-                # through unaffected -- only an explicit False blocks it.
-                # See strategy/regime.py's regime_ok docstring.
+            if direction and (use_crude_regime_filter or os.environ.get("USE_COMMODITY_REGIME_FILTER", "true").lower() in ("1", "true", "yes")):
+                _regime = _commodity_regime_by_sym_date.get((sym.upper(), pd.Timestamp(c_time).date()))
                 if _regime is False:
                     direction = None
 

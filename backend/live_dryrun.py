@@ -289,7 +289,6 @@ class DryRunner:
         # value over the rule-based filter alone.
         self.use_ml_filter = os.environ.get("DRYRUN_USE_ML_FILTER", "true").lower() in ("1", "true", "yes")
 
-        # Load commodity ML models
         self.commodity_models = {}
         from pathlib import Path
         import pickle
@@ -300,8 +299,26 @@ class DryRunner:
                 try:
                     with open(p, "rb") as f:
                         self.commodity_models[s] = pickle.load(f)
-                except Exception:
-                    pass
+                    # Load meta for startup log
+                    import json
+                    meta_p = mod_dir / f"lgb_{s.lower()}.meta.json"
+                    trained_through = "unknown"
+                    if meta_p.exists():
+                        try:
+                            trained_through = json.loads(meta_p.read_text()).get("trained_through", "unknown")
+                        except Exception:
+                            pass
+                    log.info("ML model loaded for %s (trained through %s). ML filter active: %s",
+                             s, trained_through, self.use_ml_filter)
+                except Exception as e:
+                    log.warning("Failed to load ML model for %s: %s", s, e)
+            elif not _is_currency(s) and not _is_equity(s):
+                log.info("No ML model found for %s (will use p_up=0.50 neutral).", s)
+
+        # Wire the spread log path into the adaptive slippage module so it reads
+        # the same file this process writes.
+        from strategy.slippage import set_spread_log_path
+        set_spread_log_path(Path(__file__).parent / "logs" / "spread_samples.csv")
 
         # Sync account in SQLite
         self.db.init_account(account_id=self.account_id, capital=self.capital,
@@ -406,16 +423,28 @@ class DryRunner:
         self.market_daily_pnl: dict[str, float] = {"commodity": 0.0, "currency": 0.0, "equity": 0.0}
         self.market_cooldown_until: dict[str, datetime | None] = {"commodity": None, "currency": None, "equity": None}
 
-        # CRUDEOILM regime gate (see strategy/regime.py's docstring for the
-        # full finding and backtest_commodity.py's use_crude_regime_filter
-        # for the train/test result) -- off by default, opt in via .env.
-        # This is a genuine tradeoff, not a clean win (cuts bad-regime
-        # losses and drawdown substantially, but also trims good-regime
-        # profit) -- deliberately NOT auto-enabled.
-        self.use_crude_regime_filter = os.environ.get("USE_CRUDE_REGIME_FILTER", "false").lower() in ("1", "true", "yes")
-        self.crude_regime_ok: bool | None = True
-        if self.use_crude_regime_filter:
-            self._refresh_crude_regime()
+        # Commodity regime gate — extended 2026-09-22 from CRUDEOILM-only to
+        # all MCX momentum symbols (CRUDEOILM, GOLDM, SILVER, NATGASMINI).
+        # Reads USE_COMMODITY_REGIME_FILTER; falls back to USE_CRUDE_REGIME_FILTER
+        # for backward-compatibility with any existing .env that hasn't been updated.
+        self.use_commodity_regime_filter = os.environ.get(
+            "USE_COMMODITY_REGIME_FILTER",
+            os.environ.get("USE_CRUDE_REGIME_FILTER", "false")
+        ).lower() in ("1", "true", "yes")
+        # Per-symbol dict: True = OK to enter, False = regime blocked, None = no data yet.
+        # None is treated as fail-open (let trades through) -- a broker hiccup
+        # should never silently block every symbol for the day.
+        self.commodity_regime_ok: dict[str, bool | None] = {}
+        if self.use_commodity_regime_filter:
+            self._refresh_commodity_regimes()
+
+        # NSE equity index-level regime gate (added 2026-09-22). Gates ALL new
+        # equity entries using NIFTY50's own daily-return autocorrelation.
+        # Off by default -- opt in via USE_EQUITY_REGIME_FILTER in .env.
+        self.use_equity_regime_filter = os.environ.get("USE_EQUITY_REGIME_FILTER", "false").lower() in ("1", "true", "yes")
+        self.equity_regime_ok: bool | None = True
+        if self.use_equity_regime_filter:
+            self._refresh_equity_regime()
 
         # Real bid-ask spread sampling (added 2026-09-18): every cost model in
         # this project assumes a flat half-tick-per-leg slippage guess, never
@@ -500,32 +529,64 @@ class DryRunner:
         )
         return False
 
-    # ---- CRUDEOILM regime gate (see __init__'s comment) -----------------------
-    def _refresh_crude_regime(self) -> None:
-        """Fetches real daily candles through YESTERDAY (never today's own
-        still-forming price -- causal by construction) and recomputes
-        self.crude_regime_ok. Fails open (leaves the previous value in
-        place, or True on the very first call) if the fetch fails -- a
-        broker hiccup should never silently start blocking every crude
-        entry for the day."""
-        ikey = SYMBOL_MAP.get("CRUDEOILM")
-        if not ikey:
-            return
+    # ---- Commodity & Equity regime gates (see __init__'s comment) -------------
+    def _refresh_commodity_regimes(self) -> None:
+        """Fetches real daily candles through YESTERDAY for each MCX momentum
+        symbol and recomputes self.commodity_regime_ok. Fails open per symbol
+        (leaves previous value or None) if the fetch fails -- a broker hiccup
+        should never silently block entries for the day.
+        Extended 2026-09-22 from CRUDEOILM-only to cover GOLDM, SILVER, NATGASMINI.
+        """
+        from strategy.regime import regime_ok as _regime_ok
+        mcx_symbols = [s for s in self.symbols if not _is_currency(s) and not _is_equity(s)]
+        yesterday = (datetime.now(IST) - timedelta(days=1)).strftime("%Y-%m-%d")
+        for sym in mcx_symbols:
+            ikey = SYMBOL_MAP.get(sym)
+            if not ikey:
+                continue
+            try:
+                candles = self.broker.get_historical_candles(ikey, unit="days", interval=1, to_date=yesterday)
+            except Exception as exc:
+                log.warning("Could not fetch daily candles for %s regime gate: %s", sym, exc)
+                continue
+            if not candles:
+                continue
+            closes = [float(c["close"]) for c in sorted(candles, key=lambda c: c["timestamp"])]
+            result = _regime_ok(closes, window=15, min_autocorr=0.0)
+            self.commodity_regime_ok[sym.upper()] = result
+            if result is False:
+                log.warning("%s regime gate: BLOCKED (daily-return autocorrelation < 0).", sym)
+                telegram.send(
+                    f"⚠️ <b>{sym} REGIME GATE: BLOCKED</b> — recent daily price action looks "
+                    f"mean-reverting, not trending. New {sym} entries held back today (existing positions unaffected)."
+                )
+            elif result is True:
+                log.info("%s regime gate: OK (autocorrelation >= 0).", sym)
+
+    def _refresh_equity_regime(self) -> None:
+        """Fetches NIFTY50 index daily candles through YESTERDAY and recomputes
+        self.equity_regime_ok. Fails open (True) if the fetch fails.
+        Added 2026-09-22 -- gates ALL new NSE equity entries."""
+        from strategy.regime import regime_ok as _regime_ok
+        nifty_key = "NSE_INDEX|Nifty 50"
         yesterday = (datetime.now(IST) - timedelta(days=1)).strftime("%Y-%m-%d")
         try:
-            candles = self.broker.get_historical_candles(ikey, unit="days", interval=1, to_date=yesterday)
+            candles = self.broker.get_historical_candles(nifty_key, unit="days", interval=1, to_date=yesterday)
         except Exception as exc:
-            log.warning("Could not fetch daily candles for crude regime gate: %s", exc)
+            log.warning("Could not fetch NIFTY50 daily candles for equity regime gate: %s", exc)
             return
         if not candles:
             return
         closes = [float(c["close"]) for c in sorted(candles, key=lambda c: c["timestamp"])]
-        from strategy.regime import regime_ok as _regime_ok
-        self.crude_regime_ok = _regime_ok(closes, window=15, min_autocorr=0.0)
-        if self.crude_regime_ok is False:
-            log.warning("Crude regime gate: BLOCKED for today (recent daily-return autocorrelation < 0).")
-            telegram.send("⚠️ <b>CRUDE REGIME GATE: BLOCKED</b> — recent daily price action looks mean-reverting, "
-                           "not trending. New CRUDEOILM entries held back today (existing positions unaffected).")
+        self.equity_regime_ok = _regime_ok(closes, window=15, min_autocorr=0.0)
+        if self.equity_regime_ok is False:
+            log.warning("Equity regime gate: BLOCKED (NIFTY50 daily autocorrelation < 0).")
+            telegram.send(
+                "⚠️ <b>EQUITY REGIME GATE: BLOCKED</b> — NIFTY50 daily returns look "
+                "mean-reverting. New NSE equity entries held back today (existing positions unaffected)."
+            )
+        elif self.equity_regime_ok is True:
+            log.info("Equity regime gate: OK (NIFTY50 autocorrelation >= 0).")
 
     # ---- real spread sampling (see __init__'s comment) -----------------------
     def _maybe_sample_spread(self, sym: str, now: datetime) -> None:
@@ -556,6 +617,21 @@ class DryRunner:
                 w.writerow(["timestamp", "symbol", "bid", "ask", "spread", "mid", "spread_pct"])
             w.writerow([now.isoformat(), sym, bid, ask, round(spread, 4), round(mid, 4), round(spread_pct, 4)])
 
+    def _send_midday_summary(self, now: datetime) -> None:
+        self._midday_summary_sent = True
+        open_syms = list(self.positions.keys())
+        pnl = self.capital - self.day_start_capital
+        pnl_pct = (pnl / self.day_start_capital * 100) if self.day_start_capital > 0 else 0.0
+        mkt_pnl_lines = "\n".join([f"  • {m.capitalize()}: ₹{val:,.2f}" for m, val in self.market_daily_pnl.items()])
+        msg = (
+            f"📈 <b>MIDDAY P&L SUMMARY</b> ({now.strftime('%H:%M')} IST)\n"
+            f"Capital: ₹{self.capital:,.2f} (Day P&L: ₹{pnl:+,.2f} / {pnl_pct:+.2f}%)\n"
+            f"Market P&Ls:\n{mkt_pnl_lines}\n"
+            f"Open Positions ({len(open_syms)}): {', '.join(open_syms) or 'none'}"
+        )
+        print(f"\n{BOLD}{GR}{msg}{R}\n", flush=True)
+        telegram.send(msg)
+
     # ---- scan ---------------------------------------------------------------
     def scan(self) -> list[dict]:
         now = datetime.now(IST)
@@ -568,8 +644,14 @@ class DryRunner:
             self.symbol_kill_switch = {s: False for s in self.symbols}
             self.market_daily_pnl = {"commodity": 0.0, "currency": 0.0, "equity": 0.0}
             self.market_cooldown_until = {"commodity": None, "currency": None, "equity": None}
-            if self.use_crude_regime_filter:
-                self._refresh_crude_regime()
+            if self.use_commodity_regime_filter:
+                self._refresh_commodity_regimes()
+            if self.use_equity_regime_filter:
+                self._refresh_equity_regime()
+            self._midday_summary_sent = False  # reset for new trading day
+
+        if now.hour >= 12 and now.minute >= 30 and not getattr(self, "_midday_summary_sent", False):
+            self._send_midday_summary(now)
 
         if self.day_start_capital > 0:
             daily_loss_pct = (self.day_start_capital - self.capital) / self.day_start_capital * 100
@@ -609,7 +691,7 @@ class DryRunner:
             candles = _fetch_candles(self.broker, sym, self.today)
             sym_risk_pct = _SYMBOL_RISK_PCT_OVERRIDE.get(sym.upper(), self.risk_pct) * self._drawdown_risk_scale()
             sym_leverage = _SYMBOL_LEVERAGE_OVERRIDE.get(sym.upper(), self.leverage)
-            regime_ok = self.crude_regime_ok if (self.use_crude_regime_filter and sym.upper() == "CRUDEOILM") else True
+            regime_ok = self.commodity_regime_ok.get(sym.upper(), None) if self.use_commodity_regime_filter else True
             sig_result = compute_entry_signal(
                 sym, candles, SYMBOL_MAP.get(sym), self.commodity_models, self.use_ml_filter,
                 self.full_session, self.direction_filter, self.capital, sym_risk_pct, sym_leverage,
@@ -708,6 +790,9 @@ class DryRunner:
     # above because equity's exit mechanics are structurally different -- see
     # strategy/equity_entry_signal.py's module docstring) -----------------
     def _maybe_enter_equity(self, sym: str, now: datetime, signals: list[dict]) -> None:
+        # Equity regime gate: block new entries when NIFTY50 index is mean-reverting
+        if self.use_equity_regime_filter and self.equity_regime_ok is False:
+            return
         open_equity_count = sum(1 for s in self.positions if _is_equity(s))
         if open_equity_count >= MAX_CONCURRENT_EQUITY_POSITIONS:
             return
@@ -911,17 +996,26 @@ class DryRunner:
         if self.day_start_capital > 0:
             mkt_loss_pct = -self.market_daily_pnl[market] / self.day_start_capital * 100
             if mkt_loss_pct >= self.max_market_daily_loss_pct:
-                cooldown_expiry = now + timedelta(minutes=self.market_cooldown_minutes)
                 if self.market_cooldown_until.get(market) is None or self.market_cooldown_until[market] < now:
+                    # Adaptive cooldown duration: scale by how far the loss exceeded the limit.
+                    # 100-149% of limit -> base, 150-199% -> 1.5x, >=200% -> 2x.
+                    overshoot = mkt_loss_pct / self.max_market_daily_loss_pct
+                    if overshoot >= 2.0:
+                        cooldown_mins = int(self.market_cooldown_minutes * 2)
+                    elif overshoot >= 1.5:
+                        cooldown_mins = int(self.market_cooldown_minutes * 1.5)
+                    else:
+                        cooldown_mins = self.market_cooldown_minutes
+                    cooldown_expiry = now + timedelta(minutes=cooldown_mins)
                     self.market_cooldown_until[market] = cooldown_expiry
                     expiry_time_str = cooldown_expiry.strftime("%H:%M:%S")
                     print(f"\n{BOLD}{YL}⏸ {market.upper()} COOLDOWN ACTIVATED ({mkt_loss_pct:.2f}% loss >= "
-                          f"{self.max_market_daily_loss_pct}%) -- {market} entries paused until {expiry_time_str} IST. "
-                          f"Other markets continue normally.{R}\n")
+                          f"{self.max_market_daily_loss_pct}%) -- {market} entries paused for {cooldown_mins}m "
+                          f"until {expiry_time_str} IST. Other markets continue normally.{R}\n")
                     telegram.send(
                         f"⏸ <b>{market.upper()} COOLDOWN ACTIVATED</b> — {mkt_loss_pct:.2f}% loss "
                         f"(limit {self.max_market_daily_loss_pct}%)\n"
-                        f"New {market} entries paused for {self.market_cooldown_minutes}m until <b>{expiry_time_str} IST</b>.\n"
+                        f"New {market} entries paused for <b>{cooldown_mins}m</b> until <b>{expiry_time_str} IST</b>.\n"
                         f"Other markets continue normally."
                     )
 
@@ -1274,6 +1368,16 @@ def main():
             SYMBOL_MAP.clear()
             SYMBOL_MAP.update(fresh_map)
 
+            # Pre-rollover contract expiry alert (MCX contracts expire ~20th of month)
+            day_of_month = mopen.day
+            if 18 <= day_of_month <= 20:
+                mcx_syms = [s for s in runner.symbols if not _is_currency(s) and not _is_equity(s)]
+                if mcx_syms:
+                    telegram.send(
+                        f"⚠️ <b>MCX CONTRACT EXPIRY WARNING</b> — Today is day {day_of_month} of month.\n"
+                        f"MCX contracts for {', '.join(mcx_syms)} expire around 20th. Verify positions & instrument keys."
+                    )
+
         runner.today = mopen.strftime("%Y-%m-%d")
         runner.log_path = Path(__file__).parent / "logs" / f"dryrun_{runner.today}.csv"
 
@@ -1321,8 +1425,11 @@ def main():
                     elif cmd in ("/status", "status"):
                         open_syms = list(runner.positions.keys())
                         regime_line = ""
-                        if runner.use_crude_regime_filter:
-                            regime_line = f"\nCrude regime gate: {'🟢 OK' if runner.crude_regime_ok is not False else '🔴 BLOCKED'}"
+                        if runner.use_commodity_regime_filter:
+                            regime_str = ", ".join([f"{s}: {'🟢' if v is not False else '🔴'}" for s, v in runner.commodity_regime_ok.items()])
+                            regime_line += f"\nCommodity regimes: {regime_str or 'N/A'}"
+                        if runner.use_equity_regime_filter:
+                            regime_line += f"\nEquity regime: {'🟢 OK' if runner.equity_regime_ok is not False else '🔴 BLOCKED'}"
                         pos_lines = ""
                         for s, p in runner.positions.items():
                             pnl_est = (p.get("best_price", p["entry_price"]) - p["entry_price"]) * (1 if p["direction"] == "long" else -1)

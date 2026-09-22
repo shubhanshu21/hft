@@ -299,13 +299,22 @@ class LiveTrader:
         # filter together; risk_pct alone leaves the pre-fix, net-losing-
         # overall entry logic in place). This module stays fully unwired
         # regardless of this fix -- see module docstring.
-        self.use_crude_regime_filter = os.environ.get("USE_CRUDE_REGIME_FILTER", "false").lower() in ("1", "true", "yes")
-        self.crude_regime_ok: bool | None = True
-        if self.use_crude_regime_filter:
-            self._refresh_crude_regime()
+        self.use_commodity_regime_filter = os.environ.get("USE_COMMODITY_REGIME_FILTER",
+            os.environ.get("USE_CRUDE_REGIME_FILTER", "true")).lower() in ("1", "true", "yes")
+        self.commodity_regime_ok: dict[str, bool | None] = {}
+        if self.use_commodity_regime_filter:
+            self._refresh_commodity_regimes()
+
+        self.use_equity_regime_filter = os.environ.get("USE_EQUITY_REGIME_FILTER", "false").lower() in ("1", "true", "yes")
+        self.equity_regime_ok: bool | None = True
+        if self.use_equity_regime_filter:
+            self._refresh_equity_regime()
+
+        self.max_portfolio_heat_pct = float(os.environ.get("MAX_PORTFOLIO_HEAT_PCT", "8.0"))
+        self._midday_summary_sent = False
 
         self.commodity_models: dict[str, object] = {}
-        import pickle
+        import pickle, json
         mod_dir = Path(__file__).parent / "cache" / "commodity_models"
         for s in self.symbols:
             p = mod_dir / f"lgb_{s.lower()}.pkl"
@@ -313,11 +322,23 @@ class LiveTrader:
                 try:
                     with open(p, "rb") as f:
                         self.commodity_models[s] = pickle.load(f)
-                except Exception:
-                    pass
+                    meta_p = mod_dir / f"lgb_{s.lower()}.meta.json"
+                    trained_through = "unknown"
+                    if meta_p.exists():
+                        try:
+                            trained_through = json.loads(meta_p.read_text()).get("trained_through", "unknown")
+                        except Exception:
+                            pass
+                    log.info("ML model loaded for %s (trained through %s). ML filter active: %s",
+                             s, trained_through, self.use_ml_filter)
+                except Exception as e:
+                    log.warning("Failed to load ML model for %s: %s", s, e)
+            elif not _is_currency(s) and not _is_equity(s):
+                log.info("No ML model found for %s (will use p_up=0.50 neutral).", s)
 
         self.db.init_account(account_id=self.account_id, capital=self.capital,
                               leverage=self.leverage, risk_pct=self.risk_pct)
+        self.peak_capital = self.db.get_peak_capital(account_id=self.account_id) or self.capital
         acct = self.db.get_account(self.account_id)
         if acct:
             self.capital = acct["current_capital"]
@@ -352,44 +373,91 @@ class LiveTrader:
                       f"Cooldown has ended. New {market} setups will now be evaluated.")
         return False
 
-    # ---- CRUDEOILM regime gate (mirrors DryRunner._refresh_crude_regime exactly) ----
-    def _refresh_crude_regime(self) -> None:
-        """Fetches real daily candles through YESTERDAY (never today's own
-        still-forming price -- causal by construction) and recomputes
-        self.crude_regime_ok. Fails open (leaves the previous value in
-        place, or True on the very first call) if the fetch fails -- a
-        broker hiccup should never silently start blocking every crude
-        entry for the day."""
-        ikey = self.symbol_map.get("CRUDEOILM")
-        if not ikey:
-            return
+    def _portfolio_heat_pct(self) -> float:
+        if self.capital <= 0:
+            return 0.0
+        total_risk_rupees = 0.0
+        for s, p in self.positions.items():
+            sdist = abs(p["entry_price"] - p["current_stop"])
+            if _is_equity(s):
+                units = p.get("qty", 1)
+            elif _is_currency(s):
+                units = p.get("lots", 1) * CURRENCY_SPECS.get(s.upper(), {}).get("lot_size", 1000)
+            else:
+                units = p.get("lots", 1) * COMMODITY_SPECS.get(s, {}).get("lot_size", 1)
+            total_risk_rupees += sdist * units
+        return (total_risk_rupees / self.capital) * 100.0
+
+    def _drawdown_risk_scale(self) -> float:
+        if self.peak_capital <= 0:
+            return 1.0
+        dd_pct = max(0.0, (self.peak_capital - self.capital) / self.peak_capital * 100.0)
+        if dd_pct >= 15.0:
+            return 0.50
+        elif dd_pct >= 10.0:
+            return 0.75
+        elif dd_pct >= 5.0:
+            return 0.90
+        return 1.0
+
+    def _send_midday_summary(self, now: datetime) -> None:
+        self._midday_summary_sent = True
+        open_syms = list(self.positions.keys())
+        pnl = self.capital - self.day_start_capital
+        pnl_pct = (pnl / self.day_start_capital * 100) if self.day_start_capital > 0 else 0.0
+        mkt_pnl_lines = "\n".join([f"  • {m.capitalize()}: ₹{val:,.2f}" for m, val in self.market_daily_pnl.items()])
+        msg = (
+            f"📈 <b>LIVE MIDDAY P&L SUMMARY</b> ({now.strftime('%H:%M')} IST)\n"
+            f"Capital: ₹{self.capital:,.2f} (Day P&L: ₹{pnl:+,.2f} / {pnl_pct:+.2f}%)\n"
+            f"Market P&Ls:\n{mkt_pnl_lines}\n"
+            f"Open Positions ({len(open_syms)}): {', '.join(open_syms) or 'none'}"
+        )
+        log.info(msg)
+        telegram.send(msg)
+
+    def _refresh_commodity_regimes(self) -> None:
+        from strategy.regime import regime_ok as _regime_ok
+        yesterday = (datetime.now(IST) - timedelta(days=1)).strftime("%Y-%m-%d")
+        for sym in ["CRUDEOILM", "GOLDM", "SILVER", "NATGASMINI"]:
+            ikey = self.symbol_map.get(sym)
+            if not ikey:
+                continue
+            try:
+                candles = self.broker.get_historical_candles(ikey, unit="days", interval=1, to_date=yesterday)
+                if not candles:
+                    continue
+                closes = [float(c["close"]) for c in sorted(candles, key=lambda c: c["timestamp"])]
+                res = _regime_ok(closes, window=15, min_autocorr=0.0)
+                self.commodity_regime_ok[sym.upper()] = res
+                if res is False:
+                    log.warning("%s regime gate: BLOCKED for today (autocorr < 0).", sym)
+            except Exception as exc:
+                log.warning("Could not fetch daily candles for %s regime gate: %s", sym, exc)
+
+    def _refresh_equity_regime(self) -> None:
+        from strategy.regime import regime_ok as _regime_ok
         yesterday = (datetime.now(IST) - timedelta(days=1)).strftime("%Y-%m-%d")
         try:
-            candles = self.broker.get_historical_candles(ikey, unit="days", interval=1, to_date=yesterday)
+            candles = self.broker.get_historical_candles("NSE_INDEX|Nifty 50", unit="days", interval=1, to_date=yesterday)
+            if not candles:
+                return
+            closes = [float(c["close"]) for c in sorted(candles, key=lambda c: c["timestamp"])]
+            self.equity_regime_ok = _regime_ok(closes, window=15, min_autocorr=0.0)
+            if self.equity_regime_ok is False:
+                log.warning("Equity regime gate (NIFTY50): BLOCKED for today (autocorr < 0).")
         except Exception as exc:
-            log.warning("Could not fetch daily candles for crude regime gate: %s", exc)
-            return
-        if not candles:
-            return
-        closes = [float(c["close"]) for c in sorted(candles, key=lambda c: c["timestamp"])]
-        from strategy.regime import regime_ok as _regime_ok
-        self.crude_regime_ok = _regime_ok(closes, window=15, min_autocorr=0.0)
-        if self.crude_regime_ok is False:
-            log.warning("Crude regime gate: BLOCKED for today (recent daily-return autocorrelation < 0).")
+            log.warning("Could not fetch daily candles for NIFTY50 equity regime gate: %s", exc)
 
     # ---- entry signal (mirrors DryRunner.scan()'s per-symbol logic) --------
     def _entry_signal(self, sym: str, now: datetime) -> dict | None:
-        """Delegates to strategy.entry_signal.compute_entry_signal -- the
-        single shared decision function live_dryrun.py's DryRunner also
-        calls, eliminating the duplicated-logic drift risk this method used
-        to carry on its own (see that module's docstring)."""
         ikey = self.symbol_map.get(sym)
         candles = _fetch_candles(self.broker, sym, ikey, self.today)
-        regime_ok = self.crude_regime_ok if (self.use_crude_regime_filter and sym.upper() == "CRUDEOILM") else True
+        regime_ok = self.commodity_regime_ok.get(sym.upper(), None) if self.use_commodity_regime_filter else True
+        sym_risk_pct = _SYMBOL_RISK_PCT_OVERRIDE.get(sym.upper(), self.risk_pct) * self._drawdown_risk_scale()
         sig = compute_entry_signal(
             sym, candles, ikey, self.commodity_models, self.use_ml_filter,
             self.full_session, self.direction_filter, self.capital,
-            _SYMBOL_RISK_PCT_OVERRIDE.get(sym.upper(), self.risk_pct),
+            sym_risk_pct,
             _SYMBOL_LEVERAGE_OVERRIDE.get(sym.upper(), self.leverage),
             regime_ok=regime_ok,
         )
@@ -404,10 +472,13 @@ class LiveTrader:
     # paper-trading daemon in case it's ever armed, it does not make this file
     # any less inert on its own. ------------------------------------------
     def _entry_signal_equity(self, sym: str, now: datetime) -> dict | None:
+        if self.use_equity_regime_filter and self.equity_regime_ok is False:
+            return None
         ikey = self.symbol_map.get(sym)
         candles = _fetch_candles(self.broker, sym, ikey, self.today)
+        scaled_risk_pct = self.risk_pct * self._drawdown_risk_scale()
         return compute_equity_entry_signal(
-            sym, candles, ikey, self.capital, self.risk_pct, self.leverage,
+            sym, candles, ikey, self.capital, scaled_risk_pct, self.leverage,
             direction_filter=self.direction_filter,
         )
 
@@ -575,20 +646,25 @@ class LiveTrader:
         cost_info = compute_nse_equity_costs(pos["direction"], pos["entry_price"], exit_price, quantity)
         net_pnl = cost_info["net"]
         self.capital += net_pnl
+        self.peak_capital = max(self.peak_capital, self.capital)
 
         # Market-specific daily loss limit & cooldown timer
         self.market_daily_pnl["equity"] = self.market_daily_pnl.get("equity", 0.0) + net_pnl
         if self.day_start_capital > 0:
             mkt_loss_pct = -self.market_daily_pnl["equity"] / self.day_start_capital * 100
             if mkt_loss_pct >= self.max_market_daily_loss_pct:
-                cooldown_expiry = now + timedelta(minutes=self.market_cooldown_minutes)
                 if self.market_cooldown_until.get("equity") is None or self.market_cooldown_until["equity"] < now:
+                    overshoot = mkt_loss_pct / self.max_market_daily_loss_pct
+                    cooldown_mins = (int(self.market_cooldown_minutes * 2) if overshoot >= 2.0
+                                     else int(self.market_cooldown_minutes * 1.5) if overshoot >= 1.5
+                                     else self.market_cooldown_minutes)
+                    cooldown_expiry = now + timedelta(minutes=cooldown_mins)
                     self.market_cooldown_until["equity"] = cooldown_expiry
                     expiry_time_str = cooldown_expiry.strftime("%H:%M:%S")
                     telegram.send(
                         f"⏸ <b>EQUITY COOLDOWN ACTIVATED (LIVE)</b> — {mkt_loss_pct:.2f}% loss "
                         f"(limit {self.max_market_daily_loss_pct}%)\n"
-                        f"New equity entries paused for {self.market_cooldown_minutes}m until <b>{expiry_time_str} IST</b>.\n"
+                        f"New equity entries paused for {cooldown_mins}m until <b>{expiry_time_str} IST</b>.\n"
                         f"Other markets continue normally."
                     )
 
@@ -844,6 +920,7 @@ class LiveTrader:
             cost_info = compute_mcx_commodity_costs(sym, pos["direction"], pos["entry_price"], exit_price, pos["qty"])
         net_pnl = cost_info["net"]
         self.capital += net_pnl
+        self.peak_capital = max(self.peak_capital, self.capital)
 
         # Market-specific daily loss limit & cooldown timer
         market = _get_market(sym)
@@ -851,14 +928,18 @@ class LiveTrader:
         if self.day_start_capital > 0:
             mkt_loss_pct = -self.market_daily_pnl[market] / self.day_start_capital * 100
             if mkt_loss_pct >= self.max_market_daily_loss_pct:
-                cooldown_expiry = now + timedelta(minutes=self.market_cooldown_minutes)
                 if self.market_cooldown_until.get(market) is None or self.market_cooldown_until[market] < now:
+                    overshoot = mkt_loss_pct / self.max_market_daily_loss_pct
+                    cooldown_mins = (int(self.market_cooldown_minutes * 2) if overshoot >= 2.0
+                                     else int(self.market_cooldown_minutes * 1.5) if overshoot >= 1.5
+                                     else self.market_cooldown_minutes)
+                    cooldown_expiry = now + timedelta(minutes=cooldown_mins)
                     self.market_cooldown_until[market] = cooldown_expiry
                     expiry_time_str = cooldown_expiry.strftime("%H:%M:%S")
                     telegram.send(
                         f"⏸ <b>{market.upper()} COOLDOWN ACTIVATED (LIVE)</b> — {mkt_loss_pct:.2f}% loss "
                         f"(limit {self.max_market_daily_loss_pct}%)\n"
-                        f"New {market} entries paused for {self.market_cooldown_minutes}m until <b>{expiry_time_str} IST</b>.\n"
+                        f"New {market} entries paused for {cooldown_mins}m until <b>{expiry_time_str} IST</b>.\n"
                         f"Other markets continue normally."
                     )
 
@@ -991,8 +1072,24 @@ class LiveTrader:
                               f"{', '.join(changed.keys())}")
             self.symbol_map = fresh_map
 
-            if self.use_crude_regime_filter:
-                self._refresh_crude_regime()
+            # Pre-rollover contract expiry alert (MCX contracts expire ~20th of month)
+            day_of_month = datetime.now(IST).day
+            if 18 <= day_of_month <= 20:
+                mcx_syms = [s for s in self.symbols if not _is_currency(s) and not _is_equity(s)]
+                if mcx_syms:
+                    telegram.send(
+                        f"⚠️ <b>MCX CONTRACT EXPIRY WARNING (LIVE)</b> — Today is day {day_of_month} of month.\n"
+                        f"MCX contracts for {', '.join(mcx_syms)} expire around 20th. Verify positions & instrument keys."
+                    )
+
+            if self.use_commodity_regime_filter:
+                self._refresh_commodity_regimes()
+            if self.use_equity_regime_filter:
+                self._refresh_equity_regime()
+            self._midday_summary_sent = False
+
+        if now.hour >= 12 and now.minute >= 30 and not getattr(self, "_midday_summary_sent", False):
+            self._send_midday_summary(now)
 
         daily_loss_pct = ((self.day_start_capital - self.capital) / self.day_start_capital * 100
                            if self.day_start_capital > 0 else 0.0)
@@ -1034,6 +1131,12 @@ class LiveTrader:
                 continue
             sig = self._entry_signal(sym, now)
             if sig:
+                is_curr = _is_currency(sym)
+                _mult = CURRENCY_SPECS.get(sym.upper(), {}).get("lot_size", 1000) if is_curr else COMMODITY_SPECS.get(sym, {}).get("lot_size", 1)
+                _new_risk_rupees = sig["stop_dist"] * sig["lots"] * _mult
+                if self.capital > 0 and (self._portfolio_heat_pct() + _new_risk_rupees / self.capital * 100) > self.max_portfolio_heat_pct:
+                    log.info("%s: live entry skipped -- would push total portfolio risk past %.1f%% heat cap.", sym, self.max_portfolio_heat_pct)
+                    continue
                 self._enter(sig, now)
 
 

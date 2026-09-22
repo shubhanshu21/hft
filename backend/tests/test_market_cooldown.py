@@ -1,51 +1,53 @@
+"""
+tests/test_market_cooldown.py — Tests market-specific daily loss limit & cooldown logic.
+"""
+from __future__ import annotations
+
+import unittest
 from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
 from unittest.mock import MagicMock, patch
-import pytest
+from zoneinfo import ZoneInfo
 
 from live_dryrun import DryRunner, _get_market
 
 IST = ZoneInfo("Asia/Kolkata")
 
 
-class TestMarketClassification:
+class TestMarketClassification(unittest.TestCase):
     def test_equity_symbols_classification(self):
-        assert _get_market("RELIANCE") == "equity"
-        assert _get_market("TCS") == "equity"
-        assert _get_market("INFY") == "equity"
-        assert _get_market("HDFCBANK") == "equity"
+        self.assertEqual(_get_market("RELIANCE"), "equity")
+        self.assertEqual(_get_market("TCS"), "equity")
+        self.assertEqual(_get_market("INFY"), "equity")
+        self.assertEqual(_get_market("HDFCBANK"), "equity")
 
     def test_currency_symbols_classification(self):
-        assert _get_market("USDINR") == "currency"
-        assert _get_market("EURINR") == "currency"
-        assert _get_market("GBPINR") == "currency"
-        assert _get_market("JPYINR") == "currency"
+        self.assertEqual(_get_market("USDINR"), "currency")
+        self.assertEqual(_get_market("EURINR"), "currency")
+        self.assertEqual(_get_market("GBPINR"), "currency")
+        self.assertEqual(_get_market("JPYINR"), "currency")
 
     def test_commodity_symbols_classification(self):
-        assert _get_market("CRUDEOILM") == "commodity"
-        assert _get_market("NATGASMINI") == "commodity"
-        assert _get_market("GOLDM") == "commodity"
-        assert _get_market("SILVERM") == "commodity"
-        assert _get_market("COPPER") == "commodity"
+        self.assertEqual(_get_market("CRUDEOILM"), "commodity")
+        self.assertEqual(_get_market("NATGASMINI"), "commodity")
+        self.assertEqual(_get_market("GOLDM"), "commodity")
+        self.assertEqual(_get_market("SILVERM"), "commodity")
+        self.assertEqual(_get_market("COPPER"), "commodity")
 
 
-class TestMarketCooldownLogic:
-    @pytest.fixture
-    def mock_dryrunner(self):
-        with patch("live_dryrun.TradingDB") as mock_db, \
-             patch("live_dryrun.UpstoxBroker") as mock_broker, \
+class TestMarketCooldownLogic(unittest.TestCase):
+    def _create_runner(self):
+        db_instance = MagicMock()
+        db_instance.get_open_positions.return_value = []
+        db_instance.get_account.return_value = {"current_capital": 100_000.0}
+        db_instance.get_peak_capital.return_value = 100_000.0
+
+        broker_instance = MagicMock()
+        broker_instance.get_market_depth.return_value = None
+        broker_instance.get_historical_candles.return_value = []
+
+        with patch("live_dryrun.TradingDB", return_value=db_instance), \
+             patch("live_dryrun.UpstoxBroker", return_value=broker_instance), \
              patch("live_dryrun._build_symbol_map", return_value={"CRUDEOILM": "MCX_1", "USDINR": "CDS_1", "RELIANCE": "NSE_1"}):
-            db_instance = MagicMock()
-            db_instance.get_open_positions.return_value = []
-            db_instance.get_account.return_value = {"current_capital": 100_000.0}
-            db_instance.get_peak_capital.return_value = 100_000.0
-            mock_db.return_value = db_instance
-
-            broker_instance = MagicMock()
-            broker_instance.get_market_depth.return_value = None
-            broker_instance.get_historical_candles.return_value = []
-            mock_broker.return_value = broker_instance
-
             runner = DryRunner(
                 broker=broker_instance,
                 db=db_instance,
@@ -58,8 +60,8 @@ class TestMarketCooldownLogic:
             runner.market_cooldown_minutes = 60
             return runner
 
-    def test_market_cooldown_activation_on_loss(self, mock_dryrunner):
-        runner = mock_dryrunner
+    def test_market_cooldown_activation_on_loss(self):
+        runner = self._create_runner()
         now = datetime(2026, 9, 22, 11, 0, 0, tzinfo=IST)
 
         pos_commodity = {
@@ -76,31 +78,31 @@ class TestMarketCooldownLogic:
             runner._close_position("CRUDEOILM", pos_commodity, 5900.0, "stop_loss", now)
 
         # Commodity should be on cooldown
-        assert runner.market_daily_pnl["commodity"] == -3500.0
-        assert runner.market_cooldown_until["commodity"] == now + timedelta(minutes=60)
-        assert runner._is_market_on_cooldown("commodity", now + timedelta(minutes=10)) is True
+        self.assertEqual(runner.market_daily_pnl["commodity"], -3500.0)
+        self.assertEqual(runner.market_cooldown_until["commodity"], now + timedelta(minutes=60))
+        self.assertTrue(runner._is_market_on_cooldown("commodity", now + timedelta(minutes=10)))
 
         # Currency and Equity markets must remain active (NOT on cooldown)
-        assert runner.market_cooldown_until["currency"] is None
-        assert runner.market_cooldown_until["equity"] is None
-        assert runner._is_market_on_cooldown("currency", now + timedelta(minutes=10)) is False
-        assert runner._is_market_on_cooldown("equity", now + timedelta(minutes=10)) is False
+        self.assertIsNone(runner.market_cooldown_until["currency"])
+        self.assertIsNone(runner.market_cooldown_until["equity"])
+        self.assertFalse(runner._is_market_on_cooldown("currency", now + timedelta(minutes=10)))
+        self.assertFalse(runner._is_market_on_cooldown("equity", now + timedelta(minutes=10)))
 
-    def test_market_cooldown_expiration(self, mock_dryrunner):
-        runner = mock_dryrunner
+    def test_market_cooldown_expiration(self):
+        runner = self._create_runner()
         now = datetime(2026, 9, 22, 11, 0, 0, tzinfo=IST)
         runner.market_cooldown_until["commodity"] = now + timedelta(minutes=60)
 
         with patch("utils.telegram.send"):
             # Before 60 minutes: cooldown is active
-            assert runner._is_market_on_cooldown("commodity", now + timedelta(minutes=30)) is True
+            self.assertTrue(runner._is_market_on_cooldown("commodity", now + timedelta(minutes=30)))
 
             # After 60 minutes: cooldown expires automatically
-            assert runner._is_market_on_cooldown("commodity", now + timedelta(minutes=61)) is False
-            assert runner.market_cooldown_until["commodity"] is None
+            self.assertFalse(runner._is_market_on_cooldown("commodity", now + timedelta(minutes=61)))
+            self.assertIsNone(runner.market_cooldown_until["commodity"])
 
-    def test_trading_day_rollover_resets_cooldown(self, mock_dryrunner):
-        runner = mock_dryrunner
+    def test_trading_day_rollover_resets_cooldown(self):
+        runner = self._create_runner()
         now = datetime(2026, 9, 22, 11, 0, 0, tzinfo=IST)
         runner.market_daily_pnl = {"commodity": -4000.0, "currency": 500.0, "equity": -100.0}
         runner.market_cooldown_until = {"commodity": now + timedelta(minutes=60), "currency": None, "equity": None}
@@ -115,6 +117,10 @@ class TestMarketCooldownLogic:
             mock_dt.strftime = datetime.strftime
             runner.scan()
 
-        assert runner.trading_day == "2026-09-23"
-        assert runner.market_daily_pnl == {"commodity": 0.0, "currency": 0.0, "equity": 0.0}
-        assert runner.market_cooldown_until == {"commodity": None, "currency": None, "equity": None}
+        self.assertEqual(runner.trading_day, "2026-09-23")
+        self.assertEqual(runner.market_daily_pnl, {"commodity": 0.0, "currency": 0.0, "equity": 0.0})
+        self.assertEqual(runner.market_cooldown_until, {"commodity": None, "currency": None, "equity": None})
+
+
+if __name__ == "__main__":
+    unittest.main()
