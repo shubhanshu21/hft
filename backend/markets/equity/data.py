@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-backend/real_equity_data.py -- REAL NSE Equity Historical Data (via Upstox).
+markets/equity/data.py -- REAL NSE Equity Historical Data (via Upstox).
 
 Rebuilt 2026-09-19 alongside the rest of the equity-scalper rebuild (see
 markets/equity/universe.py's docstring for why the original was removed and
@@ -34,6 +34,11 @@ from markets.equity.universe import NIFTY50_SYMBOLS
 from services.utils.logger import get_logger, setup_logger
 
 ARCHIVE_DIR = ARCHIVE_ROOT / "equity"
+# (unit, interval, file suffix) -- one CSV per symbol per timeframe: <SYMBOL>_<suffix>.csv
+INTERVALS = [
+    ("minutes", 5, "5minute"),
+    ("minutes", 3, "3minute"),
+]
 _MAX_LOOKBACK_DAYS = 1500  # generous upper bound; real cutoff is each stock's own listing date, discovered not assumed
 log = get_logger("real_equity_data")
 
@@ -45,26 +50,26 @@ def _get_broker() -> UpstoxBroker:
     return UpstoxBroker(access_token=token, dry_run=True)
 
 
-def download_real_equity_history(symbol: str) -> pd.DataFrame | None:
+def download_real_equity_history(symbol: str, unit: str = "minutes", interval: int = 5) -> pd.DataFrame | None:
     from services.data.candles import fetch_real_history_backward
     broker = _get_broker()
     ikey = get_instrument_key(symbol)
     if not ikey:
         log.warning("%s: could not resolve NSE_EQ instrument_key.", symbol)
         return None
-    candles = fetch_real_history_backward(broker, ikey, "minutes", 5, max_lookback_days=_MAX_LOOKBACK_DAYS)
+    candles = fetch_real_history_backward(broker, ikey, unit, interval, max_lookback_days=_MAX_LOOKBACK_DAYS)
     if not candles:
         log.warning("%s: no real history available.", symbol)
         return None
     df = pd.DataFrame(candles).sort_values("timestamp").reset_index(drop=True)
-    log.info("%s: fetched %d real candles, %s to %s.", symbol, len(df), df["timestamp"].iloc[0], df["timestamp"].iloc[-1])
+    log.info("%s %s%d: fetched %d real candles, %s to %s.", symbol, unit[:3], interval, len(df), df["timestamp"].iloc[0], df["timestamp"].iloc[-1])
     return df
 
 
-def topup_real_equity_history(symbol: str) -> int:
-    out_path = ARCHIVE_DIR / f"{symbol}_5minute.csv"
+def topup_real_equity_history(symbol: str, unit: str, interval: int, suffix: str) -> int:
+    out_path = ARCHIVE_DIR / f"{symbol}_{suffix}.csv"
     if not out_path.exists():
-        df = download_real_equity_history(symbol)
+        df = download_real_equity_history(symbol, unit, interval)
         if df is None or df.empty:
             return 0
         ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
@@ -76,7 +81,7 @@ def topup_real_equity_history(symbol: str) -> int:
     from_date = (last_date + timedelta(days=1)).isoformat()
     to_date = date.today().isoformat()
     if from_date > to_date:
-        log.info("%s: already up to date.", symbol)
+        log.info("%s %s: already up to date.", symbol, suffix)
         return 0
 
     from services.data.candles import fetch_real_history_backward
@@ -85,14 +90,14 @@ def topup_real_equity_history(symbol: str) -> int:
     if not ikey:
         return 0
     gap_days = (date.fromisoformat(to_date) - date.fromisoformat(from_date)).days + 1
-    candles = fetch_real_history_backward(broker, ikey, "minutes", 5, max_lookback_days=gap_days)
+    candles = fetch_real_history_backward(broker, ikey, unit, interval, max_lookback_days=gap_days)
     if not candles:
         return 0
     new_df = pd.DataFrame(candles)
     combined = pd.concat([existing, new_df], ignore_index=True).drop_duplicates(subset="timestamp").sort_values("timestamp").reset_index(drop=True)
     added = len(combined) - len(existing)
     combined.to_csv(out_path, index=False)
-    log.info("%s: appended %d new rows (now %d total).", symbol, added, len(combined))
+    log.info("%s %s: appended %d new rows (now %d total).", symbol, suffix, added, len(combined))
     return added
 
 
@@ -103,17 +108,18 @@ def build_all_equity_archives(symbols: list[str] | None = None, topup: bool = Fa
     print(f"\n{'='*75}\n  {'TOPPING UP' if topup else 'BUILDING'} REAL NSE EQUITY ARCHIVES ({len(symbols)} symbols)\n{'='*75}\n")
     for symbol in symbols:
         print(f"  {symbol}...")
-        if topup:
-            added = topup_real_equity_history(symbol)
-            print(f"    +{added} new rows")
-        else:
-            df = download_real_equity_history(symbol)
-            if df is None or df.empty:
-                print(f"    No data available.")
-                continue
-            out_path = ARCHIVE_DIR / f"{symbol}_5minute.csv"
-            df.to_csv(out_path, index=False)
-            print(f"    Saved {len(df):,} candles -> {out_path.name} ({df['timestamp'].iloc[0]} to {df['timestamp'].iloc[-1]})")
+        for unit, interval, suffix in INTERVALS:
+            if topup:
+                added = topup_real_equity_history(symbol, unit, interval, suffix)
+                print(f"    {suffix}: +{added} new rows")
+            else:
+                df = download_real_equity_history(symbol, unit, interval)
+                if df is None or df.empty:
+                    print(f"    {suffix}: No data available.")
+                    continue
+                out_path = ARCHIVE_DIR / f"{symbol}_{suffix}.csv"
+                df.to_csv(out_path, index=False)
+                print(f"    {suffix}: saved {len(df):,} candles -> {out_path.name} ({df['timestamp'].iloc[0]} to {df['timestamp'].iloc[-1]})")
     print(f"\n{'='*75}\n  Done.\n{'='*75}\n")
 
 

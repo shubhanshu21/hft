@@ -3,7 +3,7 @@
 cli.py — Master Unified CLI for Multi-Asset Quantitative Trading Framework.
 
 Supports:
-  - Futures (MCX Commodity LightGBM Scalper)
+  - Futures (MCX Commodity Scalper)
   - NSE Currency Derivatives (USDINR/EURINR/GBPINR/JPYINR)
 
 Equity intraday scalping was removed 2026-09-18: even with the full NIFTY50

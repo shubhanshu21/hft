@@ -277,7 +277,6 @@ class LiveTrader:
         self.account_id = account_id
         self.direction_filter = direction_filter.lower()
         self.full_session = os.environ.get("DRYRUN_FULL_SESSION", "true").lower() in ("1", "true", "yes")
-        self.use_ml_filter = os.environ.get("DRYRUN_USE_ML_FILTER", "true").lower() in ("1", "true", "yes")
         self.max_daily_loss_pct = float(os.environ.get("MAX_DAILY_LOSS_PCT", "5.0"))
 
         self.symbol_map = _build_symbol_map()

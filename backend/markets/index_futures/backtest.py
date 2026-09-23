@@ -17,8 +17,7 @@ Differences from the currency path, both real and deliberate:
     turnover (hiked from 0.02% in Union Budget 2026, effective 2026-04-01),
     a real cost neither MCX (0.01% CTT) nor currency (STT-exempt) carries
     at this rate. See that module's docstring for the full schedule.
-  - No trained ML model exists yet -- entries are rule-based only (p_up
-    held at a neutral 0.50), same convention as currency at this stage.
+  - Entries are purely rule-based (no ML model).
   - ENTRY_THRESHOLDS starts as ONE unvalidated set (borrowed from
     currency's EURINR calibration as a reasonable starting point) applied
     to both symbols -- NOT yet per-symbol swept the way crude/gold/USDINR
@@ -105,7 +104,6 @@ def run_index_futures_backtest(
     print(f"  Capital: ₹{capital:,.0f} | Risk: {risk_pct}% | Leverage: {leverage}x | Long-Only: {long_only}")
     print(f"  Period: {period_str}")
     print(f"  Session: NSE F&O session (09:15-15:30 IST) -- equity market hours, NOT MCX/currency's 09:00 open")
-    print(f"  ML Filter: DISABLED (no trained model exists for index futures yet -- rule-based only)")
     print(f"  Entry thresholds: UNVALIDATED baseline (see ENTRY_THRESHOLDS comment) -- not yet per-symbol swept")
     print(f"  Symbols ({len(target_symbols)}): {', '.join(target_symbols)}")
     print(f"{'='*75}\n")

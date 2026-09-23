@@ -13,9 +13,7 @@ Differences from the commodity path, both real and deliberate:
   - Session: NSE currency derivatives trade 09:00-17:00 IST (no MCX-style
     evening/US-overlap session -- there's no analogous "second session" for
     a currency pair the way crude/natgas track NYMEX's evening hours).
-  - No trained ML model exists for any currency pair yet -- entries are
-    rule-based only (p_up held at a neutral 0.50 throughout, same as when
-    commodity's model file is missing/incompatible).
+  - Entries are purely rule-based (no ML model).
   - ENTRY_THRESHOLDS starts as ONE unvalidated set (borrowed from gold's
     calibration, since gold was the most robustly successful commodity
     threshold set found) applied to all four pairs -- explicitly NOT yet
@@ -151,7 +149,6 @@ def run_currency_backtest(
     print(f"  Capital: ₹{capital:,.0f} | Risk: {risk_pct}% | Leverage: {leverage}x | Long-Only: {long_only}")
     print(f"  Period: {period_str}")
     print(f"  Session: Full NSE currency session (09:00-17:00 IST)")
-    print(f"  ML Filter: DISABLED (no trained model exists for currency yet -- rule-based only)")
     print(f"  Entry thresholds: per-pair calibrated (USDINR/GBPINR 100% of credible sweep combos profitable, EURINR 56%, JPYINR unvalidated -- see ENTRY_THRESHOLDS comment)")
     print(f"  Symbols ({len(target_symbols)}): {', '.join(target_symbols)}")
     print(f"{'='*75}\n")
@@ -182,7 +179,6 @@ def run_currency_backtest(
         dmns = feat_df["dmn"].values if "dmn" in feat_df.columns else np.full(n, 25.0)
         vol_surges = feat_df["vol_surge_ratio"].values if "vol_surge_ratio" in feat_df.columns else np.full(n, 1.0)
         atrs = feat_df["atr"].values if "atr" in feat_df.columns else (feat_df["avg_range_pct"].values / 100.0) * closes
-        p_ups = np.full(n, 0.50)  # no trained model for currency yet -- always neutral, rule-based only
 
         _et = ENTRY_THRESHOLDS.get(sym.upper(), ENTRY_THRESHOLDS["USDINR"])
 
@@ -245,7 +241,6 @@ def run_currency_backtest(
             if m_open < 15 or m_open > 460:
                 continue
 
-            p_up = p_ups[i]
             adx = adxs[i]
             dmp = dmps[i]
             dmn = dmns[i]

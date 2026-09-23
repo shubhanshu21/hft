@@ -14,11 +14,10 @@ spirit.
 Uses the ONE validated, universe-wide threshold set from markets/equity/scalping/backtest.py
 (no per-stock tuning -- see markets/equity/universe.py's docstring for why),
 confirmed consistent across three independent out-of-sample periods
-(2026-09-19). Rule-based only, deliberately no ML filter -- the trained
-pooled model (ml/train_equity.py) showed real predictive power (AUC 0.81)
-but made results WORSE and even flipped the most recent test period from a
-profit to a loss when added as a filter; not used here for that reason (see
-conversation history for the full 3-fold comparison).
+(2026-09-19). Rule-based only: a pooled ML model (since removed) showed
+real predictive power (AUC 0.81) but made results WORSE and even flipped the
+most recent test period from a profit to a loss when added as a filter, so ML
+was dropped entirely (see git history for the 3-fold comparison).
 """
 from __future__ import annotations
 

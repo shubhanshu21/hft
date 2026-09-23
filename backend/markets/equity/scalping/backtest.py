@@ -41,9 +41,7 @@ rewrite was recognized as a real methodological requirement for a
 multi-symbol universe test, not an optional nicety. See run_equity_backtest's
 docstring for how entries/exits are now interleaved.
 
-No trained ML model exists yet -- rule-based only (p_up held at a neutral
-0.50), same honest-first-baseline posture markets/currency/scalping/backtest.py took before
-any threshold tuning happened.
+Entries are purely rule-based (no ML model).
 
 Usage:
     python3 -m markets.equity.scalping.backtest --symbols RELIANCE TCS
@@ -282,7 +280,6 @@ def run_equity_backtest(
     print(f"  Capital: Rs{capital:,.0f} | Risk: {risk_pct}% | Leverage: {leverage}x | Long-Only: {long_only}")
     print(f"  Period: {from_date or 'full archive'} to {to_date or 'full archive'}")
     print(f"  Session: NSE equity cash (09:15-15:30 IST, square-off 15:15)")
-    print(f"  ML Filter: DISABLED (no trained model exists for equity yet -- rule-based only)")
     print(f"  Entry thresholds: ONE shared set across the whole universe (not per-symbol -- see module docstring)")
     print(f"  Simulation: chronologically interleaved across symbols, max {_MAX_CONCURRENT_POSITIONS} concurrent positions")
     print(f"  Symbols ({len(target_symbols)}): {', '.join(target_symbols)}")

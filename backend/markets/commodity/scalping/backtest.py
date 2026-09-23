@@ -11,7 +11,7 @@ Features:
 """
 from __future__ import annotations
 
-from core.paths import ARCHIVE_ROOT, BACKEND_ROOT, CACHE_DIR
+from core.paths import ARCHIVE_ROOT, BACKEND_ROOT
 import argparse
 import os
 from datetime import datetime
@@ -66,8 +66,8 @@ ENTRY_THRESHOLDS = {
     # either) but this should NOT be read as a validated calibration the way
     # gold/silver below now are -- a real regime filter is needed before
     # trusting any fixed threshold here across unknown future regimes.
-    "crude":  {"min_ml_l": 0.54, "max_ml_s": 0.44, "min_adx": 18.0, "min_vol": 1.10, "min_orb": 0.05, "min_vwap": 0.05, "min_stop_pct": 0.0035, "min_ema_slope": 0.050, "tp_mult": 1.80, "stop_mult": 1.4},
-    "natgas": {"min_ml_l": 0.55, "max_ml_s": 0.43, "min_adx": 22.0, "min_vol": 1.70, "min_orb": 0.08, "min_vwap": 0.08, "min_stop_pct": 0.0050, "min_ema_slope": 0.050, "tp_mult": 1.80, "stop_mult": 1.4},
+    "crude":  {"min_adx": 18.0, "min_vol": 1.10, "min_orb": 0.05, "min_vwap": 0.05, "min_stop_pct": 0.0035, "min_ema_slope": 0.050, "tp_mult": 1.80, "stop_mult": 1.4},
+    "natgas": {"min_adx": 22.0, "min_vol": 1.70, "min_orb": 0.08, "min_vwap": 0.08, "min_stop_pct": 0.0050, "min_ema_slope": 0.050, "tp_mult": 1.80, "stop_mult": 1.4},
     # RECALIBRATED 2026-09-18 with a genuine train/test split, now that the
     # truncation-bug fix (see crude's comment above) revealed a real ~4-month
     # archive instead of ~1 month. Swept on TRAIN (2026-05-18 to 2026-07-31)
@@ -89,7 +89,7 @@ ENTRY_THRESHOLDS = {
     # +Rs57,669, DD 7.6%) -- not a TRAIN/TEST tradeoff, a case where TRAIN's
     # preference couldn't even be honestly checked. See conversation history
     # for the full slope sweep (0.02-0.08) on both windows.
-    "gold":   {"min_ml_l": 0.54, "max_ml_s": 0.44, "min_adx": 22.0, "min_vol": 1.70, "min_orb": 0.05, "min_vwap": 0.05, "min_stop_pct": 0.0035, "min_ema_slope": 0.040, "tp_mult": 1.80, "stop_mult": 1.4},
+    "gold":   {"min_adx": 22.0, "min_vol": 1.70, "min_orb": 0.05, "min_vwap": 0.05, "min_stop_pct": 0.0035, "min_ema_slope": 0.040, "tp_mult": 1.80, "stop_mult": 1.4},
     # RECALIBRATED 2026-09-18, same train/test discipline as gold above.
     # min_adx=18/min_vol=1.1/min_ema_slope=0.05 was picked over the raw
     # top-by-train-profit combo specifically because it generalized better
@@ -123,7 +123,7 @@ ENTRY_THRESHOLDS = {
     # (9.5% vs 8.7%) -- more trades AND a better risk-adjusted result, not a
     # tradeoff. TRAIN also credible at 0.05 (114 trades, PF 1.46) -- not a
     # TEST-only fluke. See conversation history for the full sweep.
-    "silver": {"min_ml_l": 0.54, "max_ml_s": 0.44, "min_adx": 22.0, "min_vol": 1.30, "min_orb": 0.05, "min_vwap": 0.05, "min_stop_pct": 0.0035, "min_ema_slope": 0.050, "tp_mult": 1.80, "stop_mult": 1.4},
+    "silver": {"min_adx": 22.0, "min_vol": 1.30, "min_orb": 0.05, "min_vwap": 0.05, "min_stop_pct": 0.0035, "min_ema_slope": 0.050, "tp_mult": 1.80, "stop_mult": 1.4},
     # COPPER surveyed the same (now-retracted) truncated-archive sweep: only
     # 36/180 credible combos profitable (20%) -- weaker than silver/gold even
     # before the truncation-bug correction. Not dedicated-calibrated or added
@@ -133,10 +133,10 @@ ENTRY_THRESHOLDS = {
     # "zincmini"/"nickel" keys AND matching branches below (see is_alumini
     # etc.), every one of these fell through to the "crude" fallback
     # regardless of what was swept, silently making an earlier sweep a no-op.
-    "alumini":  {"min_ml_l": 0.54, "max_ml_s": 0.44, "min_adx": 18.0, "min_vol": 1.10, "min_orb": 0.05, "min_vwap": 0.05, "min_stop_pct": 0.0035, "min_ema_slope": 0.050, "tp_mult": 1.80, "stop_mult": 1.4},
-    "leadmini": {"min_ml_l": 0.54, "max_ml_s": 0.44, "min_adx": 18.0, "min_vol": 1.10, "min_orb": 0.05, "min_vwap": 0.05, "min_stop_pct": 0.0035, "min_ema_slope": 0.050, "tp_mult": 1.80, "stop_mult": 1.4},
-    "zincmini": {"min_ml_l": 0.54, "max_ml_s": 0.44, "min_adx": 18.0, "min_vol": 1.10, "min_orb": 0.05, "min_vwap": 0.05, "min_stop_pct": 0.0035, "min_ema_slope": 0.050, "tp_mult": 1.80, "stop_mult": 1.4},
-    "nickel":   {"min_ml_l": 0.54, "max_ml_s": 0.44, "min_adx": 18.0, "min_vol": 1.10, "min_orb": 0.05, "min_vwap": 0.05, "min_stop_pct": 0.0035, "min_ema_slope": 0.050, "tp_mult": 1.80, "stop_mult": 1.4},
+    "alumini":  {"min_adx": 18.0, "min_vol": 1.10, "min_orb": 0.05, "min_vwap": 0.05, "min_stop_pct": 0.0035, "min_ema_slope": 0.050, "tp_mult": 1.80, "stop_mult": 1.4},
+    "leadmini": {"min_adx": 18.0, "min_vol": 1.10, "min_orb": 0.05, "min_vwap": 0.05, "min_stop_pct": 0.0035, "min_ema_slope": 0.050, "tp_mult": 1.80, "stop_mult": 1.4},
+    "zincmini": {"min_adx": 18.0, "min_vol": 1.10, "min_orb": 0.05, "min_vwap": 0.05, "min_stop_pct": 0.0035, "min_ema_slope": 0.050, "tp_mult": 1.80, "stop_mult": 1.4},
+    "nickel":   {"min_adx": 18.0, "min_vol": 1.10, "min_orb": 0.05, "min_vwap": 0.05, "min_stop_pct": 0.0035, "min_ema_slope": 0.050, "tp_mult": 1.80, "stop_mult": 1.4},
 }
 # min_ema_slope was a hardcoded 0.010 literal (both symbols, not asset-
 # calibrated like everything else in this dict) until 2026-09-17. Root-caused
@@ -178,7 +178,6 @@ def run_commodity_backtest(
     from_date: str | None = None,
     to_date: str | None = None,
     size_mode: str = "margin",
-    no_ml_filter: bool = False,  # diagnostic only: drop the p_up condition, keep every other rule-based filter -- see conversation history for why/when
     return_trades: bool = False,  # diagnostic only: include the full per-trade list (with entry-signal diagnostics) in the result -- see conversation history 2026-09-17, loss-pattern analysis
     confirm_silver_with_gold: bool = False,  # SILVER only: require GOLD's own ema_slope_pct to agree in
     # sign with the entry direction. Tested 2026-09-18 (gold/silver co-movement is a real, documented
@@ -291,7 +290,6 @@ def run_commodity_backtest(
     print(f"  Capital: ₹{capital:,.0f} | Risk: {risk_pct}% | Leverage: {leverage}x | Long-Only: {long_only}")
     print(f"  Period: {period_str}")
     print(f"  Session: {'US/Evening Overlap (18:30-22:00 IST)' if us_session_only else 'Full Session (09:00-23:30)'}")
-    print(f"  ML Filter: {'DISABLED (rule-based only)' if no_ml_filter else 'enabled'}")
     print(f"  Symbols ({len(target_symbols)}): {', '.join(target_symbols)}")
     print(f"{'='*75}\n")
 
@@ -338,39 +336,6 @@ def run_commodity_backtest(
         dmns = feat_df["dmn"].values if "dmn" in feat_df.columns else np.full(n, 25.0)
         vol_surges = feat_df["vol_surge_ratio"].values if "vol_surge_ratio" in feat_df.columns else np.full(n, 1.0)
         atrs = feat_df["atr"].values if "atr" in feat_df.columns else (feat_df["avg_range_pct"].values / 100.0) * closes
-
-        # Load LightGBM model if available
-        model_path = CACHE_DIR / "commodity_models" / f"lgb_{sym.lower()}.pkl"
-        if not model_path.exists():
-            model_path = CACHE_DIR / "commodity_models" / f"lgb_{base_sym.lower()}.pkl"
-
-        model = None
-        if model_path.exists():
-            import pickle
-            try:
-                with open(model_path, "rb") as f:
-                    model = pickle.load(f)
-            except Exception:
-                model = None
-
-        from markets.commodity.features import COMMODITY_FEATURE_COLUMNS
-        X_feats = feat_df[COMMODITY_FEATURE_COLUMNS] if model else None
-        if model and X_feats is not None:
-            try:
-                p_ups = model.predict_proba(X_feats)[:, 1]
-            except Exception as e:
-                # Found 2026-09-17 surveying GOLDM/SILVERMIC/COPPER: stale model
-                # files from 2026-09-08 (var/cache/commodity_models/lgb_gold.pkl etc.)
-                # were trained on an older 28-feature schema; COMMODITY_FEATURE_COLUMNS
-                # is now 33. That crashed the WHOLE backtest even with
-                # no_ml_filter=True, which is wrong -- when ML isn't usable, this
-                # should fall back to rule-based-only (p_up=0.50neutral), the same
-                # as when no model file exists at all, not raise.
-                log_msg = f"{sym}: ML model at {model_path} incompatible with current features ({e}); falling back to rule-based-only (p_up=0.50)."
-                print(f"  \033[93m[warn]\033[0m {log_msg}")
-                p_ups = np.full(n, 0.50)
-        else:
-            p_ups = np.full(n, 0.50)
 
         for i in range(25, n):
             c_price = closes[i]
@@ -421,7 +386,7 @@ def run_commodity_backtest(
                         "total_fees": cost_info["total"],
                         "net_pnl": net_pnl,
                         "reason": reason,
-                        "p_up": pos.get("diag_p_up"), "adx": pos.get("diag_adx"),
+                        "adx": pos.get("diag_adx"),
                         "rsi": pos.get("diag_rsi"), "ema_slope": pos.get("diag_ema_slope"),
                         "vwap_dist": pos.get("diag_vwap_dist"), "vol_surge": pos.get("diag_vol_surge"),
                         "mins_since_open": pos.get("diag_mins_since_open"),
@@ -451,8 +416,7 @@ def run_commodity_backtest(
             elif not us_session_only and (m_open < 60 or m_open > 810):
                 continue
 
-            # 3. High-Conviction Trend & Machine Learning Filter (70%+ Win Rate Target)
-            p_up = p_ups[i]
+            # 3. High-conviction trend filters (rule-based)
             adx = adxs[i]
             dmp = dmps[i]
             dmn = dmns[i]
@@ -492,8 +456,6 @@ def run_commodity_backtest(
                 _et = ENTRY_THRESHOLDS["nickel"]
             else:
                 _et = ENTRY_THRESHOLDS["crude"]  # default/fallback for anything not yet dedicated-calibrated
-            min_ml_l = _et["min_ml_l"]
-            max_ml_s = _et["max_ml_s"]
             min_adx = _et["min_adx"]
             min_vol = _et["min_vol"]
             min_orb = _et["min_orb"]
@@ -580,7 +542,7 @@ def run_commodity_backtest(
                 # per trade -- added 2026-09-17 so losing trades can be
                 # analyzed for patterns instead of only seeing aggregate
                 # win-rate/PnL. Never read by the trading logic itself.
-                "diag_p_up": p_up, "diag_adx": adx, "diag_rsi": rsis[i],
+                "diag_adx": adx, "diag_rsi": rsis[i],
                 "diag_ema_slope": ema_s, "diag_vwap_dist": vwap_d,
                 "diag_vol_surge": vol_s, "diag_mins_since_open": mins_open[i],
             }
@@ -720,11 +682,6 @@ def main():
     parser.add_argument("--to", "--to-date", "--end-date", dest="to_date", default=None, help="End date (YYYY-MM-DD), e.g. 2024-12-31")
     parser.add_argument("--year", type=int, default=None, help="Backtest a specific year (e.g. 2024, 2025)")
     parser.add_argument("--size-mode", choices=["risk", "margin"], default="risk", help="Position sizing mode: 'risk' (pure risk budget sizing) or 'margin' (capped by broker margin)")
-    parser.add_argument("--no-ml-filter", dest="no_ml_filter", action="store_true",
-                         default=os.environ.get("BACKTEST_USE_ML_FILTER", "true").lower() not in ("1", "true", "yes"),
-                         help="Drop the ML p_up condition, keep every other rule-based filter (or set BACKTEST_USE_ML_FILTER=false in .env)")
-    parser.add_argument("--use-ml-filter", dest="no_ml_filter", action="store_false",
-                         help="Force the ML p_up condition back on, overriding BACKTEST_USE_ML_FILTER=false in .env")
     parser.add_argument("--confirm-silver-with-gold", action="store_true",
                          help="SILVER only: require GOLD's ema_slope_pct to agree with the entry direction (see ENTRY_THRESHOLDS module docstring for the train/test result)")
     parser.add_argument("--use-crude-regime-filter", action="store_true",
@@ -752,7 +709,6 @@ def main():
         from_date=from_d,
         to_date=to_d,
         size_mode=args.size_mode,
-        no_ml_filter=args.no_ml_filter,
         confirm_silver_with_gold=args.confirm_silver_with_gold,
         use_crude_regime_filter=args.use_crude_regime_filter,
     )

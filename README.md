@@ -36,7 +36,7 @@ The framework provides an end-to-end quantitative trading infrastructure:
 - **Dynamic Exchange Master Resolution**: downloads and parses the official Upstox `MCX.csv.gz` daily master, automatically resolving the current front-month contract for each commodity as older ones expire.
 - **Production-Grade Risk & Execution**: position sizing via risk budgeting and broker margin/leverage constraints, take-profits, breakeven locks, and trailing stops.
 - **Realistic Statutory Cost Model**: itemizes CTT, Brokerage caps, Stamp Duty, Exchange Turnover fees, SEBI fees, 18% GST, and slippage matching the official Upstox brokerage calculator.
-- **Layered live-trading kill switch** (`safety_gate.py`): three independent gates (a source-code constant, an `.env` flag, and an explicit armed-state file created via `cli.py arm-live-trading`) must all agree before any code path is allowed to place a real (non-paper) order.
+- **Layered live-trading kill switch** (`engine/safety_gate.py`): three independent gates (a source-code constant, an `.env` flag, and an explicit armed-state file created via `cli.py arm-live-trading`) must all agree before any code path is allowed to place a real (non-paper) order.
 
 ---
 
@@ -102,7 +102,7 @@ backend/
 
 ## Supported Instruments & Trading Profiles
 
-Every symbol below is calibrated with its **own** entry thresholds in `markets/commodity/scalping/backtest.py`'s `ENTRY_THRESHOLDS` dict (mirrored in `live_dryrun.py`) — nothing is shared across symbols by assumption; each was validated independently on real data.
+Every symbol below is calibrated with its **own** entry thresholds in `markets/commodity/scalping/backtest.py`'s `ENTRY_THRESHOLDS` dict (mirrored in `engine/live_dryrun.py`) — nothing is shared across symbols by assumption; each was validated independently on real data.
 
 ### Live-traded (`DRYRUN_SYMBOLS` in `.env`)
 
@@ -149,7 +149,7 @@ Structurally different from commodity/currency in three ways, all deliberate:
 
 **Why the original version failed, root-caused (not just re-asserted):** beyond the circular universe selection above, its untuned entry rules generated ~7,700 trades over 4 years averaging just ₹4.07 gross profit each — but ₹17.02 in fees each (mostly Upstox's flat ~₹20-per-leg brokerage cap). Every trade had negative expected value after costs, so capital was mathematically guaranteed to decay toward zero over enough trades, confirmed by testing risk-per-trade from 0.5% to 5% and concurrency caps from 3 to 10 — all converged to the same near-total wipeout. The fix wasn't better risk management, it was fewer, higher-conviction trades (`min_ema_slope` raised to 0.22, a much stronger trend-strength requirement) so each trade's edge meaningfully exceeds the flat fee floor.
 
-**ML was tried and deliberately NOT used.** A LightGBM model trained on the pooled 2.64M-row dataset (`ml/train_equity.py`) shows real signal (ROC-AUC 0.81, ~3x precision lift over the 4.3% base rate) — but adding it as an entry filter made results *worse* on 1 of 3 test folds, including flipping the most recent period from a +₹195k profit to a -₹15k loss. Equity runs rule-based only, same posture as currency.
+**ML was tried and deliberately NOT used.** A LightGBM model trained on the pooled 2.64M-row dataset (`ml/train_equity.py`, since removed) shows real signal (ROC-AUC 0.81, ~3x precision lift over the 4.3% base rate) — but adding it as an entry filter made results *worse* on 1 of 3 test folds, including flipping the most recent period from a +₹195k profit to a -₹15k loss. Equity runs rule-based only, same posture as currency.
 
 **Session**: 09:15–15:30 IST (NSE cash hours), entries gated 09:30–15:15, square-off 15:15.
 
@@ -173,59 +173,98 @@ $$\text{Executed Lots} = \max(1, \min(\text{Lots by Risk}, \text{Lots by Margin}
 
 ## Environment Configuration (`.env`)
 
-Everything the CLI needs to run with **zero flags** lives in `backend/.env` (copy `backend/.env.example` to start). Any CLI flag you *do* pass overrides its `.env` value for that one run only — `.env` is the default, flags are the override.
+Copy `backend/.env.example` to `backend/.env` and fill it in — the template lists every variable the code reads, with the recommended value. Any CLI flag overrides its `.env` value for that run only. **Changing `.env` needs a daemon restart** (`systemctl --user restart hft-dryrun.service`). Two rules when editing: put comments on their own line (a `KEY=   # comment` with an empty value is read as the comment text by python-dotenv), and set the risk / regime / equity variables explicitly, because `engine/live_dryrun.py` and `engine/live_trading.py` have different built-in defaults for some of them.
+
+The daily Upstox access token is **not** in `.env`: it is cached in `var/cache/upstox_token.json` by `services/auth/`.
 
 ### Broker Credentials
-| Variable | Purpose |
+
+| Variable | Description |
 |---|---|
 | `UPSTOX_API_KEY` / `UPSTOX_API_SECRET` | OAuth2 app credentials from [developer.upstox.com](https://developer.upstox.com/). |
-| `UPSTOX_REDIRECT_URI` | OAuth2 redirect URL registered with your Upstox app. |
-| `UPSTOX_USERNAME` / `UPSTOX_PIN` / `UPSTOX_TOTP_SECRET` | Optional — enables `services/auth/upstox_auto_login.py`'s headless daily token refresh (Selenium). Leave all three blank to do the manual `python3 -m auth.upstox_auth` refresh instead. **`TOTP_SECRET` is your 2FA seed — combined with `PIN` it's permanent full login access to the real account, treat it like a password.** `ACCESS_TOKEN` itself is *not* stored in `.env` — it's cached at `var/cache/upstox_token.json` and rewritten daily by the auth flow. |
+| `UPSTOX_REDIRECT_URI` | OAuth2 redirect URL registered with your Upstox app (default `https://127.0.0.1/`). |
+| `UPSTOX_USERNAME` / `UPSTOX_PIN` / `UPSTOX_TOTP_SECRET` | Optional — enable `services/auth/upstox_auto_login.py`'s headless daily token refresh (Selenium + TOTP). Leave blank to refresh manually with `python3 -m services.auth.upstox_auth`. **Security:** the TOTP secret plus PIN is permanent full login access to the account. |
+| `UPSTOX_ACCESS_TOKEN` | Fallback only, used if `var/cache/upstox_token.json` doesn't exist yet. Leave blank. |
+
+Upstox keeps **one active access token per app**: a login from anywhere else invalidates the token the daemon holds. Never run a second copy of the daemon (or a second systemd scope) against the same credentials — the two would log in over and over and invalidate each other every 15 minutes.
 
 ### Shared Trading Parameters
-| Variable | Default | Used by |
+
+| Variable | Built-in default | Description |
 |---|---|---|
 | `TRADING_CAPITAL` | `100000.0` | `--capital` default for `backtest`, `dryrun`, `reset-db`. |
-| `INTRADAY_LEVERAGE` | `4.0` | `--leverage` fallback for all three — used whenever the command-specific `BACKTEST_LEVERAGE`/`DRYRUN_LEVERAGE` below is blank. |
-| `TRADING_DIRECTION` | `both` | `--direction` default for `dryrun` (`both` / `long` / `short`). |
+| `INTRADAY_LEVERAGE` | `4.0` (CLI) | `--leverage` fallback whenever `BACKTEST_LEVERAGE` / `DRYRUN_LEVERAGE` is blank. |
+| `TRADING_DIRECTION` | `both` | `both` / `long-only` / `short-only`. |
+| `ALLOW_SHORTS` | `true` | `false` = never open a short, whatever `TRADING_DIRECTION` says. |
 
-### Backtest Defaults (`cli.py backtest`)
-| Variable | Default | Meaning |
+### Backtest Defaults (`cli.py backtest`, MCX commodity)
+
+NSE currency and equity are backtested standalone (`python3 -m markets.currency.scalping.backtest`, `python3 -m markets.equity.scalping.backtest`).
+
+| Variable | Built-in default | Description |
 |---|---|---|
-| `BACKTEST_SYMBOLS` | *(blank)* | Space-separated MCX symbol override, e.g. `CRUDEOILM GOLDM`. Blank = default list. Currency is backtested standalone — run `markets/currency/scalping/backtest.py` directly (see [Unified CLI Cheat Sheet](#unified-cli-cheat-sheet)). |
+| `BACKTEST_SYMBOLS` | *(blank)* | Space-separated symbols, e.g. `CRUDEOILM GOLDM`. Blank = default list. |
 | `BACKTEST_RISK_PCT` | `5.0` | Risk % per trade. |
-| `BACKTEST_LEVERAGE` | `4.0` | Margin leverage for backtests specifically. Blank = fall back to `INTRADAY_LEVERAGE`. |
-| `BACKTEST_FROM` / `BACKTEST_TO` | *(blank)* | `YYYY-MM-DD` date range. Blank = full available history. |
-| `BACKTEST_FULL_SESSION` | `true` | `true` = full 10:00–22:30 IST session (more total profit, more trades, lower win rate); `false` = evening US-overlap window only (18:30–22:00 IST, fewer/cleaner trades). |
-| `BACKTEST_USE_ML_FILTER` | `false` | Commodity only: drop the ML `p_up` condition, keep every other rule-based filter. The ML filter underperformed rule-based-only on real data as of 2026-09-10; revisit once the real archive is substantially larger. |
+| `BACKTEST_LEVERAGE` | *(blank)* | Blank = `INTRADAY_LEVERAGE`. |
+| `BACKTEST_FROM` / `BACKTEST_TO` | *(blank)* | `YYYY-MM-DD`. Blank = full archive. |
+| `BACKTEST_FULL_SESSION` | `false` | `true` = full MCX session; `false` = evening US-overlap window only. Keep equal to `DRYRUN_FULL_SESSION`. |
 
-### Dry Run Defaults (`cli.py dryrun`)
-| Variable | Default | Meaning |
+### Dry Run (`cli.py dryrun`, the 24/7 daemon)
+
+| Variable | Built-in default | Description |
 |---|---|---|
-| `DRYRUN_RISK_PCT` | `10.0` | Risk % per trade. |
-| `DRYRUN_LEVERAGE` | `7.0` | Margin leverage for live dry run specifically. Blank = fall back to `INTRADAY_LEVERAGE`. |
+| `DRYRUN_SYMBOLS` | *(blank)* | MCX + currency symbols, e.g. `CRUDEOILM GOLDM SILVER USDINR`. Currency pairs are detected by name. |
+| `DRYRUN_INCLUDE_EQUITY` | `false` (dry run) | `true` = also trade the fixed NIFTY50 universe (49 names). Extends `DRYRUN_SYMBOLS` rather than replacing it. |
+| `DRYRUN_RISK_PCT` | `5.0` | Risk % per trade. |
+| `DRYRUN_LEVERAGE` | *(blank)* | Blank = `INTRADAY_LEVERAGE`. |
 | `DRYRUN_INTERVAL` | `30` | Scan interval, seconds. |
-| `DRYRUN_SYMBOLS` | `CRUDEOILM GOLDM USDINR EURINR GBPINR` | Space-separated symbol override. Currency pairs are auto-detected by symbol name (`USDINR`/`EURINR`/`GBPINR`/`JPYINR`) and routed to the currency cost model + 09:00-17:00 session automatically — no separate `--asset currency` flag needed, just list them alongside commodity symbols. |
-| `DRYRUN_FULL_SESSION` | `true` | See [Session window](#session-window) above. |
-| `DRYRUN_USE_ML_FILTER` | `false` | Mirrors `BACKTEST_USE_ML_FILTER`. |
-| `DRYRUN_INCLUDE_EQUITY` | `true` | Extends whichever symbols `DRYRUN_SYMBOLS` already lists with the full NIFTY50 universe (49 names — see [NSE Equity](#nse-equity-nifty50-intraday-scalping-backtest_equitypy-one-shared-entry_thresholds)) rather than replacing them; equity runs alongside commodity/currency, not instead of. Set `false` to disable equity without touching `DRYRUN_SYMBOLS`. |
+| `DRYRUN_FULL_SESSION` | `true` | Full MCX session vs evening-only — see [Session window](#session-window). |
 
-### Safety Limits (dry run daemon)
-| Variable | Default | Meaning |
+### Per-Market Risk, Leverage and Switches
+
+| Variable | Built-in default | Description |
 |---|---|---|
-| `MAX_MARKET_DAILY_LOSS_PCT` | `3.0` | Threshold (% of day's starting capital) of realized loss in a specific market (Commodity, Currency, or Equity) that triggers a market-specific cooldown. |
-| `MARKET_COOLDOWN_MINUTES` | `60` | Duration (minutes) to pause new entries in the tripped market. Other markets remain fully active. Automatically resumes when expired. |
-| `MAX_PORTFOLIO_HEAT_PCT` | `8.0` | Portfolio heat cap: total open risk (sum of stop distances) across all open positions cannot exceed this % of capital. |
-| `MAX_DAILY_LOSS_PCT` | `5.0` | Global account-wide daily loss kill switch threshold (% of starting capital). |
-| `TOKEN_CHECK_INTERVAL_MIN` | `15` | How often (minutes) the running daemon proactively re-validates its Upstox token; also re-checked immediately if the broker's 401 circuit breaker trips. Auto-refreshes via headless login if `UPSTOX_USERNAME`/`PIN`/`TOTP_SECRET` are set, otherwise alerts you via Telegram to refresh manually. |
+| `COMMODITY_RISK_PCT` / `CURRENCY_RISK_PCT` / `EQUITY_RISK_PCT` | `DRYRUN_RISK_PCT` | Risk % per trade for that market. Per-symbol overrides (e.g. SILVER, CRUDEOILM) live in code: `_SYMBOL_RISK_PCT_OVERRIDE` / `_SYMBOL_LEVERAGE_OVERRIDE` in `engine/live_dryrun.py`. |
+| `COMMODITY_LEVERAGE` / `CURRENCY_LEVERAGE` / `EQUITY_LEVERAGE` | resolved `DRYRUN_LEVERAGE` | Leverage for that market. |
+| `ENABLE_COMMODITY_TRADING` / `ENABLE_CURRENCY_TRADING` | `true` | `false` = no new entries for that market (open positions are still managed). |
+| `ENABLE_EQUITY_TRADING` | follows `DRYRUN_INCLUDE_EQUITY` | Same, for equity. |
+
+### Strategy Switches
+
+| Variable | Built-in default | Description |
+|---|---|---|
+| `USE_COMMODITY_REGIME_FILTER` | `false` (dry run) | Daily-return-autocorrelation regime gate (`core/regime.py`). **Effective for CRUDEOILM only** — validated for crude; extending it to GOLDM/SILVER was tested and reverted (hurts SILVER, no benefit for GOLDM/USDINR). The old name `USE_CRUDE_REGIME_FILTER` is still read as a fallback. |
+| `USE_EQUITY_REGIME_FILTER` | `false` | Same gate on the NIFTY50 index for all equity entries. Unvalidated. |
+| `ENABLE_MEAN_REVERSION` | `true` in code — **`.env` sets `false`** | VWAP/RSI mean-reversion setup for commodity and equity. Off: it failed out-of-sample on crude (TRAIN PF 2.28 → TEST PF 0.96) and had too few trades elsewhere. Thresholds are hardcoded in the `entry_signal` modules, not env vars. |
+
+### Safety Limits and Money Management (dry run daemon)
+
+| Variable | Built-in default | Description |
+|---|---|---|
+| `MAX_DAILY_LOSS_PCT` | `5.0` | Account-wide daily loss kill switch (% of day-start capital). Halts new entries; open positions are still managed. |
+| `MAX_MARKET_DAILY_LOSS_PCT` | `3.0` | Same, per market (commodity / currency / equity): that market pauses, the others keep trading. |
+| `MARKET_COOLDOWN_MINUTES` | `60` | Pause length after a per-market breach; 1.5x at 150% of the limit, 2x at 200%+. |
+| `MAX_PORTFOLIO_HEAT_PCT` | `8.0` | Total stop-distance risk across **all** open positions, % of capital. Researched range: 4–8% swing, up to ~10% for tight-stop scalpers. |
+| `MAX_MARGIN_UTILIZATION_PCT` | `90.0` | Total margin committed across all open positions, % of capital — margin is one shared pool, not one per market. |
+| `MAX_MARKET_MARGIN_UTILIZATION_PCT` | `50.0` | Per-market sub-cap so one market can't crowd out the others. Override per market with `COMMODITY_MAX_MARGIN_PCT` / `CURRENCY_MAX_MARGIN_PCT` / `EQUITY_MAX_MARGIN_PCT`. |
+| `MAX_POSITIONS_PER_SECTOR` | `1` | Max concurrent open equity positions in one sector (`core/sector_correlation.py`). |
+| `TOKEN_CHECK_INTERVAL_MIN` | `15` | How often the daemon re-validates its Upstox token; also re-checked immediately on a broker 401. |
+| `SPREAD_SAMPLE_INTERVAL_MIN` | `5` | How often live bid/ask is sampled per symbol **while its market is open**, feeding the adaptive slippage model (`var/logs/spread_samples.csv`). |
+
+Drawdown-scaled position sizing (5 / 10 / 15% drawdown → 10 / 25 / 50% smaller size) is always on and has no switch.
 
 ### Telegram Alerts (optional)
-| Variable | Meaning |
-|---|---|
-| `TELEGRAM_BOT_TOKEN` | From [@BotFather](https://t.me/BotFather). |
-| `TELEGRAM_CHAT_ID` | Message your bot once, then `GET https://api.telegram.org/bot<TOKEN>/getUpdates` to find your chat ID. |
 
-Blank = alerts silently disabled, everything else runs fine without them. See [Telegram Alerts & Equity Curve Chart](#telegram-alerts--equity-curve-chart).
+| Variable | Description |
+|---|---|
+| `TELEGRAM_BOT_TOKEN` | From [@BotFather](https://t.me/BotFather). Blank = alerts disabled. |
+| `TELEGRAM_CHAT_ID` | Message your bot once, then open `https://api.telegram.org/bot<TOKEN>/getUpdates` to find it. |
+
+### Live Trading Gate
+
+| Variable | Default | Description |
+|---|---|---|
+| `ALLOW_LIVE_TRADING` | `false` | Gate 2 of 3 (Gate 1 is `KILL_SWITCH_ENGAGED` in `engine/safety_gate.py`, Gate 3 is the armed-state file from `cli.py arm-live-trading`). Read `docs/LIVE_TRADING_ARMING.md` in full before touching it. |
 
 ---
 
@@ -256,7 +295,7 @@ python3 cli.py backtest                                                  # every
 python3 cli.py backtest --symbols CRUDEOILM GOLDM --from 2026-08-17 --to 2026-09-17
 ```
 
-### 2. `cli.py dryrun` — Live paper-trading (delegates to `live_dryrun.py`)
+### 2. `cli.py dryrun` — Live paper-trading (delegates to `engine/live_dryrun.py`)
 
 ```bash
 python3 cli.py dryrun [--symbols SYM [SYM ...]]
@@ -294,14 +333,14 @@ python3 cli.py reset-db [--db PATH] [--account ID] [--capital N] [--risk-pct N] 
 python3 cli.py arm-live-trading --component {upstox,ALL} --confirm "I UNDERSTAND THIS PLACES REAL ORDERS WITH REAL MONEY"
 python3 cli.py disarm-live-trading [--component {upstox,ALL}]
 ```
-Arming the state file is only **one** of three independent gates — `safety_gate.KILL_SWITCH_ENGAGED` must also be hand-edited to `False` in source (and redeployed), and `ALLOW_LIVE_TRADING=true` must be set in `.env`. All three must agree before any broker call is allowed to place a real order; a caller requesting `dry_run=True` is always honored regardless of gate state. See `safety_gate.py`.
+Arming the state file is only **one** of three independent gates — `engine.safety_gate.KILL_SWITCH_ENGAGED` must also be hand-edited to `False` in source (and redeployed), and `ALLOW_LIVE_TRADING=true` must be set in `.env`. All three must agree before any broker call is allowed to place a real order; a caller requesting `dry_run=True` is always honored regardless of gate state. See `engine/safety_gate.py`.
 
-### 5. `live_dryrun.py` directly (what `cli.py dryrun` calls under the hood)
+### 5. `engine/live_dryrun.py` directly (what `cli.py dryrun` calls under the hood)
 
 Useful when you need a flag `cli.py dryrun` doesn't expose yet (`--long-only`, `--db`, `--account`, `--token`):
 
 ```bash
-python3 live_dryrun.py [--token TOKEN] [--capital N] [--risk-pct N] [--leverage N]
+python3 -m engine.live_dryrun [--token TOKEN] [--capital N] [--risk-pct N] [--leverage N]
                         [--symbols SYM [SYM ...]] [--db PATH] [--account ID]
                         [--long-only] [--direction {both,long,short}]
                         [--interval N] [--report] [--reset-db]
@@ -316,9 +355,9 @@ python3 live_dryrun.py [--token TOKEN] [--capital N] [--risk-pct N] [--leverage 
 
 ```bash
 # Examples
-python3 live_dryrun.py --capital 100000 --risk-pct 10.0 --leverage 7.0 --interval 30
-python3 live_dryrun.py --report --account DRYRUN_ACCOUNT
-python3 live_dryrun.py --reset-db --capital 100000
+python3 -m engine.live_dryrun --capital 100000 --risk-pct 4.0 --leverage 5.0 --interval 30
+python3 -m engine.live_dryrun --report --account DRYRUN_ACCOUNT
+python3 -m engine.live_dryrun --reset-db --capital 100000
 ```
 
 ### 6. Backtest scripts directly (`markets/commodity/scalping/backtest.py`, `markets/currency/scalping/backtest.py`, `markets/equity/scalping/backtest.py`)
@@ -345,7 +384,7 @@ python3 -m markets.equity.scalping.backtest --capital 100000 --risk-pct 5.0 --le
 
 ## Running 24/7 as a systemd Service
 
-`live_dryrun.py` is a long-running daemon (it loops across trading days on its own, sleeping through nights/weekends), so it's meant to run under a process supervisor — **not** `nohup`. A `systemd --user` service gives you: survives terminal logout, auto-restarts on crash, centralized logs via `journalctl`, and starts on boot.
+`engine/live_dryrun.py` is a long-running daemon (it loops across trading days on its own, sleeping through nights/weekends), so it's meant to run under a process supervisor — **not** `nohup`. A `systemd --user` service gives you: survives terminal logout, auto-restarts on crash, centralized logs via `journalctl`, and starts on boot.
 
 ### Unit files live in the repo, not just in systemd's directory
 
@@ -354,7 +393,7 @@ All unit files are checked into **`backend/deploy/systemd/`** — not hidden awa
 | Unit | Type | Purpose | Schedule |
 |---|---|---|---|
 | `hft-dryrun.service` | persistent daemon | Runs `cli.py dryrun` — the 24/7 paper-trading loop | Always on (`Restart=always`) |
-| `hft-daily-data-topup.service` + `.timer` | oneshot + timer | Runs `markets/commodity/data.py --topup` (MCX) then `markets/currency/data.py --topup` (NSE currency) — two `ExecStart=` lines in one job — appending the day's real candles (1min/5min/15min/1day) to `var/archive/commodity/*.csv` / `var/archive/currency/*.csv` for all tracked symbols | Daily, 00:30 IST |
+| `hft-daily-data-topup.service` + `.timer` | oneshot + timer | Runs `--topup` for every market in one job (`markets/commodity/data.py`, `markets/currency/data.py`, `markets/index_futures/data.py`, `markets/equity/data.py`, plus `engine/backup_db.py`) — one `ExecStart=` each — appending the day's real candles to `var/archive/<market>/<SYMBOL>_<timeframe>.csv`. Timeframes: **1min, 3min, 5min, 15min, 1day** for commodity/currency/index futures; **3min and 5min** for equity. A missing timeframe file is backfilled automatically on the next run | Daily, 00:30 IST |
 
 ### First-time setup on a new machine
 
@@ -398,7 +437,7 @@ systemctl --user daemon-reload                          # after creating/editing
 systemctl --user enable hft-dryrun.service               # start automatically on boot/login
 systemctl --user start hft-dryrun.service                 # start now
 systemctl --user stop hft-dryrun.service                  # graceful stop (SIGTERM -> clean shutdown + Telegram alert)
-systemctl --user restart hft-dryrun.service                # e.g. after editing live_dryrun.py or .env
+systemctl --user restart hft-dryrun.service                # e.g. after editing engine/live_dryrun.py or .env
 systemctl --user status hft-dryrun.service --no-pager      # is it running, PID, recent log lines
 journalctl --user -u hft-dryrun.service -f                  # follow logs live
 journalctl --user -u hft-dryrun.service --no-pager -n 100    # last 100 lines
@@ -414,16 +453,16 @@ journalctl --user -u hft-daily-data-topup.service --no-pager -n 50       # last 
 
 ## Safety Features (Dry Run)
 
-Built into `live_dryrun.py`'s `DryRunner`/`main()` — all active by default, no flags needed:
+Built into `engine/live_dryrun.py`'s `DryRunner`/`main()` — all active by default, no flags needed:
 
 - **Process lock** — refuses to start a second dry-run process for the same `--account`, so a forgotten stray process (or a re-run before the old one exited) can't double-trade the same account. Lock file: `data/.<ACCOUNT_ID>.lock`.
 - **Daily-loss kill switch** (`MAX_DAILY_LOSS_PCT`) — halts *new* entries for the rest of the day once realized loss hits the configured % of the day's starting capital. Open positions still get managed/exited normally. Sends a Telegram alert once when tripped, resets automatically the next trading day.
 - **Token refresh loop** (`TOKEN_CHECK_INTERVAL_MIN`) — proactively re-validates the Upstox token on a timer, or immediately if the broker's 401 circuit breaker trips. Auto-refreshes via headless login if `UPSTOX_USERNAME`/`PIN`/`TOTP_SECRET` are configured; otherwise alerts via Telegram that a manual `python3 -m auth.upstox_auth` is needed.
 - **Graceful shutdown** — both Ctrl-C and `systemctl stop` (SIGTERM) trigger a clean exit with a Telegram alert, not an unhandled crash. The SIGTERM handler is one-shot (re-arms to `SIG_IGN` after the first signal) so a second signal arriving mid-shutdown can't inject a second async exception into the cleanup path.
 - **Real, auto-updating holiday calendar** (`services/utils/market_holidays.py`) — the overnight day-rollover loop used to only skip Sunday (an admitted gap in an earlier version of its own comment); it now also skips Saturday and every real NSE/CDS/MCX trading holiday, sourced live from Upstox's own public holiday API (`GET /v2/market/holidays`, no auth needed) rather than a hand-maintained list. Never hardcodes a year — always reflects whatever year it currently is, cached and refetched automatically once a day (and across a year boundary).
-- **Layered live-trading kill switch** (`safety_gate.py`) — see [`cli.py arm-live-trading`](#4-cliparm-live-trading--disarm-live-trading--the-layered-kill-switch) above.
+- **Layered live-trading kill switch** (`engine/safety_gate.py`) — see [`cli.py arm-live-trading`](#4-cliparm-live-trading--disarm-live-trading--the-layered-kill-switch) above.
 
-> **Note on scope**: this is a paper-trading system end to end — `UpstoxBroker` is always constructed with `dry_run=True` (enforced independently by `safety_gate.py` even if a caller ever requested otherwise), and no code path currently places real orders. These safety features harden the *paper* daemon (crash alerting, daily-loss discipline, token hygiene); they are prerequisites for eventually going live, not a live-trading switch.
+> **Note on scope**: this is a paper-trading system end to end — `UpstoxBroker` is always constructed with `dry_run=True` (enforced independently by `engine/safety_gate.py` even if a caller ever requested otherwise), and no code path currently places real orders. These safety features harden the *paper* daemon (crash alerting, daily-loss discipline, token hygiene); they are prerequisites for eventually going live, not a live-trading switch.
 
 ---
 
@@ -441,10 +480,10 @@ Set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` in `.env` (see [Environment Conf
 | Token refresh failed | 🔴 |
 | End of trading day | 🏁 trade count, total PnL, balance (sourced from the DB, not an in-memory counter — survives a mid-session restart) — **plus the equity curve chart as a photo** |
 
-The equity curve (`services/utils/chart.py`) is a matplotlib line chart built from `database.py`'s `portfolio_snapshots` table (one row recorded per trade close), aggregated to **one point per calendar day** (that day's end-of-day capital) spanning from the first trading day through today — not a noisy per-trade intraday chart. It's regenerated and sent to Telegram at the end of every trading day, and also saved to `logs/equity_<ACCOUNT_ID>.png` on every `--report` call:
+The equity curve (`services/utils/chart.py`) is a matplotlib line chart built from `engine/database.py`'s `portfolio_snapshots` table (one row recorded per trade close), aggregated to **one point per calendar day** (that day's end-of-day capital) spanning from the first trading day through today — not a noisy per-trade intraday chart. It's regenerated and sent to Telegram at the end of every trading day, and also saved to `logs/equity_<ACCOUNT_ID>.png` on every `--report` call:
 
 ```bash
-python3 live_dryrun.py --report --commodity --account DRYRUN_ACCOUNT
+python3 -m engine.live_dryrun --report --commodity --account DRYRUN_ACCOUNT
 # -> prints the dashboard AND saves var/logs/equity_DRYRUN_ACCOUNT.png
 ```
 
@@ -545,7 +584,7 @@ Currency derivatives carry the lightest friction of the three — no STT/CTT at 
 
 ### NSE Currency Derivatives (24-60 days depending on pair, per-pair calibrated thresholds)
 
-Same capital/risk/leverage as above; `markets/currency/scalping/backtest.py`, no ML filter (no trained model exists yet for currency).
+Same capital/risk/leverage as above; `markets/currency/scalping/backtest.py` (rule-based).
 
 | Pair | Trades | Win Rate | Profit Factor | Net Realized | Max Drawdown |
 |---|---|---|---|---|---|

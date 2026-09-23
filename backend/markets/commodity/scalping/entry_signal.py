@@ -48,7 +48,7 @@ def compute_entry_signal(
     """
     Returns a signal dict (direction, entry_price, sl, tp, be, lots,
     stop_dist, instrument_key, plus diagnostic fields used only for
-    logging/Telegram: p_up, rsi, adx, vol_surge, vwap_dist_pct,
+    logging/Telegram: rsi, adx, vol_surge, vwap_dist_pct,
     ema_slope_pct) if a qualifying setup exists on the latest closed 5-min
     bar in `candles`, else None. `candles` must already be chronological
     (oldest-first) real 5-min OHLCV for `sym`, at least 25 bars.
@@ -91,8 +91,6 @@ def compute_entry_signal(
             if mins < 570 or mins > 780:
                 return None
 
-    p_up = 0.50
-
     adx = float(row.get("adx", 25.0))
     dmp = float(row.get("dmp", 25.0))
     dmn = float(row.get("dmn", 25.0))
@@ -110,12 +108,10 @@ def compute_entry_signal(
     is_silver = "SILVER" in sym.upper()
     if is_curr:
         _et = CURRENCY_ENTRY_THRESHOLDS.get(sym.upper(), CURRENCY_ENTRY_THRESHOLDS["USDINR"])
-        min_ml_l, max_ml_s = 0.54, 0.44
         min_orb, min_stop_pct = CURRENCY_MIN_ORB, _et["min_stop_pct"]
     else:
         _key = "natgas" if is_natgas else "gold" if is_gold else "silver" if is_silver else "crude"
         _et = COMMODITY_ENTRY_THRESHOLDS[_key]
-        min_ml_l, max_ml_s = _et["min_ml_l"], _et["max_ml_s"]
         min_orb, min_stop_pct = _et["min_orb"], _et["min_stop_pct"]
     min_adx, min_vol, min_vwap = _et["min_adx"], _et["min_vol"], _et["min_vwap"]
     min_ema_slope = _et["min_ema_slope"]
@@ -182,6 +178,6 @@ def compute_entry_signal(
         "sl": sl, "tp": tp, "be": be, "lots": lots, "stop_dist": sdist,
         "instrument_key": instrument_key,
         "setup_type": setup_type,
-        "p_up": p_up, "rsi": rsi, "adx": adx, "vol_surge": vol_s,
+        "rsi": rsi, "adx": adx, "vol_surge": vol_s,
         "vwap_dist_pct": vwap_d, "ema_slope_pct": ema_s,
     }

@@ -39,6 +39,7 @@ SYMBOLS = ["USDINR", "EURINR", "GBPINR", "JPYINR"]
 
 INTERVALS = [
     ("minutes", 1, "1minute"),
+    ("minutes", 3, "3minute"),
     ("minutes", 5, "5minute"),
     ("minutes", 15, "15minute"),
     ("days", 1, "1day"),

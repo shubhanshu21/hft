@@ -11,7 +11,7 @@ through, so no new credentials/account are needed.
 IMPORTANT CONSTRAINT: MCX commodity futures are monthly-expiry contracts,
 not continuously-listed instruments like equities -- real history for the
 CURRENT active contract only reaches back to that contract's own listing
-date, not years. This same cap applies to every interval below (1min/5min/
+date, not years. This same cap applies to every interval below (1min/3min/5min/
 15min/1day all come from the same underlying contract) -- daily bars don't
 get more history, just fewer, coarser rows.
 
@@ -84,6 +84,7 @@ SYMBOLS = {
 # (Upstox unit, Upstox interval, archive filename suffix)
 INTERVALS = [
     ("minutes", 1, "1minute"),
+    ("minutes", 3, "3minute"),
     ("minutes", 5, "5minute"),
     ("minutes", 15, "15minute"),
     ("days", 1, "1day"),

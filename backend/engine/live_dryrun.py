@@ -292,23 +292,6 @@ class DryRunner:
         self.leverage         = leverage
         self.account_id       = account_id
         self.direction_filter = direction_filter.lower()
-        # Diagnostic finding 2026-09-10: on both the real ~1-month archive AND
-        # a freshly-regenerated copy of the original synthetic dataset (using
-        # the correctly-sized, non-overfit model), dropping the p_up
-        # condition and keeping every other rule-based filter outperformed
-        # keeping it -- consistently, by ~4-5pts of win rate on both. The
-        # model doesn't have enough real data yet to be a net-positive
-        # filter. Toggle via DRYRUN_USE_ML_FILTER in .env once that changes
-        # (e.g. after the real archive has grown substantially) -- see
-        # conversation/git history for the full comparison.
-        # Re-verified 2026-09-18 after retraining all commodity models fresh
-        # (fixing an unrelated 28-vs-33-feature schema incompatibility that
-        # was making every predict_proba() call silently fall back to 0.50
-        # anyway) -- precision-at-threshold is still poor: crude 28.1%@0.55
-        # (best of the lot), gold 1.9%@0.55 (worse than random), silver 3.1%.
-        # Same conclusion holds; still not enough real data for ML to add
-        # value over the rule-based filter alone.
-        self.use_ml_filter = os.environ.get("DRYRUN_USE_ML_FILTER", "true").lower() in ("1", "true", "yes")
 
         log.info("Rule-based signal engine initialized across %d symbols.", len(self.symbols))
 
@@ -343,7 +326,7 @@ class DryRunner:
                 "entry_time": datetime.fromisoformat(p["entry_time"]) if "T" in p["entry_time"] else datetime.now(IST),
                 "stop_dist": abs(p["entry_price"] - p["current_stop"]),
                 "trade_value": p["qty"] * p["entry_price"],
-                "p_up": 0.5, "rsi": 50.0, "vwap_dist_pct": 0.0, "ema_slope_pct": 0.0,
+                "rsi": 50.0, "vwap_dist_pct": 0.0, "ema_slope_pct": 0.0,
             }
 
         self.trades: list[dict] = []
@@ -420,8 +403,7 @@ class DryRunner:
         # lower win rate (65.8% vs 70.6%) and higher max DD (8.51% vs 6.51%)
         # from 3x more (noisier, more expensive) daytime trades. Toggle via
         # DRYRUN_FULL_SESSION in .env -- keep BACKTEST_FULL_SESSION in sync
-        # so backtest and live dryrun match, same convention as
-        # DRYRUN_USE_ML_FILTER/BACKTEST_USE_ML_FILTER above.
+        # so backtest and live dryrun match.
         self.full_session = os.environ.get("DRYRUN_FULL_SESSION", "true").lower() in ("1", "true", "yes")
 
         # Daily-loss kill switch: halts new entries (existing positions are
@@ -812,7 +794,7 @@ class DryRunner:
             sl, tp, be = sig_result["sl"], sig_result["tp"], sig_result["be"]
             lots = sig_result["lots"]
             sdist = sig_result["stop_dist"]
-            p_up, rsi = sig_result["p_up"], sig_result["rsi"]
+            rsi = sig_result["rsi"]
             adx, vol_s = sig_result["adx"], sig_result["vol_surge"]
             vwap_d, ema_s = sig_result["vwap_dist_pct"], sig_result["ema_slope_pct"]
 
@@ -884,7 +866,7 @@ class DryRunner:
                 "margin_used": round(trade_val / sym_leverage, 2),
                 "leverage": sym_leverage,
                 "stop_dist": round(sdist, 4),
-                "p_up": round(p_up, 3), "rsi": round(rsi, 1),
+                "rsi": round(rsi, 1),
                 "vwap_dist_pct": round(vwap_d, 4),
                 "ema_slope_pct": round(ema_s, 4),
                 "adx": round(adx, 1),
@@ -979,7 +961,7 @@ class DryRunner:
             "setup_type": sig_result.get("setup_type", "trend_breakout"),
             "margin_used": round(trade_val / sym_leverage, 2),
             "leverage": sym_leverage,
-            "stop_dist": round(sdist, 4), "p_up": 0.5, "rsi": round(rsi, 1),
+            "stop_dist": round(sdist, 4), "rsi": round(rsi, 1),
             "vwap_dist_pct": round(vwap_d, 4), "ema_slope_pct": round(ema_s, 4),
             "adx": round(adx, 1), "vol_surge": round(vol_s, 2),
         }
@@ -1207,7 +1189,6 @@ class DryRunner:
             costs_dict=cost_info,
             net_pnl=net_pnl,
             capital_after=self.capital,
-            p_up=pos.get("p_up"),
             rsi=pos.get("rsi"),
             adx=pos.get("adx"),
             vwap_dist_pct=pos.get("vwap_dist_pct"),
@@ -1318,7 +1299,7 @@ def _print_sig(sig: dict, cap: float):
     print(f"     Strategy: {CY}{stype}{R} | SL: {RED}₹{sig['sl']:.2f}{R}  TP: {GR}₹{sig.get('tp') or 0:.2f}{R}  "
           f"BE: ₹{sig.get('be', sig.get('activation_price', 0)):.2f}")
     print(f"     Qty: {sig['qty']}  Val: ₹{sig['trade_value']:,.0f}  "
-          f"Score: {sig['p_up']:.3f}  RSI: {sig['rsi']:.1f}")
+          f"RSI: {sig['rsi']:.1f}")
     print(f"     VWAP: {sig['vwap_dist_pct']:+.3f}%  EMA: {sig['ema_slope_pct']:+.4f}%  "
           f"Cap now: ₹{cap:,.2f}")
     print(f"     {GY}[VIRTUAL EXECUTION -> RECORDED IN SQLITE DB - NO REAL BROKER ORDER]{R}")

@@ -10,7 +10,7 @@ trading day (before market opens) because:
   - Using stale data risks placing orders on wrong instruments
 
 Cache strategy:
-  - Cache files live in `cache/` with date-stamped names.
+  - Cache files live in `var/cache/` with date-stamped names.
   - As soon as TODAY's file is confirmed on disk (freshly downloaded or
     already present), every OTHER date-stamped instrument-master file is
     deleted immediately — this cache is only ever read for "today's"
@@ -33,6 +33,8 @@ import time
 from datetime import date
 from pathlib import Path
 
+from core.paths import CACHE_DIR
+
 import pandas as pd
 import requests
 
@@ -45,7 +47,6 @@ log = get_logger(__name__)
 # ---------------------------------------------------------------------------
 
 # Where cache files are stored (relative to project root)
-CACHE_DIR = Path("cache")
 
 # Network request timeout (seconds)
 REQUEST_TIMEOUT = 30
