@@ -178,6 +178,7 @@ def run_commodity_backtest(
     from_date: str | None = None,
     to_date: str | None = None,
     size_mode: str = "margin",
+    stop_cooldown_bars: int = 0,  # opt-in study: after an initial_stop, block re-entry on the same side for N bars (0 = off)
     return_trades: bool = False,  # diagnostic only: include the full per-trade list (with entry-signal diagnostics) in the result -- see conversation history 2026-09-17, loss-pattern analysis
     confirm_silver_with_gold: bool = False,  # SILVER only: require GOLD's own ema_slope_pct to agree in
     # sign with the entry direction. Tested 2026-09-18 (gold/silver co-movement is a real, documented
@@ -320,6 +321,7 @@ def run_commodity_backtest(
 
         in_pos = False
         pos = {}
+        cool_side, cool_until = None, -1
 
         n = len(feat_df)
         closes = feat_df["close"].values
@@ -394,6 +396,8 @@ def run_commodity_backtest(
                     })
 
 
+                    if reason == "initial_stop" and stop_cooldown_bars:
+                        cool_side, cool_until = pos["direction"], i + stop_cooldown_bars
                     in_pos = False
                     pos = {}
                     continue
@@ -517,6 +521,9 @@ def run_commodity_backtest(
                 size_mode=size_mode,
             )
             if lots < 1:
+                continue
+
+            if stop_cooldown_bars and direction == cool_side and i < cool_until:
                 continue
 
             d = 1 if direction == "long" else -1

@@ -82,7 +82,7 @@ backend/
 ├── core/                             # Market-agnostic logic
 │   ├── regime.py  regime_shift.py    # daily-return autocorrelation gate; out-of-distribution gate
 │   ├── slippage.py                   # real bid/ask spread -> adaptive slippage
-│   ├── sector_correlation.py  base_engine.py
+│   ├── sector_correlation.py
 │   ├── strategy.py                   # THE strategy contract (Strategy, Signal, contexts) -- see docs/ADDING_A_STRATEGY.md
 │   ├── registry.py                   # auto-discovers markets/*/*/strategy.py; picks the active ones from <MARKET>_STRATEGIES
 │   ├── exits.py                      # reusable exit managers (fixed TP + breakeven trail; activation trail)
