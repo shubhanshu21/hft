@@ -186,6 +186,21 @@ def _load_mcx_master() -> None:
                 exp = row.get("expiry", "")
                 if exp >= today_str:
                     tsym = row.get("tradingsymbol", "")
+                    # Bug found live 2026-09-23: MCX added a "SILVER100" contract
+                    # series (tradingsymbol "SILVER10026SEPFUT", lot_size 100, an
+                    # entirely different/smaller-denomination product from the
+                    # real 30kg SILVER contract) that also matches
+                    # tsym.startswith("SILVER"). Because it expires sooner than
+                    # the real SILVER contract, nearest-expiry selection below
+                    # picked it instead -- silently trading a contract with a
+                    # ~100x different price scale and a real lot_size (100) that
+                    # doesn't match strategy/commodity_costs.py's COMMODITY_SPECS
+                    # assumption (30), corrupting both price and every
+                    # size/margin/P&L calculation for "SILVER". Must be excluded
+                    # explicitly, the same way SILVERMIC/SILVERM are disambiguated
+                    # below -- it is never a valid match for base "SILVER".
+                    if tsym.startswith("SILVER100"):
+                        continue
                     # Match base symbols -- extended 2026-09-17 to survey other MCX
                     # commodities beyond crude/natgas (Gold Mini, Silver Mini/Micro,
                     # Copper already have cost-model support in strategy/commodity_costs.py's

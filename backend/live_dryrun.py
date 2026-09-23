@@ -120,6 +120,24 @@ def _get_market(sym: str) -> str:
     return "commodity"
 
 
+# Wall-clock (minutes since midnight IST) trading windows per market, used
+# only to gate spread sampling (see _maybe_sample_spread) -- NOT the entry
+# gates themselves, which already have their own tighter windows in
+# entry_signal.py/equity_entry_signal.py. Deliberately the OUTER session
+# bounds (broker feed is live), not the narrower entry-gate window.
+_SESSION_WINDOW_MIN = {
+    "commodity": (9 * 60, 23 * 60 + 30),     # 09:00-23:30 IST
+    "currency": (9 * 60, 17 * 60),           # 09:00-17:00 IST
+    "equity": (9 * 60 + 15, 15 * 60 + 30),   # 09:15-15:30 IST
+}
+
+
+def _is_market_session_open(sym: str, now: datetime) -> bool:
+    lo, hi = _SESSION_WINDOW_MIN[_get_market(sym)]
+    mins = now.hour * 60 + now.minute
+    return lo <= mins <= hi
+
+
 from broker.instruments import build_mcx_commodity_map, build_currency_map, get_instrument_key
 from utils.logger import get_logger, setup_logger
 from utils import telegram
@@ -361,6 +379,38 @@ class DryRunner:
         # 4% felt tighter than the existing per-trade sizing already implies.
         self.max_portfolio_heat_pct = float(os.environ.get("MAX_PORTFOLIO_HEAT_PCT", "8.0"))
 
+        # Shared margin pool cap -- found missing 2026-09-23 while auditing
+        # margin/leverage setup: each market's sizing (size_commodity_lots /
+        # size_currency_lots / size_equity_shares) independently caps its own
+        # lot/share count against the FULL current capital's margin capacity,
+        # with no awareness of margin ALREADY committed by other open
+        # positions across the other 8 symbols. A real broker margin account
+        # is one shared pool, not one per symbol -- backtest_equity.py's own
+        # validated engine enforces exactly this (its `committed_margin`
+        # bookkeeping), but live_dryrun.py never mirrored it. Without this,
+        # several symbols triggering together (a real, not hypothetical,
+        # scenario -- see strategy/sector_correlation.py's whole reason for
+        # existing) could commit far more margin in aggregate than the
+        # configured leverage should ever allow.
+        self.max_margin_utilization_pct = float(os.environ.get("MAX_MARGIN_UTILIZATION_PCT", "90.0"))
+
+        # Per-market sub-cap on top of the shared pool above -- without this,
+        # one market (e.g. commodity, with 6 symbols vs currency's 3) could
+        # legitimately consume the entire margin pool first and starve the
+        # others of room to enter, even though each market has its own
+        # distinct risk/leverage settings (COMMODITY_LEVERAGE vs
+        # CURRENCY_LEVERAGE vs EQUITY_LEVERAGE) and shouldn't be able to
+        # crowd out the others. Mirrors the existing per-market daily-loss
+        # cooldown pattern (market_daily_pnl/market_cooldown_until below).
+        # Per-market override falls back to a shared default so this doesn't
+        # need three separate .env entries unless someone wants asymmetric caps.
+        _default_market_margin_pct = float(os.environ.get("MAX_MARKET_MARGIN_UTILIZATION_PCT", "50.0"))
+        self.max_market_margin_utilization_pct: dict[str, float] = {
+            "commodity": float(os.environ.get("COMMODITY_MAX_MARGIN_PCT", _default_market_margin_pct)),
+            "currency": float(os.environ.get("CURRENCY_MAX_MARGIN_PCT", _default_market_margin_pct)),
+            "equity": float(os.environ.get("EQUITY_MAX_MARGIN_PCT", _default_market_margin_pct)),
+        }
+
         # Full-day vs evening-only trading window -- see backtest_commodity.py's
         # us_session_only for the matching backtest flag/comparison. Switched
         # to full-session by default 2026-09-17 per user decision: real
@@ -502,6 +552,21 @@ class DryRunner:
             total_risk_rupees += stop_dist * pos["qty"] * multiplier
         return total_risk_rupees / self.capital * 100
 
+    def _total_margin_used(self) -> float:
+        """Sum of margin already committed by every open position, across
+        all three markets -- the shared pool a new entry's margin must be
+        checked against (see __init__'s comment on max_margin_utilization_pct)."""
+        return sum(pos.get("margin_used", 0.0) for pos in self.positions.values())
+
+    def _market_margin_used(self, market: str) -> float:
+        """Same as _total_margin_used but scoped to one market -- backs the
+        per-market sub-cap (max_market_margin_utilization_pct)."""
+        return sum(
+            pos.get("margin_used", 0.0)
+            for sym, pos in self.positions.items()
+            if _get_market(sym) == market
+        )
+
     def _drawdown_risk_scale(self) -> float:
         """Anti-martingale position-size scaling: shrink new trades'
         risk-per-trade the further capital sits below its own trailing peak,
@@ -610,6 +675,18 @@ class DryRunner:
 
     # ---- real spread sampling (see __init__'s comment) -----------------------
     def _maybe_sample_spread(self, sym: str, now: datetime) -> None:
+        # Found 2026-09-23: with no session gate here, off-hours calls kept
+        # hitting the broker's market-depth endpoint for closed markets
+        # (currency after 17:00, equity after 15:30) and it returned the
+        # same frozen last-known bid/ask over and over -- logs/spread_samples.csv
+        # had dozens of byte-identical EURINR rows spanning 1.5+ hours
+        # (17:04-18:44 IST). Those stale, non-executable "spreads" fed
+        # directly into strategy/slippage.py's empirical median once
+        # MIN_SAMPLES was crossed, inflating real intraday slippage cost
+        # estimates for the affected symbols. Gate on the market actually
+        # being open before sampling at all.
+        if not _is_market_session_open(sym, now):
+            return
         last = self._last_spread_sample.get(sym)
         if last is not None and (now - last).total_seconds() < self.spread_sample_interval_min * 60:
             return
@@ -741,6 +818,15 @@ class DryRunner:
             lot_size = CURRENCY_SPECS.get(sym.upper(), {}).get("lot_size", 1000) if is_curr \
                 else COMMODITY_SPECS.get(sym, {}).get("lot_size", 1)
             trade_val = lots * lot_size * entry
+            _new_margin = trade_val / sym_leverage
+            _mkt = _get_market(sym)
+            if self.capital > 0 and (self._total_margin_used() + _new_margin) / self.capital * 100 > self.max_margin_utilization_pct:
+                log.info("%s: entry skipped -- would push total committed margin past the %.1f%% cap.", sym, self.max_margin_utilization_pct)
+                continue
+            _mkt_cap = self.max_market_margin_utilization_pct.get(_mkt, self.max_margin_utilization_pct)
+            if self.capital > 0 and (self._market_margin_used(_mkt) + _new_margin) / self.capital * 100 > _mkt_cap:
+                log.info("%s: entry skipped -- would push %s's own committed margin past its %.1f%% sub-cap.", sym, _mkt, _mkt_cap)
+                continue
 
             ts_tag = now.strftime('%Y%m%d_%H%M%S')
             pos_id = f"POS_MCX_{ts_tag}_{sym}"
@@ -852,6 +938,15 @@ class DryRunner:
         activation_price, trail_mult = sig_result["activation_price"], sig_result["trail_mult"]
 
         trade_val = qty * entry
+        _new_margin = trade_val / sym_leverage
+        if self.capital > 0 and (self._total_margin_used() + _new_margin) / self.capital * 100 > self.max_margin_utilization_pct:
+            log.info("%s: equity entry skipped -- would push total committed margin past the %.1f%% cap.", sym, self.max_margin_utilization_pct)
+            return
+        _eq_cap = self.max_market_margin_utilization_pct.get("equity", self.max_margin_utilization_pct)
+        if self.capital > 0 and (self._market_margin_used("equity") + _new_margin) / self.capital * 100 > _eq_cap:
+            log.info("%s: equity entry skipped -- would push equity's own committed margin past its %.1f%% sub-cap.", sym, _eq_cap)
+            return
+
         ts_tag = now.strftime('%Y%m%d_%H%M%S')
         pos_id = f"POS_EQ_{ts_tag}_{sym}"
         entry_order_id = f"ORD_E_EQ_{ts_tag}_{sym}"

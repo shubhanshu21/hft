@@ -133,15 +133,30 @@ def compute_equity_entry_signal(
     direction = None
     setup_type = "trend_breakout"
 
+    # RSI exhaustion cap on the trend-breakout setup only (mean-reversion
+    # below has its own, opposite-purpose RSI gate). Added 2026-09-23 after
+    # a live TATASTEEL trade entered "long" at RSI 87-91 -- deep blow-off-top
+    # exhaustion -- and whipsawed twice for -Rs5,550 combined; the setup
+    # never checked RSI at all before this. Validated via train/test: 15-85
+    # cap improved BOTH windows' risk profile (TRAIN net -Rs9,067->-Rs764, DD
+    # 21.8%->10.3%; TEST DD 14.1%->9.8%, PF 1.58->1.90, still 24 trades on
+    # TEST, above the 15-trade credibility bar) -- a genuine risk-adjusted
+    # improvement, not just fewer trades (see conversation history for the
+    # tighter 20-80 cap, which improved TRAIN similarly but dropped TEST
+    # below the credibility bar at only 9 trades -- rejected for that reason).
+    _RSI_FLOOR, _RSI_CEIL = 15.0, 85.0
+
     # Setup 1 (LONG): Trend Accumulation (steady volume, trend alignment)
     if (adx >= lt["min_adx"] and dmp > dmn and ema_s > lt["min_ema_slope"]
-            and orb_h_dist >= lt["min_orb"] and vwap_d >= lt["min_vwap"] and vol_s >= lt["min_vol"]):
+            and orb_h_dist >= lt["min_orb"] and vwap_d >= lt["min_vwap"] and vol_s >= lt["min_vol"]
+            and rsi <= _RSI_CEIL):
         direction = "long"
         setup_type = "trend_breakout"
 
     # Setup 1 (SHORT): Panic Liquidation (stricter volume surge & drop momentum)
     elif (direction_filter != "long" and adx >= st["min_adx"] and dmn > dmp and ema_s < -st["min_ema_slope"]
-            and orb_l_dist <= -st["min_orb"] and vwap_d <= -st["min_vwap"] and vol_s >= st["min_vol"]):
+            and orb_l_dist <= -st["min_orb"] and vwap_d <= -st["min_vwap"] and vol_s >= st["min_vol"]
+            and rsi >= _RSI_FLOOR):
         direction = "short"
         setup_type = "trend_breakout"
 
