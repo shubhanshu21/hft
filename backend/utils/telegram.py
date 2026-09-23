@@ -116,15 +116,23 @@ def alert_error(context: str, exc: Exception) -> None:
 def alert_entry(sig: dict, capital: float) -> None:
     arrow = "🟢 LONG" if sig["direction"] == "long" else "🔴 SHORT"
     stype = sig.get('setup_type', 'trend_breakout').replace('_', ' ').title()
-    margin_line = f"\nMargin Used (this trade): ₹{sig['margin_used']:,.2f}" if "margin_used" in sig else ""
     tp_val = sig.get('tp')
     tp_str = f"₹{tp_val:.2f}" if tp_val is not None else "Dynamic Trail"
+    # Leverage shown directly (trade_value / margin_used) instead of a raw
+    # margin rupee figure next to total balance -- those two numbers being
+    # side by side read as if margin were subtracted from balance, which it
+    # isn't (balance only moves on close). Leverage is the number that
+    # actually answers "how geared is this trade."
+    leverage = sig.get("leverage")
+    if leverage is None and sig.get("margin_used"):
+        leverage = sig["trade_value"] / sig["margin_used"]
+    lev_line = f"\nLeverage: {leverage:.1f}x  (Margin: ₹{sig['margin_used']:,.2f})" if leverage else ""
     send(
         f"📥 <b>ENTRY</b> {sig['symbol']} {arrow}\n"
         f"Strategy: <b>{stype}</b>\n"
         f"Price: ₹{sig['entry_price']:.2f}  Qty: {sig['qty']}\n"
-        f"SL: ₹{sig['sl']:.2f}  TP: {tp_str}{margin_line}\n"
-        f"Balance (realized equity): ₹{capital:,.2f}"
+        f"SL: ₹{sig['sl']:.2f}  TP: {tp_str}{lev_line}\n"
+        f"Balance: ₹{capital:,.2f}"
     )
 
 

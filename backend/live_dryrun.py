@@ -795,6 +795,7 @@ class DryRunner:
                 # margin this trade blocks so that distinction is visible
                 # instead of implying it's already netted out of Balance.
                 "margin_used": round(trade_val / sym_leverage, 2),
+                "leverage": sym_leverage,
                 "stop_dist": round(sdist, 4),
                 "p_up": round(p_up, 3), "rsi": round(rsi, 1),
                 "vwap_dist_pct": round(vwap_d, 4),
@@ -880,7 +881,8 @@ class DryRunner:
             "entry_price": round(entry, 2), "sl": sl, "tp": activation_price,
             "qty": qty, "lots": qty, "trade_value": round(trade_val, 2),
             "setup_type": sig_result.get("setup_type", "trend_breakout"),
-            "margin_used": round(trade_val / self.leverage, 2),
+            "margin_used": round(trade_val / sym_leverage, 2),
+            "leverage": sym_leverage,
             "stop_dist": round(sdist, 4), "p_up": 0.5, "rsi": round(rsi, 1),
             "vwap_dist_pct": round(vwap_d, 4), "ema_slope_pct": round(ema_s, 4),
             "adx": round(adx, 1), "vol_surge": round(vol_s, 2),
