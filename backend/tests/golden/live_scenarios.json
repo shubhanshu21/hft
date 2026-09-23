@@ -1,0 +1,556 @@
+{
+ "entries": {
+  "eq_long": {
+   "alerts": [
+    "\ud83d\udce5 <b>LIVE ENTRY FILLED</b> TATASTEEL LONG @ \u20b9189.90  Qty: 2500\nSL: \u20b9188.95 (dynamic trailing, no fixed TP)\nReal Funds Remaining: \u20b91,000,000.00\nBalance (realized equity): \u20b9100,000.00"
+   ],
+   "broker_calls": [
+    {
+     "ikey": "IK|TATASTEEL",
+     "product": "I",
+     "qty": 2500,
+     "side": "BUY",
+     "tag": "LIVE_E_TATASTEEL"
+    }
+   ],
+   "db_orders": [
+    {
+     "direction": "BUY",
+     "fill_price": 189.9,
+     "intent": "ENTRY",
+     "quantity": 2500,
+     "requested_price": 189.9,
+     "status": "FILLED",
+     "symbol": "TATASTEEL",
+     "tag": "LIVE_ENTRY"
+    }
+   ],
+   "db_position": [
+    {
+     "breakeven_price": 190.6,
+     "current_stop": 188.95,
+     "direction": "long",
+     "entry_price": 189.9,
+     "qty": 2500,
+     "symbol": "TATASTEEL",
+     "target_price": 190.6
+    }
+   ],
+   "position": {
+    "activation_price": 190.6,
+    "armed_trail": false,
+    "best_price": 189.9,
+    "current_stop": 188.95,
+    "direction": "long",
+    "entry_price": 189.9,
+    "instrument_key": "IK|TATASTEEL",
+    "qty": 2500,
+    "stop_dist": 0.95,
+    "trail_mult": 0.4
+   }
+  },
+  "eq_short_slippage": {
+   "alerts": [
+    "\ud83d\udce5 <b>LIVE ENTRY FILLED</b> SBIN SHORT @ \u20b9798.50  Qty: 300\nSL: \u20b9802.50 (dynamic trailing, no fixed TP)\nReal Funds Remaining: \u20b91,000,000.00\nBalance (realized equity): \u20b9100,000.00"
+   ],
+   "broker_calls": [
+    {
+     "ikey": "IK|SBIN",
+     "product": "I",
+     "qty": 300,
+     "side": "SELL",
+     "tag": "LIVE_E_SBIN"
+    }
+   ],
+   "db_orders": [
+    {
+     "direction": "SELL",
+     "fill_price": 798.5,
+     "intent": "ENTRY",
+     "quantity": 300,
+     "requested_price": 800.0,
+     "status": "FILLED",
+     "symbol": "SBIN",
+     "tag": "LIVE_ENTRY"
+    }
+   ],
+   "db_position": [
+    {
+     "breakeven_price": 795.5,
+     "current_stop": 802.5,
+     "direction": "short",
+     "entry_price": 798.5,
+     "qty": 300,
+     "symbol": "SBIN",
+     "target_price": 795.5
+    }
+   ],
+   "position": {
+    "activation_price": 795.5,
+    "armed_trail": false,
+    "best_price": 798.5,
+    "current_stop": 802.5,
+    "direction": "short",
+    "entry_price": 798.5,
+    "instrument_key": "IK|SBIN",
+    "qty": 300,
+    "stop_dist": 4.0,
+    "trail_mult": 0.3
+   }
+  },
+  "funds_insufficient": {
+   "alerts": [
+    "\ud83d\udd34 <b>LIVE ENTRY SKIPPED \u2014 INSUFFICIENT FUNDS</b> \u2014 CRUDEOILM: needs ~\u20b986,000.00 margin, only \u20b91,000.00 available. New entries for CRUDEOILM will keep being skipped until funds recover."
+   ],
+   "broker_calls": [],
+   "db_orders": [],
+   "db_position": [],
+   "position": {}
+  },
+  "mcx_long_fill_at_assumed": {
+   "alerts": [
+    "\ud83d\udce5 <b>LIVE ENTRY FILLED</b> CRUDEOILM LONG @ \u20b98600.00  Qty: 5\nSL: \u20b98570.00  TP: \u20b98660.00\nReal Funds Remaining: \u20b91,000,000.00\nBalance (realized equity): \u20b9100,000.00"
+   ],
+   "broker_calls": [
+    {
+     "ikey": "IK|CRUDEOILM",
+     "product": "I",
+     "qty": 50,
+     "side": "BUY",
+     "tag": "LIVE_E_CRUDEOILM"
+    }
+   ],
+   "db_orders": [
+    {
+     "direction": "BUY",
+     "fill_price": 8600.0,
+     "intent": "ENTRY",
+     "quantity": 5,
+     "requested_price": 8600.0,
+     "status": "FILLED",
+     "symbol": "CRUDEOILM",
+     "tag": "LIVE_ENTRY"
+    }
+   ],
+   "db_position": [
+    {
+     "breakeven_price": 8620.0,
+     "current_stop": 8570.0,
+     "direction": "long",
+     "entry_price": 8600.0,
+     "qty": 5,
+     "symbol": "CRUDEOILM",
+     "target_price": 8660.0
+    }
+   ],
+   "position": {
+    "armed_be": false,
+    "be": 8620.0,
+    "best_price": 8600.0,
+    "current_stop": 8570.0,
+    "direction": "long",
+    "entry_price": 8600.0,
+    "instrument_key": "IK|CRUDEOILM",
+    "qty": 5,
+    "stop_dist": 30.0,
+    "tp": 8660.0
+   }
+  },
+  "mcx_short_slippage": {
+   "alerts": [
+    "\ud83d\udce5 <b>LIVE ENTRY FILLED</b> GOLDM SHORT @ \u20b9150250.00  Qty: 3\nSL: \u20b9150850.00  TP: \u20b9149050.00\nReal Funds Remaining: \u20b91,000,000.00\nBalance (realized equity): \u20b9100,000.00"
+   ],
+   "broker_calls": [
+    {
+     "ikey": "IK|GOLDM",
+     "product": "I",
+     "qty": 30,
+     "side": "SELL",
+     "tag": "LIVE_E_GOLDM"
+    }
+   ],
+   "db_orders": [
+    {
+     "direction": "SELL",
+     "fill_price": 150250.0,
+     "intent": "ENTRY",
+     "quantity": 3,
+     "requested_price": 150000.0,
+     "status": "FILLED",
+     "symbol": "GOLDM",
+     "tag": "LIVE_ENTRY"
+    }
+   ],
+   "db_position": [
+    {
+     "breakeven_price": 149850.0,
+     "current_stop": 150850.0,
+     "direction": "short",
+     "entry_price": 150250.0,
+     "qty": 3,
+     "symbol": "GOLDM",
+     "target_price": 149050.0
+    }
+   ],
+   "position": {
+    "armed_be": false,
+    "be": 149850.0,
+    "best_price": 150250.0,
+    "current_stop": 150850.0,
+    "direction": "short",
+    "entry_price": 150250.0,
+    "instrument_key": "IK|GOLDM",
+    "qty": 3,
+    "stop_dist": 600.0,
+    "tp": 149050.0
+   }
+  },
+  "ncd_long": {
+   "alerts": [
+    "\ud83d\udce5 <b>LIVE ENTRY FILLED</b> USDINR LONG @ \u20b995.77  Qty: 4\nSL: \u20b995.67  TP: \u20b996.07\nReal Funds Remaining: \u20b91,000,000.00\nBalance (realized equity): \u20b9100,000.00"
+   ],
+   "broker_calls": [
+    {
+     "ikey": "IK|USDINR",
+     "product": "I",
+     "qty": 4000,
+     "side": "BUY",
+     "tag": "LIVE_E_USDINR"
+    }
+   ],
+   "db_orders": [
+    {
+     "direction": "BUY",
+     "fill_price": 95.77,
+     "intent": "ENTRY",
+     "quantity": 4,
+     "requested_price": 95.75,
+     "status": "FILLED",
+     "symbol": "USDINR",
+     "tag": "LIVE_ENTRY"
+    }
+   ],
+   "db_position": [
+    {
+     "breakeven_price": 95.83,
+     "current_stop": 95.67,
+     "direction": "long",
+     "entry_price": 95.77,
+     "qty": 4,
+     "symbol": "USDINR",
+     "target_price": 96.07
+    }
+   ],
+   "position": {
+    "armed_be": false,
+    "be": 95.83,
+    "best_price": 95.77,
+    "current_stop": 95.67,
+    "direction": "long",
+    "entry_price": 95.77,
+    "instrument_key": "IK|USDINR",
+    "qty": 4,
+    "stop_dist": 0.1,
+    "tp": 96.07
+   }
+  },
+  "no_order_id": {
+   "alerts": [],
+   "broker_calls": [
+    {
+     "ikey": "IK|CRUDEOILM",
+     "product": "I",
+     "qty": 50,
+     "side": "BUY",
+     "tag": "LIVE_E_CRUDEOILM"
+    }
+   ],
+   "db_orders": [],
+   "db_position": [],
+   "position": {}
+  },
+  "order_ambiguous": {
+   "alerts": [
+    "\ud83d\udd34\ud83d\udd34 <b>LIVE ENTRY ORDER STATUS UNKNOWN</b> \u2014 TATASTEEL ORD1 never reached a confirmed 'complete'/'rejected' state within 0.02s. It may be PARTIALLY FILLED at the broker with no position tracked here. Check the real Upstox order book IMMEDIATELY."
+   ],
+   "broker_calls": [
+    {
+     "ikey": "IK|TATASTEEL",
+     "product": "I",
+     "qty": 2500,
+     "side": "BUY",
+     "tag": "LIVE_E_TATASTEEL"
+    },
+    {
+     "cancel": "ORD1"
+    }
+   ],
+   "db_orders": [],
+   "db_position": [],
+   "position": {}
+  },
+  "order_rejected": {
+   "alerts": [],
+   "broker_calls": [
+    {
+     "ikey": "IK|CRUDEOILM",
+     "product": "I",
+     "qty": 50,
+     "side": "BUY",
+     "tag": "LIVE_E_CRUDEOILM"
+    }
+   ],
+   "db_orders": [],
+   "db_position": [],
+   "position": {}
+  }
+ },
+ "exits": {
+  "eq_exit_rejected": {
+   "alerts": [
+    "\ud83d\udd34 <b>LIVE EXIT ORDER REJECTED</b> \u2014 TATASTEEL ORD1 (initial_stop). Position still fully OPEN (nothing filled) -- will retry on the next scan."
+   ],
+   "broker_calls": [
+    {
+     "ikey": "IK|TATASTEEL",
+     "product": "I",
+     "qty": 2500,
+     "side": "SELL",
+     "tag": "LIVE_X_TATASTEEL"
+    }
+   ],
+   "capital": 100000.0,
+   "db_orders": [],
+   "db_trades": [],
+   "still_open": true
+  },
+  "eq_short_initial_stop": {
+   "alerts": [
+    "\u23f8 <b>EQUITY COOLDOWN ACTIVATED (LIVE)</b> \u2014 10.89% loss (limit 3.0%)\nNew equity entries paused for 120m until <b>13:30:00 IST</b>.\nOther markets continue normally.",
+    "\ud83d\uded1 <b>SBIN DAILY LOSS LIMIT HIT (LIVE)</b> \u2014 10.89% (limit 5.0%). New SBIN entries halted for today.",
+    "\u274c <b>LIVE EXIT FILLED</b> SBIN SHORT @ \u20b9804.00  [initial_stop]\nNet PnL: \u20b9-10,891.02\nBalance (realized equity): \u20b989,108.98"
+   ],
+   "broker_calls": [
+    {
+     "ikey": "IK|SBIN",
+     "product": "I",
+     "qty": 2500,
+     "side": "BUY",
+     "tag": "LIVE_X_SBIN"
+    }
+   ],
+   "capital": 89108.98,
+   "db_orders": [
+    {
+     "direction": "BUY",
+     "fill_price": 804.0,
+     "intent": "INITIAL_STOP",
+     "quantity": 2500,
+     "requested_price": 804.0,
+     "status": "FILLED",
+     "symbol": "SBIN",
+     "tag": "LIVE_EXIT"
+    }
+   ],
+   "db_trades": [
+    {
+     "direction": "short",
+     "entry_price": 800.0,
+     "exit_price": 804.0,
+     "exit_reason": "initial_stop",
+     "gross_pnl": -10000.0,
+     "net_pnl": -10891.02,
+     "qty": 2500,
+     "symbol": "SBIN",
+     "total_friction": 891.02
+    }
+   ],
+   "still_open": false
+  },
+  "eq_trail_stop": {
+   "alerts": [
+    "\u2705 <b>LIVE EXIT FILLED</b> TATASTEEL LONG @ \u20b9190.20  [trail_stop]\nNet PnL: \u20b9+407.12\nBalance (realized equity): \u20b9100,407.12"
+   ],
+   "broker_calls": [
+    {
+     "ikey": "IK|TATASTEEL",
+     "product": "I",
+     "qty": 2500,
+     "side": "SELL",
+     "tag": "LIVE_X_TATASTEEL"
+    }
+   ],
+   "capital": 100407.12,
+   "db_orders": [
+    {
+     "direction": "SELL",
+     "fill_price": 190.2,
+     "intent": "TRAIL_STOP",
+     "quantity": 2500,
+     "requested_price": 190.2,
+     "status": "FILLED",
+     "symbol": "TATASTEEL",
+     "tag": "LIVE_EXIT"
+    }
+   ],
+   "db_trades": [
+    {
+     "direction": "long",
+     "entry_price": 189.9,
+     "exit_price": 190.2,
+     "exit_reason": "trail_stop",
+     "gross_pnl": 750.0,
+     "net_pnl": 407.12,
+     "qty": 2500,
+     "symbol": "TATASTEEL",
+     "total_friction": 342.88
+    }
+   ],
+   "still_open": false
+  },
+  "mcx_exit_ambiguous": {
+   "alerts": [
+    "\ud83d\udd34\ud83d\udd34 <b>LIVE EXIT ORDER STATUS UNKNOWN</b> \u2014 CRUDEOILM ORD1 (initial_stop) never reached a confirmed 'complete'/'rejected' state within 0.02s. It may be PARTIALLY FILLED -- this process still thinks the full 5 lots are open, which may now be WRONG. Check the real Upstox order/position book IMMEDIATELY and reconcile manually."
+   ],
+   "broker_calls": [
+    {
+     "ikey": "IK|CRUDEOILM",
+     "product": "I",
+     "qty": 50,
+     "side": "SELL",
+     "tag": "LIVE_X_CRUDEOILM"
+    },
+    {
+     "cancel": "ORD1"
+    }
+   ],
+   "capital": 100000.0,
+   "db_orders": [],
+   "db_trades": [],
+   "still_open": true
+  },
+  "mcx_stop": {
+   "alerts": [
+    "\u274c <b>LIVE EXIT FILLED</b> CRUDEOILM LONG @ \u20b98570.00  [initial_stop]\nNet PnL: \u20b9-1,670.94\nBalance (realized equity): \u20b998,329.06"
+   ],
+   "broker_calls": [
+    {
+     "ikey": "IK|CRUDEOILM",
+     "product": "I",
+     "qty": 50,
+     "side": "SELL",
+     "tag": "LIVE_X_CRUDEOILM"
+    }
+   ],
+   "capital": 98329.06,
+   "db_orders": [
+    {
+     "direction": "SELL",
+     "fill_price": 8570.0,
+     "intent": "INITIAL_STOP",
+     "quantity": 5,
+     "requested_price": 8570.0,
+     "status": "FILLED",
+     "symbol": "CRUDEOILM",
+     "tag": "LIVE_EXIT"
+    }
+   ],
+   "db_trades": [
+    {
+     "direction": "long",
+     "entry_price": 8600.0,
+     "exit_price": 8570.0,
+     "exit_reason": "initial_stop",
+     "gross_pnl": -1500.0,
+     "net_pnl": -1670.94,
+     "qty": 5,
+     "symbol": "CRUDEOILM",
+     "total_friction": 170.94
+    }
+   ],
+   "still_open": false
+  },
+  "mcx_take_profit": {
+   "alerts": [
+    "\u2705 <b>LIVE EXIT FILLED</b> CRUDEOILM LONG @ \u20b98660.00  [take_profit]\nNet PnL: \u20b9+2,828.50\nBalance (realized equity): \u20b9102,828.50"
+   ],
+   "broker_calls": [
+    {
+     "ikey": "IK|CRUDEOILM",
+     "product": "I",
+     "qty": 50,
+     "side": "SELL",
+     "tag": "LIVE_X_CRUDEOILM"
+    }
+   ],
+   "capital": 102828.5,
+   "db_orders": [
+    {
+     "direction": "SELL",
+     "fill_price": 8660.0,
+     "intent": "TAKE_PROFIT",
+     "quantity": 5,
+     "requested_price": 8660.0,
+     "status": "FILLED",
+     "symbol": "CRUDEOILM",
+     "tag": "LIVE_EXIT"
+    }
+   ],
+   "db_trades": [
+    {
+     "direction": "long",
+     "entry_price": 8600.0,
+     "exit_price": 8660.0,
+     "exit_reason": "take_profit",
+     "gross_pnl": 3000.0,
+     "net_pnl": 2828.5,
+     "qty": 5,
+     "symbol": "CRUDEOILM",
+     "total_friction": 171.5
+    }
+   ],
+   "still_open": false
+  },
+  "ncd_short_be_stop": {
+   "alerts": [
+    "\u274c <b>LIVE EXIT FILLED</b> USDINR SHORT @ \u20b995.75  [be_stop]\nNet PnL: \u20b9-71.48\nBalance (realized equity): \u20b999,928.52"
+   ],
+   "broker_calls": [
+    {
+     "ikey": "IK|USDINR",
+     "product": "I",
+     "qty": 5000,
+     "side": "BUY",
+     "tag": "LIVE_X_USDINR"
+    }
+   ],
+   "capital": 99928.52,
+   "db_orders": [
+    {
+     "direction": "BUY",
+     "fill_price": 95.75,
+     "intent": "BE_STOP",
+     "quantity": 5,
+     "requested_price": 95.74,
+     "status": "FILLED",
+     "symbol": "USDINR",
+     "tag": "LIVE_EXIT"
+    }
+   ],
+   "db_trades": [
+    {
+     "direction": "short",
+     "entry_price": 95.75,
+     "exit_price": 95.75,
+     "exit_reason": "be_stop",
+     "gross_pnl": 0.0,
+     "net_pnl": -71.48,
+     "qty": 5,
+     "symbol": "USDINR",
+     "total_friction": 71.48
+    }
+   ],
+   "still_open": false
+  }
+ }
+}

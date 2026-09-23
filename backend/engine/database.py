@@ -160,6 +160,12 @@ class TradingDB:
                 "ALTER TABLE positions ADD COLUMN instrument_key TEXT",
                 "ALTER TABLE positions ADD COLUMN entry_order_id TEXT",
                 "ALTER TABLE trades    ADD COLUMN adx REAL",
+                # Which Strategy owns a position/trade (core/strategy.py); `state` is the JSON exit state
+                # the strategy needs to keep managing a position after a restart. Rows written before
+                # strategies existed read as the market's "scalping" strategy.
+                "ALTER TABLE positions ADD COLUMN strategy TEXT DEFAULT 'scalping'",
+                "ALTER TABLE positions ADD COLUMN state TEXT",
+                "ALTER TABLE trades    ADD COLUMN strategy TEXT DEFAULT 'scalping'",
             ]:
                 try:
                     conn.execute(migration_sql)
@@ -253,22 +259,24 @@ class TradingDB:
                       target_price: float, breakeven_price: float,
                       account_id: str = "DRYRUN_ACCOUNT",
                       instrument_key: Optional[str] = None,
-                      entry_order_id: Optional[str] = None) -> None:
+                      entry_order_id: Optional[str] = None,
+                      strategy: str = "scalping",
+                      state: Optional[str] = None) -> None:
         now_str = datetime.now(IST).isoformat()
         with self._get_conn() as conn:
             conn.execute("""
             INSERT INTO positions (
                 position_id, account_id, symbol, direction, qty, entry_price,
                 current_stop, target_price, breakeven_price, best_price, armed_be,
-                status, entry_time, instrument_key, entry_order_id, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'OPEN', ?, ?, ?, ?)
+                status, entry_time, instrument_key, entry_order_id, updated_at, strategy, state
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'OPEN', ?, ?, ?, ?, ?, ?)
             ON CONFLICT(position_id) DO UPDATE SET
                 current_stop = excluded.current_stop,
                 updated_at = excluded.updated_at
             """, (
                 position_id, account_id, symbol, direction.lower(), qty,
                 entry_price, current_stop, target_price, breakeven_price,
-                entry_price, now_str, instrument_key, entry_order_id, now_str
+                entry_price, now_str, instrument_key, entry_order_id, now_str, strategy, state
             ))
 
     def update_position_stop(self, position_id: str, current_stop: float,
@@ -322,7 +330,8 @@ class TradingDB:
                      adx: Optional[float] = None,
                      vwap_dist_pct: Optional[float] = None,
                      ema_slope_pct: Optional[float] = None,
-                     account_id: str = "DRYRUN_ACCOUNT") -> int:
+                     account_id: str = "DRYRUN_ACCOUNT",
+                     strategy: str = "scalping") -> int:
         now_str = datetime.now(IST).isoformat()
         with self._get_conn() as conn:
             cur = conn.execute("""
@@ -332,8 +341,8 @@ class TradingDB:
                 exit_reason, gross_pnl, brokerage, stt, stamp_duty,
                 exchange_txn_fee, sebi_charges, gst, slippage, total_friction,
                 net_pnl, capital_after, p_up, rsi, adx, vwap_dist_pct,
-                ema_slope_pct, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ema_slope_pct, created_at, strategy
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 position_id, account_id, symbol, direction.lower(), qty,
                 entry_price, exit_price, entry_dt, exit_dt, hold_minutes,
@@ -347,7 +356,7 @@ class TradingDB:
                 costs_dict.get("slippage", 0.0),
                 costs_dict.get("total", 0.0),
                 net_pnl, capital_after,
-                p_up, rsi, adx, vwap_dist_pct, ema_slope_pct, now_str
+                p_up, rsi, adx, vwap_dist_pct, ema_slope_pct, now_str, strategy
             ))
             trade_id = cur.lastrowid
 

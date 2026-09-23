@@ -72,7 +72,7 @@ class TestMarketCooldownLogic(unittest.TestCase):
         runner.positions["CRUDEOILM"] = pos_commodity
 
         # Simulate closing a commodity position with a Rs 3,500 loss (3.5% of 100k capital)
-        with patch("engine.live_dryrun.compute_mcx_commodity_costs", return_value={"net": -3500.0, "gross": -3400.0, "total": 100.0}), \
+        with patch("markets.commodity.scalping.strategy.McxScalping.costs", return_value={"net": -3500.0, "gross": -3400.0, "total": 100.0}), \
              patch("services.utils.telegram.send"), \
              patch("services.utils.telegram.alert_exit"):
             runner._close_position("CRUDEOILM", pos_commodity, 5900.0, "stop_loss", now)

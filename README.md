@@ -17,15 +17,16 @@ An institutional-grade, 100% configurable **quantitative trading framework for I
 5. [Dynamic Position Sizing & Margin Budgeting](#dynamic-position-sizing--margin-budgeting)
 6. [Dynamic Instrument Master Resolution](#dynamic-instrument-master-resolution)
 7. [Environment Configuration (`.env`)](#environment-configuration-env)
-8. [Unified CLI Cheat Sheet](#unified-cli-cheat-sheet)
-9. [Running 24/7 as a systemd Service](#running-247-as-a-systemd-service)
-10. [Safety Features (Dry Run)](#safety-features-dry-run)
-11. [Telegram Alerts & Equity Curve Chart](#telegram-alerts--equity-curve-chart)
-12. [Quantitative Strategy & Autocorrelation Regime Architecture](#quantitative-strategy--autocorrelation-regime-architecture)
-13. [Real Market Data Ingestion via Upstox](#real-market-data-ingestion-via-upstox)
-14. [Statutory Taxation & Friction Schedule](#statutory-taxation--friction-schedule)
-15. [Walk-Forward Backtest Performance](#walk-forward-backtest-performance)
-16. [Automated Testing Suite](#automated-testing-suite)
+8. [Adding a strategy](#adding-a-strategy)
+9. [Unified CLI Cheat Sheet](#unified-cli-cheat-sheet)
+10. [Running 24/7 as a systemd Service](#running-247-as-a-systemd-service)
+11. [Safety Features (Dry Run)](#safety-features-dry-run)
+12. [Telegram Alerts & Equity Curve Chart](#telegram-alerts--equity-curve-chart)
+13. [Quantitative Strategy & Autocorrelation Regime Architecture](#quantitative-strategy--autocorrelation-regime-architecture)
+14. [Real Market Data Ingestion via Upstox](#real-market-data-ingestion-via-upstox)
+15. [Statutory Taxation & Friction Schedule](#statutory-taxation--friction-schedule)
+16. [Walk-Forward Backtest Performance](#walk-forward-backtest-performance)
+17. [Automated Testing Suite](#automated-testing-suite)
 
 ---
 
@@ -82,6 +83,11 @@ backend/
 │   ├── regime.py  regime_shift.py    # daily-return autocorrelation gate; out-of-distribution gate
 │   ├── slippage.py                   # real bid/ask spread -> adaptive slippage
 │   ├── sector_correlation.py  base_engine.py
+│   ├── strategy.py                   # THE strategy contract (Strategy, Signal, contexts) -- see docs/ADDING_A_STRATEGY.md
+│   ├── registry.py                   # auto-discovers markets/*/*/strategy.py; picks the active ones from <MARKET>_STRATEGIES
+│   ├── exits.py                      # reusable exit managers (fixed TP + breakeven trail; activation trail)
+│   ├── risk.py                       # heat / margin gates shared by the paper and live runners
+│   ├── sessions.py                   # trading-session windows per market
 │   └── paths.py                      # single source of truth for every filesystem path
 │
 ├── services/                         # External plumbing
@@ -233,6 +239,8 @@ NSE currency and equity are backtested standalone (`python3 -m markets.currency.
 
 | Variable | Built-in default | Description |
 |---|---|---|
+| `COMMODITY_STRATEGIES` / `CURRENCY_STRATEGIES` / `EQUITY_STRATEGIES` | strategies with `default_enabled` (the scalpers) | Comma-separated names of the strategy folders under `markets/<market>/` that trade, e.g. `EQUITY_STRATEGIES=scalping,swing`. A strategy file that isn't named here never trades. See [Adding a strategy](#adding-a-strategy). |
+| `<MARKET>_<STRATEGY>_RISK_PCT` | the market's risk % | Optional per-strategy risk %, e.g. `EQUITY_SWING_RISK_PCT=1.0`. |
 | `USE_COMMODITY_REGIME_FILTER` | `false` (dry run) | Daily-return-autocorrelation regime gate (`core/regime.py`). **Effective for CRUDEOILM only** — validated for crude; extending it to GOLDM/SILVER was tested and reverted (hurts SILVER, no benefit for GOLDM/USDINR). The old name `USE_CRUDE_REGIME_FILTER` is still read as a fallback. |
 | `USE_EQUITY_REGIME_FILTER` | `false` | Same gate on the NIFTY50 index for all equity entries. Unvalidated. |
 | `ENABLE_MEAN_REVERSION` | `true` in code — **`.env` sets `false`** | VWAP/RSI mean-reversion setup for commodity and equity. Off: it failed out-of-sample on crude (TRAIN PF 2.28 → TEST PF 0.96) and had too few trades elsewhere. Thresholds are hardcoded in the `entry_signal` modules, not env vars. |
@@ -245,8 +253,8 @@ NSE currency and equity are backtested standalone (`python3 -m markets.currency.
 | `MAX_MARKET_DAILY_LOSS_PCT` | `3.0` | Same, per market (commodity / currency / equity): that market pauses, the others keep trading. |
 | `MARKET_COOLDOWN_MINUTES` | `60` | Pause length after a per-market breach; 1.5x at 150% of the limit, 2x at 200%+. |
 | `MAX_PORTFOLIO_HEAT_PCT` | `8.0` | Total stop-distance risk across **all** open positions, % of capital. Researched range: 4–8% swing, up to ~10% for tight-stop scalpers. |
-| `MAX_MARGIN_UTILIZATION_PCT` | `90.0` | Total margin committed across all open positions, % of capital — margin is one shared pool, not one per market. |
-| `MAX_MARKET_MARGIN_UTILIZATION_PCT` | `50.0` | Per-market sub-cap so one market can't crowd out the others. Override per market with `COMMODITY_MAX_MARGIN_PCT` / `CURRENCY_MAX_MARGIN_PCT` / `EQUITY_MAX_MARGIN_PCT`. |
+| `MAX_MARGIN_UTILIZATION_PCT` | `100.0` | Total margin the open positions may commit, % of capital — margin is one shared pool. A new entry is **sized to the margin still free**, not rejected. Sizing is margin-bound (one trade routinely uses 80–100% of capital), so values well below 100 shrink every position; 90 (with a 50 per-market cap) once blocked essentially every entry. |
+| `MAX_MARKET_MARGIN_UTILIZATION_PCT` | `100.0` | Same, per market, so one market can't crowd out the others. Override per market with `COMMODITY_MAX_MARGIN_PCT` / `CURRENCY_MAX_MARGIN_PCT` / `EQUITY_MAX_MARGIN_PCT`. |
 | `MAX_POSITIONS_PER_SECTOR` | `1` | Max concurrent open equity positions in one sector (`core/sector_correlation.py`). |
 | `TOKEN_CHECK_INTERVAL_MIN` | `15` | How often the daemon re-validates its Upstox token; also re-checked immediately on a broker 401. |
 | `SPREAD_SAMPLE_INTERVAL_MIN` | `5` | How often live bid/ask is sampled per symbol **while its market is open**, feeding the adaptive slippage model (`var/logs/spread_samples.csv`). |
@@ -265,6 +273,12 @@ Drawdown-scaled position sizing (5 / 10 / 15% drawdown → 10 / 25 / 50% smaller
 | Variable | Default | Description |
 |---|---|---|
 | `ALLOW_LIVE_TRADING` | `false` | Gate 2 of 3 (Gate 1 is `KILL_SWITCH_ENGAGED` in `engine/safety_gate.py`, Gate 3 is the armed-state file from `cli.py arm-live-trading`). Read `docs/LIVE_TRADING_ARMING.md` in full before touching it. |
+
+---
+
+## Adding a strategy
+
+A strategy is **one class in one file** — `markets/<market>/<name>/strategy.py` exposing `STRATEGY` (`python3 cli.py new-strategy --market equity --name swing` creates the template). You write the decisions (entry, sizing, exit, costs); the paper runner and the real-order runner both pick it up automatically and apply the same kill switches, cooldowns, heat/margin limits, sector cap and drawdown-scaled sizing, place orders with the right product type, persist the position across restarts, and tag every order and trade with the strategy name. Switch it on with `EQUITY_STRATEGIES=scalping,swing` (or the commodity / currency equivalent); a strategy that isn't named there never trades. Overnight/delivery strategies (`intraday = False`, `product = "D"`, `uses_leverage = False`) are supported. Full guide and a template: **[docs/ADDING_A_STRATEGY.md](docs/ADDING_A_STRATEGY.md)**.
 
 ---
 
@@ -610,9 +624,12 @@ All three folds are independently seeded at ₹100,000 (not chained/compounded a
 
 ## Automated Testing Suite
 
-To run all unit tests (commodity statutory cost calculators, NSE scalper pipeline, and the generic dissimilarity-gate ML utility):
+To run all unit tests (statutory cost calculators, the scalper pipelines, the strategy framework and the risk gates):
 
 ```bash
 cd backend
 .venv/bin/python3 -m unittest discover -s tests
+RUN_REPLAY=1 .venv/bin/python3 -m unittest tests.test_strategy_parity   # + the ~1 min bar-by-bar replay of the paper runner
 ```
+
+`tests/test_strategy_parity.py` locks the trading behaviour: golden files record what the scalpers did (orders, trades, real-order broker calls) and the code must reproduce them exactly. If you change behaviour **on purpose**, regenerate the golden that moved (commands are in that file's docstring).

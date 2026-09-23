@@ -92,6 +92,7 @@ from __future__ import annotations
 
 from core.paths import BACKEND_ROOT, DB_DIR, LOG_DIR
 import argparse
+import json
 import os
 import sys
 import time
@@ -108,15 +109,13 @@ from services.broker.order_manager import SmartOrderManager
 from services.broker.upstox_broker import UpstoxBroker, token_invalid_event
 from engine.config import UpstoxConfig
 from engine.database import TradingDB
-from markets.commodity.costs import compute_mcx_commodity_costs, COMMODITY_SPECS
-from markets.currency.costs import compute_ncd_currency_costs, CURRENCY_SPECS
-from markets.commodity.scalping.entry_signal import compute_entry_signal, is_currency as _is_currency
-from markets.equity.scalping.entry_signal import (
-    compute_equity_entry_signal, is_equity as _is_equity,
-    MAX_CONCURRENT_EQUITY_POSITIONS, BE_LOCK_BUFFER_PCT as EQUITY_BE_LOCK_BUFFER_PCT,
-)
-from markets.equity.costs import compute_nse_equity_costs
-from markets.equity.features import compute_equity_features
+from markets.commodity.costs import COMMODITY_SPECS
+from markets.currency.costs import CURRENCY_SPECS
+from markets.commodity.scalping.entry_signal import is_currency as _is_currency
+from markets.equity.scalping.entry_signal import is_equity as _is_equity
+from core import registry
+from core.risk import RiskGates
+from core.strategy import EntryContext, ExitContext
 from markets.equity.universe import NIFTY50_SYMBOLS
 from core.sector_correlation import SectorCorrelationGate
 from services.broker.instruments import build_mcx_commodity_map, build_currency_map, get_instrument_key
@@ -249,7 +248,7 @@ def _wait_for_fill(broker: UpstoxBroker, order_id: str, requested_price: float) 
     return "ambiguous", 0.0
 
 
-class LiveTrader:
+class LiveTrader(RiskGates):
     """Real-order equivalent of live_dryrun.py's DryRunner. Same signal logic,
     same risk/session/threshold configuration -- see that file's DryRunner for
     the paper-trading version this mirrors line-for-line where the logic
@@ -327,6 +326,8 @@ class LiveTrader:
         self.order_manager = SmartOrderManager(self.broker)
 
         self.max_portfolio_heat_pct = float(os.environ.get("MAX_PORTFOLIO_HEAT_PCT", "8.0"))
+        self._init_margin_limits()          # shared margin caps -- core/risk.py (were missing on this runner)
+        self.strategies = {m: registry.active(m) for m in registry.MARKETS}
         self._midday_summary_sent = False
 
         log.info("Rule-based LiveTrader signal engine initialized across %d symbols.", len(self.symbols))
@@ -340,16 +341,23 @@ class LiveTrader:
 
         self.positions: dict[str, dict] = {}
         for p in self.db.get_open_positions(self.account_id):
-            self.positions[p["symbol"]] = {
-                "position_id": p["position_id"], "direction": p["direction"], "qty": p["qty"],
+            strat_name = p.get("strategy") or "scalping"
+            strat = registry.get(_get_market(p["symbol"]), strat_name)
+            pos = {
+                "position_id": p["position_id"], "symbol": p["symbol"], "strategy": strat_name,
+                "direction": p["direction"], "qty": p["qty"],
                 "entry_price": p["entry_price"], "current_stop": p["current_stop"],
-                "tp": p["target_price"], "be": p["breakeven_price"],
-                "best_price": p.get("best_price", p["entry_price"]), "armed_be": bool(p.get("armed_be", 0)),
+                "best_price": p.get("best_price", p["entry_price"]),
                 "entry_time": datetime.fromisoformat(p["entry_time"]),
                 "stop_dist": abs(p["entry_price"] - p["current_stop"]) or p["entry_price"] * 0.005,
                 "entry_order_id": p.get("entry_order_id", ""),
-                "instrument_key": self.symbol_map.get(p["symbol"]),
+                # Pinned to the instrument the position was opened on; the current map is only a fallback.
+                "instrument_key": p.get("instrument_key") or self.symbol_map.get(p["symbol"]),
             }
+            pos.update(strat.restore(p))
+            if p.get("state"):
+                pos.update(json.loads(p["state"]))
+            self.positions[p["symbol"]] = pos
             log.warning("Restored OPEN real position from DB on startup: %s %s qty=%s -- "
                         "verify this matches the actual Upstox position book before trusting it.",
                         p["symbol"], p["direction"], p["qty"])
@@ -460,452 +468,207 @@ class LiveTrader:
             log.warning("Could not fetch daily candles for NIFTY50 equity regime gate: %s", exc)
 
     # ---- entry signal (mirrors DryRunner.scan()'s per-symbol logic) --------
-    def _entry_signal(self, sym: str, now: datetime) -> dict | None:
+    # ---- strategy-driven entry / exit ------------------------------------------------
+    # Strategies (core/strategy.py) only decide. Everything below is the real-order execution layer
+    # shared by all of them: funds backstop, order placement with the strategy's product type,
+    # fill confirmation, re-anchoring the levels to the real fill, and the DB / alert bookkeeping.
+    def _strategy_of(self, pos: dict, sym: str | None = None):
+        return registry.get(_get_market(sym or pos["symbol"]), pos.get("strategy", "scalping"))
+
+    def _candles(self, sym: str, ikey: str, strat) -> list[dict]:
+        unit, interval = strat.timeframe
+        if strat.lookback_days > 0:
+            today = datetime.now(IST).date()
+            raw = self.broker.get_historical_candles(ikey, unit=unit, interval=interval, to_date=today.isoformat(),
+                                                     from_date=(today - timedelta(days=strat.lookback_days)).isoformat())
+            return sorted(raw, key=lambda c: c["timestamp"]) if raw else []
+        return _fetch_candles(self.broker, sym, ikey, self.today)
+
+    def _try_enter(self, strat, sym: str, now: datetime) -> bool:
+        market = _get_market(sym)
+        if strat.blocked({"equity_regime_ok": self.equity_regime_ok if self.use_equity_regime_filter else True}):
+            return False
+        if strat.max_positions is not None:
+            open_n = sum(1 for p in self.positions.values()
+                         if p.get("strategy", "scalping") == strat.name and _get_market(p["symbol"]) == market)
+            if open_n >= strat.max_positions:
+                return False
+        if strat.sector_cap:
+            can_enter_sec, reason_sec = self.sector_gate.can_enter(sym, list(self.positions.keys()))
+            if not can_enter_sec:
+                log.info("%s: live %s entry skipped -- %s", sym, market, reason_sec)
+                return False
+        if not strat.due(now):
+            return False
+
         ikey = self.symbol_map.get(sym)
-        candles = _fetch_candles(self.broker, sym, ikey, self.today)
+        base_risk_pct, sym_leverage = self._get_segment_risk_and_leverage(sym)
+        override = os.environ.get(f"{market.upper()}_{strat.name.upper()}_RISK_PCT")
+        if override:
+            base_risk_pct = float(override)
+        leverage = sym_leverage if strat.uses_leverage else 1.0
         regime_ok = self.commodity_regime_ok.get(sym.upper(), None) if self.use_commodity_regime_filter else True
-        base_risk_pct, sym_leverage = self._get_segment_risk_and_leverage(sym)
-        sym_risk_pct = base_risk_pct * self._drawdown_risk_scale()
-        sig = compute_entry_signal(
-            sym, candles, ikey,
-            self.full_session, self.direction_filter, self.capital,
-            sym_risk_pct,
-            sym_leverage,
-            regime_ok=regime_ok,
-        )
-        return sig
+        sizing_capital = self._sizing_capital(market)
+        if sizing_capital <= 0:
+            return False                      # no margin left in the pool -- nothing to size an entry against
+        entry_candles = self._candles(sym, ikey, strat)
+        signal = strat.entry(EntryContext(
+            symbol=sym, candles=entry_candles, now=now, instrument_key=ikey, capital=sizing_capital,
+            risk_pct=base_risk_pct * self._drawdown_risk_scale(), leverage=leverage,
+            direction_filter=self.direction_filter, full_session=self.full_session,
+            regime_ok=regime_ok, equity_regime_ok=self.equity_regime_ok if self.use_equity_regime_filter else True,
+        ))
+        if not signal or (signal.direction == "short" and not strat.allow_short):
+            return False
+        if entry_candles:
+            signal.exit_state["entry_bar_ts"] = str(entry_candles[-1]["timestamp"])   # see core/exits._side
+        rejection = self._entry_gate_rejection(sym, market, signal, leverage)
+        if rejection:
+            log.info("%s: live %s entry skipped -- %s.", sym, market, rejection)
+            return False
+        return self._enter(strat, signal, leverage, now)
 
-    # ---- NSE equity: separate entry/exit path, same reasoning as
-    # live_dryrun.py's DryRunner._maybe_enter_equity/_maybe_exit_equity (see
-    # markets/equity/scalping/entry_signal.py's module docstring for why equity can't
-    # share the commodity/currency shape -- no fixed take-profit, dynamic
-    # ADX-scaled trailing instead). This module stays fully unwired regardless
-    # (see module docstring) -- adding equity here keeps it in sync with the
-    # paper-trading daemon in case it's ever armed, it does not make this file
-    # any less inert on its own. ------------------------------------------
-    def _entry_signal_equity(self, sym: str, now: datetime) -> dict | None:
-        if self.use_equity_regime_filter and self.equity_regime_ok is False:
-            return None
-        ikey = self.symbol_map.get(sym)
-        candles = _fetch_candles(self.broker, sym, ikey, self.today)
-        base_risk_pct, sym_leverage = self._get_segment_risk_and_leverage(sym)
-        scaled_risk_pct = base_risk_pct * self._drawdown_risk_scale()
-        return compute_equity_entry_signal(
-            sym, candles, ikey, self.capital, scaled_risk_pct, sym_leverage,
-            direction_filter=self.direction_filter,
-        )
-
-    def _enter_equity(self, sig: dict, now: datetime) -> None:
-        sym = sig["symbol"]
-        quantity = sig["qty"]
-        transaction_type = "BUY" if sig["direction"] == "long" else "SELL"
+    def _enter(self, strat, signal, leverage: float, now: datetime) -> bool:
+        """Place the real entry order. Returns True only if a position is now open."""
+        sym = signal.symbol
+        quantity = signal.qty * signal.lot_size            # the broker's unit: shares, or lots * lot size
+        transaction_type = "BUY" if signal.direction == "long" else "SELL"
         ts_tag = now.strftime("%Y%m%d_%H%M%S")
         tag = f"LIVE_E_{sym}"[:16]
 
-        # Same real-funds backstop as _enter() above -- see that method's
-        # comment for why this is independent of size_equity_shares' own cap.
-        required_margin = (sig["entry_price"] * quantity) / max(self.leverage, 1.0)
+        # Real-funds check -- deliberately independent of the strategy's own margin-capped sizing, which
+        # sizes against self.capital (this process's LOCAL ledger, seeded from the DB at startup) rather
+        # than the account's actual balance. Those can drift -- a manual withdrawal, a trade placed
+        # outside this process, a fee the ledger doesn't model exactly -- so this is the final,
+        # authoritative check against the real broker balance right before an order that risks real
+        # money. Fails safe: if the funds API can't be reached, treat that as insufficient.
+        required_margin = (signal.entry_price * quantity) / max(leverage, 1.0)
         available_funds = self.broker.get_available_funds()
         if available_funds is None:
             msg = f"🔴 <b>LIVE ENTRY SKIPPED</b> — {sym}: could not fetch real available funds; refusing to size an order against an unknown balance."
             log.error(msg)
             telegram.send(msg)
-            return
+            return False
         if available_funds < required_margin:
             msg = (f"🔴 <b>LIVE ENTRY SKIPPED — INSUFFICIENT FUNDS</b> — {sym}: needs ~₹{required_margin:,.2f} margin, "
                    f"only ₹{available_funds:,.2f} available. New entries for {sym} will keep being skipped until funds recover.")
             log.error(msg)
             telegram.send(msg)
-            return
+            return False
 
-        order_id = self.broker.place_buy_order(sig["instrument_key"], quantity, product="I", tag=tag) \
-            if transaction_type == "BUY" else \
-            self.broker.place_sell_order(sig["instrument_key"], quantity, product="I", tag=tag)
+        place = self.broker.place_buy_order if transaction_type == "BUY" else self.broker.place_sell_order
+        order_id = place(signal.instrument_key, quantity, product=strat.product, tag=tag)
         if not order_id:
             log.error("%s: entry order placement returned no order_id (dry_run broker, or immediate rejection).", sym)
-            return
+            return False
 
-        outcome, fill_price = _wait_for_fill(self.broker, order_id, sig["entry_price"])
+        outcome, fill_price = _wait_for_fill(self.broker, order_id, signal.entry_price)
         if outcome == "rejected":
             log.warning("%s: entry order %s cleanly rejected/cancelled by the broker -- nothing filled, no position opened.", sym, order_id)
-            return
+            return False
         if outcome == "ambiguous":
+            # NOT the same as a clean non-fill -- see _wait_for_fill's docstring. A partial fill means the
+            # broker has real, unmanaged exposure this process doesn't know about: needs a human now.
             msg = (f"🔴🔴 <b>LIVE ENTRY ORDER STATUS UNKNOWN</b> — {sym} {order_id} never reached a confirmed "
                    f"'complete'/'rejected' state within {ORDER_FILL_TIMEOUT_SEC}s. It may be PARTIALLY FILLED "
                    f"at the broker with no position tracked here. Check the real Upstox order book IMMEDIATELY.")
             log.error(msg)
             telegram.send(msg)
-            return
+            return False
 
-        # Re-anchor SL and activation_price to the real fill, same reasoning
-        # as _enter() -- but no fixed TP to re-anchor here (equity has none,
-        # see module docstring); the trailing exit naturally starts fresh
-        # from whatever the real fill price actually was.
-        assumed_entry = sig["entry_price"]
-        slippage_pct = abs(fill_price - assumed_entry) / assumed_entry * 100 if assumed_entry else 0.0
-        real_sl = round(fill_price + (sig["sl"] - assumed_entry), 4)
-        real_activation = round(fill_price + (sig["activation_price"] - assumed_entry), 4)
+        # The real fill rarely equals the price the signal assumed (the prior closed candle's close, from
+        # before the order was placed). Every price level MUST be re-anchored to the real fill, not left
+        # pointing at the stale assumed price -- otherwise a bad-slippage fill silently changes the
+        # position's real risk. Each level shifts by exactly the offset the fill itself shifted, which
+        # preserves the intended stop distance and R-multiples regardless of direction.
+        assumed = signal.entry_price
+        delta = fill_price - assumed
+        slippage_pct = abs(delta) / assumed * 100 if assumed else 0.0
+        dec = strat.price_decimals
+        real_sl = round(signal.stop_loss + delta, dec)
+        real_target = round(signal.target_price + delta, dec)
+        real_be = round(signal.breakeven_price + delta, dec)
+        exit_state = dict(signal.exit_state)
+        for key in signal.price_levels:
+            exit_state[key] = round(exit_state[key] + delta, dec)
 
         _MAX_ENTRY_SLIPPAGE_PCT = 0.5
         if slippage_pct > _MAX_ENTRY_SLIPPAGE_PCT:
             log.warning("%s: entry filled %.2f%% away from the assumed price (%.2f -> %.2f) -- "
-                        "beyond the %.1f%% sanity bound.", sym, slippage_pct, assumed_entry, fill_price,
-                        _MAX_ENTRY_SLIPPAGE_PCT)
-            telegram.send(f"⚠️ <b>LIVE ENTRY LARGE SLIPPAGE</b> — {sym}: assumed ₹{assumed_entry:.2f}, "
-                          f"filled ₹{fill_price:.2f} ({slippage_pct:.2f}% away). SL re-anchored to the real fill.")
+                        "beyond the %.1f%% sanity bound.", sym, slippage_pct, assumed, fill_price, _MAX_ENTRY_SLIPPAGE_PCT)
+            telegram.send(f"⚠️ <b>LIVE ENTRY LARGE SLIPPAGE</b> — {sym}: assumed ₹{assumed:.2f}, "
+                          f"filled ₹{fill_price:.2f} ({slippage_pct:.2f}% away). Levels re-anchored to the real fill.")
 
-        pos_id = f"POS_LIVE_EQ_{ts_tag}_{sym}"
+        pos_id = f"POS_LIVE_{strat.id_prefix}_{ts_tag}_{sym}"
+        margin_used = round(fill_price * quantity / max(leverage, 1.0), 2)
         self.db.place_order(
             order_id=order_id, symbol=sym, direction=transaction_type, intent="ENTRY",
-            order_type="MARKET", qty=quantity, requested_price=sig["entry_price"],
+            order_type="MARKET", qty=signal.qty, requested_price=assumed,
             fill_price=fill_price, status="FILLED", tag="LIVE_ENTRY", account_id=self.account_id,
         )
-        # positions.target_price is NOT NULL and equity has no fixed profit
-        # target -- store activation_price there instead, same repurposing
-        # live_dryrun.py's DryRunner uses.
+        state = {**exit_state, "margin_used": margin_used, "leverage": leverage, "lot_size": signal.lot_size}
         self.db.open_position(
-            position_id=pos_id, symbol=sym, direction=sig["direction"], qty=quantity,
-            entry_price=fill_price, current_stop=real_sl, target_price=real_activation,
-            breakeven_price=real_activation, account_id=self.account_id,
+            position_id=pos_id, symbol=sym, direction=signal.direction, qty=signal.qty,
+            entry_price=fill_price, current_stop=real_sl, target_price=real_target, breakeven_price=real_be,
+            account_id=self.account_id, instrument_key=signal.instrument_key, entry_order_id=order_id,
+            strategy=strat.name, state=json.dumps(state),
         )
         self.positions[sym] = {
-            "position_id": pos_id, "direction": sig["direction"], "qty": quantity,
-            "entry_price": fill_price, "current_stop": real_sl, "activation_price": real_activation,
-            "trail_mult": sig["trail_mult"], "best_price": fill_price, "armed_trail": False,
-            "entry_time": now, "stop_dist": sig["stop_dist"], "entry_order_id": order_id,
-            "instrument_key": sig["instrument_key"],
+            "position_id": pos_id, "symbol": sym, "strategy": strat.name, "direction": signal.direction,
+            "qty": signal.qty, "entry_price": fill_price, "current_stop": real_sl, "best_price": fill_price,
+            "entry_time": now, "stop_dist": signal.stop_dist, "entry_order_id": order_id,
+            # Pinned to the instrument this position was ACTUALLY opened on -- see the day-rollover comment
+            # in scan(): re-looking-up self.symbol_map at exit time would be wrong if a contract rolled.
+            "instrument_key": signal.instrument_key, "lot_size": signal.lot_size, "margin_used": margin_used,
+            "leverage": leverage, **exit_state,
         }
-        log.warning("LIVE ENTRY FILLED (EQUITY): %s %s qty=%s @ %.2f (order_id=%s, SL=%.2f)",
-                    sym, sig["direction"], quantity, fill_price, order_id, real_sl)
+        log.warning("LIVE ENTRY FILLED: %s %s %s qty=%s @ %.2f (order_id=%s, SL=%.2f)",
+                    strat.name, sym, signal.direction, signal.qty, fill_price, order_id, real_sl)
+        # "Balance" (self.capital) is realized equity -- it only changes when a position CLOSES, so it
+        # would look unchanged here even though the order just consumed real margin. Fetch the REAL
+        # post-order available funds so the actual margin impact is visible.
         remaining_funds = self.broker.get_available_funds()
         funds_line = f"\nReal Funds Remaining: ₹{remaining_funds:,.2f}" if remaining_funds is not None else \
             "\nReal Funds Remaining: (could not fetch)"
-        telegram.send(f"📥 <b>LIVE ENTRY FILLED</b> {sym} {sig['direction'].upper()} @ ₹{fill_price:.2f}  "
-                      f"Qty: {quantity}\nSL: ₹{real_sl:.2f} (dynamic trailing, no fixed TP){funds_line}\n"
-                      f"Balance (realized equity): ₹{self.capital:,.2f}")
+        levels = f"SL: ₹{real_sl:.2f}" + (f"  TP: ₹{exit_state['tp']:.2f}" if "tp" in exit_state else " (managed exit, no fixed TP)")
+        telegram.send(f"📥 <b>LIVE ENTRY FILLED</b> [{strat.name}] {sym} {signal.direction.upper()} @ ₹{fill_price:.2f}  "
+                      f"Qty: {signal.qty}\n{levels}{funds_line}\nBalance (realized equity): ₹{self.capital:,.2f}")
+        return True
 
-    def _maybe_exit_equity(self, sym: str, now: datetime) -> None:
-        pos = self.positions[sym]
-        ikey = pos["instrument_key"]
-        candles = _fetch_candles(self.broker, sym, ikey, self.today)
-        if not candles or len(candles) < 25:
-            return
-        raw_df = pd.DataFrame(candles)
-        feat_df = compute_equity_features(raw_df)
-        latest = candles[-1]
-        high, low = float(latest["high"]), float(latest["low"])
-        cur_atr = float(feat_df["atr"].iloc[-1]) if len(feat_df) else pos["stop_dist"]
-        d = 1 if pos["direction"] == "long" else -1
-        fav = high if d == 1 else low
-        adv = low if d == 1 else high
-
-        market_close = datetime.now(IST).replace(hour=15, minute=15, second=0, microsecond=0)
-
-        exit_p = None; reason = None
-        if (adv <= pos["current_stop"] if d == 1 else adv >= pos["current_stop"]):
-            exit_p, reason = pos["current_stop"], ("trail_stop" if pos["armed_trail"] else "initial_stop")
-        elif (now - pos["entry_time"]).total_seconds() >= 80 * 60:
-            exit_p, reason = float(latest["close"]), "timeout_exit"
-        elif now >= market_close:
-            exit_p, reason = float(latest["close"]), "eod_squareoff"
-
-        if exit_p is not None:
-            self._exit_equity(sym, pos, reason, now)
-            return
-
-        armed_before = pos["armed_trail"]
-        stop_before = pos["current_stop"]
-        if not pos["armed_trail"] and (fav >= pos["activation_price"] if d == 1 else fav <= pos["activation_price"]):
-            pos["armed_trail"] = True
-            pos["current_stop"] = pos["entry_price"] + EQUITY_BE_LOCK_BUFFER_PCT * pos["entry_price"] * d
-        if pos["armed_trail"]:
-            pos["best_price"] = max(pos["best_price"], fav) if d == 1 else min(pos["best_price"], fav)
-            trail_dist = pos["trail_mult"] * max(cur_atr, pos["stop_dist"] * 0.1)
-            trail = pos["best_price"] - trail_dist * d
-            pos["current_stop"] = max(pos["current_stop"], trail) if d == 1 else min(pos["current_stop"], trail)
-        if pos["current_stop"] != stop_before or pos["armed_trail"] != armed_before:
-            self.db.update_position_stop(position_id=pos["position_id"], current_stop=pos["current_stop"],
-                                          best_price=pos["best_price"], armed_be=pos["armed_trail"])
-
-    def _exit_equity(self, sym: str, pos: dict, reason: str, now: datetime) -> None:
-        quantity = pos["qty"]
-        exit_side_is_buy = pos["direction"] == "short"
-        tag = f"LIVE_X_{sym}"[:16]
-        ikey = pos["instrument_key"]
-
-        order_id = self.broker.place_buy_order(ikey, quantity, product="I", tag=tag) if exit_side_is_buy \
-            else self.broker.place_sell_order(ikey, quantity, product="I", tag=tag)
-        if not order_id:
-            msg = f"🔴 <b>LIVE EXIT ORDER FAILED TO PLACE</b> — {sym} ({reason}). Position LEFT OPEN. Manual intervention required."
-            log.error(msg)
-            telegram.send(msg)
-            return
-
-        outcome, exit_price = _wait_for_fill(self.broker, order_id, pos["current_stop"])
-        if outcome == "rejected":
-            msg = f"🔴 <b>LIVE EXIT ORDER REJECTED</b> — {sym} {order_id} ({reason}). Position still fully OPEN (nothing filled) -- will retry on the next scan."
-            log.error(msg)
-            telegram.send(msg)
-            return
-        if outcome == "ambiguous":
-            msg = (f"🔴🔴 <b>LIVE EXIT ORDER STATUS UNKNOWN</b> — {sym} {order_id} ({reason}) never reached a "
-                   f"confirmed 'complete'/'rejected' state within {ORDER_FILL_TIMEOUT_SEC}s. It may be PARTIALLY "
-                   f"FILLED -- this process still thinks the full {quantity} shares are open, which may now be "
-                   f"WRONG. Check the real Upstox order/position book IMMEDIATELY and reconcile manually.")
-            log.error(msg)
-            telegram.send(msg)
-            return
-
-        cost_info = compute_nse_equity_costs(pos["direction"], pos["entry_price"], exit_price, quantity)
-        net_pnl = cost_info["net"]
-        self.capital += net_pnl
-        self.peak_capital = max(self.peak_capital, self.capital)
-
-        # Market-specific daily loss limit & cooldown timer
-        self.market_daily_pnl["equity"] = self.market_daily_pnl.get("equity", 0.0) + net_pnl
-        if self.day_start_capital > 0:
-            mkt_loss_pct = -self.market_daily_pnl["equity"] / self.day_start_capital * 100
-            if mkt_loss_pct >= self.max_market_daily_loss_pct:
-                if self.market_cooldown_until.get("equity") is None or self.market_cooldown_until["equity"] < now:
-                    overshoot = mkt_loss_pct / self.max_market_daily_loss_pct
-                    cooldown_mins = (int(self.market_cooldown_minutes * 2) if overshoot >= 2.0
-                                     else int(self.market_cooldown_minutes * 1.5) if overshoot >= 1.5
-                                     else self.market_cooldown_minutes)
-                    cooldown_expiry = now + timedelta(minutes=cooldown_mins)
-                    self.market_cooldown_until["equity"] = cooldown_expiry
-                    expiry_time_str = cooldown_expiry.strftime("%H:%M:%S")
-                    telegram.send(
-                        f"⏸ <b>EQUITY COOLDOWN ACTIVATED (LIVE)</b> — {mkt_loss_pct:.2f}% loss "
-                        f"(limit {self.max_market_daily_loss_pct}%)\n"
-                        f"New equity entries paused for {cooldown_mins}m until <b>{expiry_time_str} IST</b>.\n"
-                        f"Other markets continue normally."
-                    )
-
-        self.symbol_daily_pnl[sym] = self.symbol_daily_pnl.get(sym, 0.0) + net_pnl
-        if not self.symbol_kill_switch.get(sym, False) and self.day_start_capital > 0:
-            sym_loss_pct = -self.symbol_daily_pnl[sym] / self.day_start_capital * 100
-            if sym_loss_pct >= self.max_daily_loss_pct:
-                self.symbol_kill_switch[sym] = True
-                telegram.send(f"🛑 <b>{sym} DAILY LOSS LIMIT HIT (LIVE)</b> — {sym_loss_pct:.2f}% "
-                              f"(limit {self.max_daily_loss_pct}%). New {sym} entries halted for today.")
-
-        self.db.place_order(
-            order_id=order_id, symbol=sym, direction="BUY" if exit_side_is_buy else "SELL",
-            intent=reason.upper(), order_type="MARKET", qty=quantity, requested_price=pos["current_stop"],
-            fill_price=exit_price, status="FILLED", tag="LIVE_EXIT", account_id=self.account_id,
-        )
-        self.db.close_position(position_id=pos["position_id"], exit_price=exit_price, exit_reason=reason,
-                                gross_pnl=cost_info["gross"], net_pnl=net_pnl, total_fees=cost_info["total"])
-        hold_mins = (now - pos["entry_time"]).total_seconds() / 60.0
-        self.db.record_trade(
-            position_id=pos["position_id"], symbol=sym, direction=pos["direction"], qty=quantity,
-            entry_price=pos["entry_price"], exit_price=exit_price, entry_dt=pos["entry_time"].isoformat(),
-            exit_dt=now.isoformat(), hold_minutes=hold_mins, exit_reason=reason, gross_pnl=cost_info["gross"],
-            costs_dict=cost_info, net_pnl=net_pnl, capital_after=self.capital, account_id=self.account_id,
-        )
-        del self.positions[sym]
-        log.warning("LIVE EXIT FILLED (EQUITY): %s %s @ %.2f [%s] net=%.2f (order_id=%s)",
-                    sym, pos["direction"], exit_price, reason, net_pnl, order_id)
-        telegram.send(f"{'✅' if net_pnl >= 0 else '❌'} <b>LIVE EXIT FILLED</b> {sym} {pos['direction'].upper()} "
-                      f"@ ₹{exit_price:.2f}  [{reason}]\nNet PnL: ₹{net_pnl:+,.2f}\n"
-                      f"Balance (realized equity): ₹{self.capital:,.2f}")
-
-    # ---- real order placement -----------------------------------------------
-    def _enter(self, sig: dict, now: datetime) -> None:
-        sym = sig["symbol"]
-        is_curr = _is_currency(sym)
-        lot_size = (CURRENCY_SPECS.get(sym.upper(), {}).get("lot_size", 1000) if is_curr
-                    else COMMODITY_SPECS.get(sym, {}).get("lot_size", 1))
-        quantity = sig["lots"] * lot_size
-        transaction_type = "BUY" if sig["direction"] == "long" else "SELL"
-        ts_tag = now.strftime("%Y%m%d_%H%M%S")
-        tag = f"LIVE_E_{sym}"[:16]
-
-        # Real-funds check -- deliberately independent of size_commodity_lots/
-        # size_currency_lots' own margin cap above, which sizes against
-        # self.capital (this process's LOCAL tracked ledger, seeded from the
-        # DB at startup) rather than the account's actual current balance.
-        # Those can drift -- a manual withdrawal, a trade placed outside this
-        # process, a fee this ledger doesn't model exactly -- so this is the
-        # final, authoritative check against the real broker balance right
-        # before an order that risks real money, not a substitute for the
-        # sizing logic above but a backstop on top of it. Fails safe: if the
-        # funds API can't be reached at all, treat that as insufficient
-        # rather than proceeding on an unknown balance.
-        sym_leverage = _SYMBOL_LEVERAGE_OVERRIDE.get(sym.upper(), self.leverage)
-        required_margin = (sig["entry_price"] * quantity) / max(sym_leverage, 1.0)
-        available_funds = self.broker.get_available_funds()
-        if available_funds is None:
-            msg = f"🔴 <b>LIVE ENTRY SKIPPED</b> — {sym}: could not fetch real available funds; refusing to size an order against an unknown balance."
-            log.error(msg)
-            telegram.send(msg)
-            return
-        if available_funds < required_margin:
-            msg = (f"🔴 <b>LIVE ENTRY SKIPPED — INSUFFICIENT FUNDS</b> — {sym}: needs ~₹{required_margin:,.2f} margin, "
-                   f"only ₹{available_funds:,.2f} available. New entries for {sym} will keep being skipped until funds recover.")
-            log.error(msg)
-            telegram.send(msg)
-            return
-
-        order_id = self.broker.place_buy_order(sig["instrument_key"], quantity, product="I", tag=tag) \
-            if transaction_type == "BUY" else \
-            self.broker.place_sell_order(sig["instrument_key"], quantity, product="I", tag=tag)
-
-        if not order_id:
-            log.error("%s: entry order placement returned no order_id (dry_run broker, or immediate rejection).", sym)
-            return
-
-        outcome, fill_price = _wait_for_fill(self.broker, order_id, sig["entry_price"])
-        if outcome == "rejected":
-            log.warning("%s: entry order %s cleanly rejected/cancelled by the broker -- nothing filled, no position opened.", sym, order_id)
-            return
-        if outcome == "ambiguous":
-            # NOT the same as a clean non-fill -- see _wait_for_fill's docstring.
-            # A partial fill here means the broker has real, unmanaged exposure
-            # this process doesn't know about. This needs a human to check the
-            # actual order/position book now, not a best-effort guess.
-            msg = (f"🔴🔴 <b>LIVE ENTRY ORDER STATUS UNKNOWN</b> — {sym} {order_id} never reached a confirmed "
-                   f"'complete'/'rejected' state within {ORDER_FILL_TIMEOUT_SEC}s. It may be PARTIALLY FILLED "
-                   f"at the broker with no position tracked here. Check the real Upstox order book IMMEDIATELY.")
-            log.error(msg)
-            telegram.send(msg)
-            return
-
-        # Real fill price vs. the price _entry_signal() assumed (the prior
-        # closed candle's close, from before the order was even placed) will
-        # rarely match exactly -- this is the scenario that prompted this
-        # comment: "we placed the order for some price and that price didn't
-        # come". SL/TP/BE MUST be re-anchored to the real fill, not left
-        # pointing at the stale assumed price -- otherwise a bad-slippage fill
-        # silently changes the position's real risk without anyone noticing.
-        assumed_entry = sig["entry_price"]
-        slippage_pct = abs(fill_price - assumed_entry) / assumed_entry * 100 if assumed_entry else 0.0
-        # Shift each level by exactly the same offset the fill itself shifted
-        # from the assumed price -- preserves the intended stop distance and
-        # R-multiple TP/BE regardless of direction, without re-deriving the
-        # sign logic that _entry_signal() already got right once.
-        real_sl = round(fill_price + (sig["sl"] - assumed_entry), 2)
-        real_tp = round(fill_price + (sig["tp"] - assumed_entry), 2)
-        real_be = round(fill_price + (sig["be"] - assumed_entry), 2)
-
-        # Extreme-slippage safeguard: if the real fill already sits on the
-        # wrong side of where the stop should be (a large adverse gap between
-        # order placement and fill), don't hold a position that opened
-        # already past its own risk boundary -- close it immediately instead.
-        _MAX_ENTRY_SLIPPAGE_PCT = 0.5
-        if slippage_pct > _MAX_ENTRY_SLIPPAGE_PCT:
-            log.warning("%s: entry filled %.2f%% away from the assumed price (%.2f -> %.2f) -- "
-                        "beyond the %.1f%% sanity bound.", sym, slippage_pct, assumed_entry, fill_price,
-                        _MAX_ENTRY_SLIPPAGE_PCT)
-            telegram.send(f"⚠️ <b>LIVE ENTRY LARGE SLIPPAGE</b> — {sym}: assumed ₹{assumed_entry:.2f}, "
-                          f"filled ₹{fill_price:.2f} ({slippage_pct:.2f}% away). SL/TP re-anchored to the real fill.")
-
-        pos_id = f"POS_LIVE_{ts_tag}_{sym}"
-        self.db.place_order(
-            order_id=order_id, symbol=sym, direction=transaction_type, intent="ENTRY",
-            order_type="MARKET", qty=sig["lots"], requested_price=sig["entry_price"],
-            fill_price=fill_price, status="FILLED", tag="LIVE_ENTRY", account_id=self.account_id,
-        )
-        self.db.open_position(
-            position_id=pos_id, symbol=sym, direction=sig["direction"], qty=sig["lots"],
-            entry_price=fill_price, current_stop=real_sl, target_price=real_tp,
-            breakeven_price=real_be, account_id=self.account_id,
-            instrument_key=sig["instrument_key"],
-            entry_order_id=order_id,
-        )
-        self.positions[sym] = {
-            "position_id": pos_id, "direction": sig["direction"], "qty": sig["lots"],
-            "entry_price": fill_price, "current_stop": real_sl, "tp": real_tp, "be": real_be,
-            "best_price": fill_price, "armed_be": False, "entry_time": now,
-            "stop_dist": sig["stop_dist"], "entry_order_id": order_id,
-            # Pinned to the instrument this position was ACTUALLY opened on --
-            # see the day-rollover comment in scan() for why re-looking-up
-            # self.symbol_map at exit time instead would be wrong if a
-            # contract rolled over while this position was open.
-            "instrument_key": sig["instrument_key"],
-        }
-        log.warning("LIVE ENTRY FILLED: %s %s qty=%s @ %.2f (order_id=%s, SL=%.2f, TP=%.2f)",
-                    sym, sig["direction"], sig["lots"], fill_price, order_id, real_sl, real_tp)
-        # "Balance" (self.capital) is realized equity -- it only changes when
-        # a position CLOSES, never on entry (see _exit -- self.capital +=
-        # net_pnl), so it would look unchanged here even though the order
-        # just consumed real margin. Fetches the REAL post-order available
-        # funds fresh (the pre-order check earlier in this method is now
-        # stale) so the actual margin impact is visible instead of implied
-        # by a "Balance" figure that was never going to move.
-        remaining_funds = self.broker.get_available_funds()
-        funds_line = f"\nReal Funds Remaining: ₹{remaining_funds:,.2f}" if remaining_funds is not None else \
-            "\nReal Funds Remaining: (could not fetch)"
-        telegram.send(f"📥 <b>LIVE ENTRY FILLED</b> {sym} {sig['direction'].upper()} @ ₹{fill_price:.2f}  "
-                      f"Qty: {sig['lots']}\nSL: ₹{real_sl:.2f}  TP: ₹{real_tp:.2f}{funds_line}\n"
-                      f"Balance (realized equity): ₹{self.capital:,.2f}")
-
-    # ---- exit management (mirrors DryRunner._maybe_exit/_close_position) ----
     def _maybe_exit(self, sym: str, now: datetime) -> None:
         pos = self.positions[sym]
+        strat = self._strategy_of(pos, sym)
         ikey = pos["instrument_key"]  # pinned at entry -- NOT a fresh self.symbol_map lookup, see _enter()'s comment
-        candles = _fetch_candles(self.broker, sym, ikey, self.today)
+        candles = self._candles(sym, ikey, strat)
         if not candles:
             return
-        latest = candles[-1]
-        high, low = float(latest["high"]), float(latest["low"])
-        d = 1 if pos["direction"] == "long" else -1
-        fav = high if d == 1 else low
-        adv = low if d == 1 else high
-
-        if _is_currency(sym):
-            market_close = datetime.now(IST).replace(hour=16, minute=50, second=0, microsecond=0)
-        else:
-            market_close = datetime.now(IST).replace(hour=22, minute=45, second=0, microsecond=0)
-
-        exit_p = None
-        reason = None
-        if (fav >= pos["tp"] if d == 1 else fav <= pos["tp"]):
-            exit_p, reason = pos["tp"], "take_profit"
-        elif (adv <= pos["current_stop"] if d == 1 else adv >= pos["current_stop"]):
-            exit_p, reason = pos["current_stop"], ("be_stop" if pos["armed_be"] else "initial_stop")
-        elif (now - pos["entry_time"]).total_seconds() >= 80 * 60:
-            exit_p, reason = float(latest["close"]), "timeout_exit"
-        elif now >= market_close:
-            exit_p, reason = float(latest["close"]), "eod_squareoff"
-
-        if exit_p is not None:
-            self._exit(sym, pos, reason, now)
+        armed_key = "armed_be" if "armed_be" in pos else "armed_trail"
+        before = (pos["current_stop"], pos.get(armed_key))
+        decision = strat.manage(pos, ExitContext(symbol=sym, candles=candles, now=now))
+        if decision is not None:
+            self._exit(sym, pos, decision, now)
             return
-
-        armed_before = pos["armed_be"]
-        stop_before = pos["current_stop"]
-        if not pos["armed_be"] and (fav >= pos["be"] if d == 1 else fav <= pos["be"]):
-            pos["armed_be"] = True
-            pos["current_stop"] = pos["entry_price"] + 0.0020 * pos["entry_price"] * d
-        if pos["armed_be"]:
-            pos["best_price"] = max(pos["best_price"], fav) if d == 1 else min(pos["best_price"], fav)
-            trail = pos["best_price"] - 0.30 * pos["stop_dist"] * d
-            pos["current_stop"] = max(pos["current_stop"], trail) if d == 1 else min(pos["current_stop"], trail)
-        if pos["current_stop"] != stop_before or pos["armed_be"] != armed_before:
+        if (pos["current_stop"], pos.get(armed_key)) != before:
             self.db.update_position_stop(position_id=pos["position_id"], current_stop=pos["current_stop"],
-                                          best_price=pos["best_price"], armed_be=pos["armed_be"])
+                                          best_price=pos["best_price"], armed_be=bool(pos.get(armed_key, False)))
 
-    def _exit(self, sym: str, pos: dict, reason: str, now: datetime) -> None:
-        is_curr = _is_currency(sym)
-        lot_size = (CURRENCY_SPECS.get(sym.upper(), {}).get("lot_size", 1000) if is_curr
-                    else COMMODITY_SPECS.get(sym, {}).get("lot_size", 1))
-        quantity = pos["qty"] * lot_size
+    def _exit(self, sym: str, pos: dict, decision, now: datetime) -> None:
+        reason, expected_price = decision.reason, decision.price
+        strat = self._strategy_of(pos, sym)
+        quantity = pos["qty"] * (pos.get("lot_size") or strat.lot_size(sym))
         # Exit is always the opposite side of entry.
         exit_side_is_buy = pos["direction"] == "short"
         tag = f"LIVE_X_{sym}"[:16]
         ikey = pos["instrument_key"]  # pinned at entry -- see _maybe_exit's comment
 
-        order_id = self.broker.place_buy_order(ikey, quantity, product="I", tag=tag) if exit_side_is_buy \
-            else self.broker.place_sell_order(ikey, quantity, product="I", tag=tag)
-
+        place = self.broker.place_buy_order if exit_side_is_buy else self.broker.place_sell_order
+        order_id = place(ikey, quantity, product=strat.product, tag=tag)
         if not order_id:
             msg = f"🔴 <b>LIVE EXIT ORDER FAILED TO PLACE</b> — {sym} ({reason}). Position LEFT OPEN. Manual intervention required."
             log.error(msg)
             telegram.send(msg)
             return
 
-        expected_price = pos["tp"] if reason == "take_profit" else pos["current_stop"]
         outcome, exit_price = _wait_for_fill(self.broker, order_id, expected_price)
         if outcome == "rejected":
             msg = f"🔴 <b>LIVE EXIT ORDER REJECTED</b> — {sym} {order_id} ({reason}). Position still fully OPEN (nothing filled) -- will retry on the next scan."
@@ -913,24 +676,18 @@ class LiveTrader:
             telegram.send(msg)
             return
         if outcome == "ambiguous":
-            # Worse than the entry case: this position is still tracked as
-            # fully open here, but a partial fill at the broker means the
-            # REAL remaining size could be smaller (or zero) -- a mismatch
-            # that won't self-correct on the next scan the way a clean
-            # rejection does. Needs a human to reconcile the real position
-            # book against what this process thinks is still open.
+            # Worse than the entry case: this position is still tracked as fully open here, but a partial
+            # fill at the broker means the REAL remaining size could be smaller (or zero) -- a mismatch
+            # that won't self-correct the way a clean rejection does. Needs a human to reconcile.
             msg = (f"🔴🔴 <b>LIVE EXIT ORDER STATUS UNKNOWN</b> — {sym} {order_id} ({reason}) never reached a "
                    f"confirmed 'complete'/'rejected' state within {ORDER_FILL_TIMEOUT_SEC}s. It may be PARTIALLY "
-                   f"FILLED -- this process still thinks the full {pos['qty']} lots are open, which may now be "
+                   f"FILLED -- this process still thinks the full {pos['qty']} is open, which may now be "
                    f"WRONG. Check the real Upstox order/position book IMMEDIATELY and reconcile manually.")
             log.error(msg)
             telegram.send(msg)
             return
 
-        if is_curr:
-            cost_info = compute_ncd_currency_costs(sym, pos["direction"], pos["entry_price"], exit_price, pos["qty"])
-        else:
-            cost_info = compute_mcx_commodity_costs(sym, pos["direction"], pos["entry_price"], exit_price, pos["qty"])
+        cost_info = strat.costs(sym, pos["direction"], pos["entry_price"], exit_price, pos["qty"])
         net_pnl = cost_info["net"]
         self.capital += net_pnl
         self.peak_capital = max(self.peak_capital, self.capital)
@@ -977,7 +734,7 @@ class LiveTrader:
             entry_price=pos["entry_price"], exit_price=exit_price, entry_dt=pos["entry_time"].isoformat(),
             exit_dt=now.isoformat(), hold_minutes=hold_mins, exit_reason=reason, gross_pnl=cost_info["gross"],
             costs_dict=cost_info, net_pnl=net_pnl, capital_after=self.capital,
-            adx=pos.get("adx"), account_id=self.account_id,
+            adx=pos.get("adx"), account_id=self.account_id, strategy=strat.name,
         )
         del self.positions[sym]
         log.warning("LIVE EXIT FILLED: %s %s @ %.2f [%s] net=%.2f (order_id=%s)",
@@ -1012,12 +769,7 @@ class LiveTrader:
                 pos = self.positions[sym]
                 ltp = self.broker.get_ltp(self.symbol_map.get(sym, ""))
                 approx_exit = ltp if ltp is not None else pos["entry_price"]
-                if _is_equity(sym):
-                    cost_info = compute_nse_equity_costs(pos["direction"], pos["entry_price"], approx_exit, pos["qty"])
-                elif _is_currency(sym):
-                    cost_info = compute_ncd_currency_costs(sym, pos["direction"], pos["entry_price"], approx_exit, pos["qty"])
-                else:
-                    cost_info = compute_mcx_commodity_costs(sym, pos["direction"], pos["entry_price"], approx_exit, pos["qty"])
+                cost_info = self._strategy_of(pos, sym).costs(sym, pos["direction"], pos["entry_price"], approx_exit, pos["qty"])
                 net_pnl = cost_info["net"]
                 self.capital += net_pnl
                 self.db.close_position(position_id=pos["position_id"], exit_price=approx_exit,
@@ -1115,46 +867,16 @@ class LiveTrader:
 
         for sym in self.symbols:
             market = _get_market(sym)
-            if not self.segment_enabled.get(market, True) or self._is_market_on_cooldown(market, now):
-                if sym in self.positions:
-                    if _is_equity(sym):
-                        self._maybe_exit_equity(sym, now)
-                    else:
-                        self._maybe_exit(sym, now)
-                continue
-
-            if _is_equity(sym):
-                if sym in self.positions:
-                    self._maybe_exit_equity(sym, now)
-                    continue
-                if self.kill_switch_active or self.symbol_kill_switch.get(sym, False):
-                    continue
-                open_equity_count = sum(1 for s in self.positions if _is_equity(s))
-                if open_equity_count >= MAX_CONCURRENT_EQUITY_POSITIONS:
-                    continue
-                can_enter_sec, reason_sec = self.sector_gate.can_enter(sym, list(self.positions.keys()))
-                if not can_enter_sec:
-                    log.info("%s: live equity entry skipped -- %s", sym, reason_sec)
-                    continue
-                sig = self._entry_signal_equity(sym, now)
-                if sig:
-                    self._enter_equity(sig, now)
-                continue
-
             if sym in self.positions:
-                self._maybe_exit(sym, now)
+                self._maybe_exit(sym, now)       # open positions are always managed, even if the market is paused
+                continue
+            if not self.segment_enabled.get(market, True) or self._is_market_on_cooldown(market, now):
                 continue
             if self.kill_switch_active or self.symbol_kill_switch.get(sym, False):
                 continue
-            sig = self._entry_signal(sym, now)
-            if sig:
-                is_curr = _is_currency(sym)
-                _mult = CURRENCY_SPECS.get(sym.upper(), {}).get("lot_size", 1000) if is_curr else COMMODITY_SPECS.get(sym, {}).get("lot_size", 1)
-                _new_risk_rupees = sig["stop_dist"] * sig["lots"] * _mult
-                if self.capital > 0 and (self._portfolio_heat_pct() + _new_risk_rupees / self.capital * 100) > self.max_portfolio_heat_pct:
-                    log.info("%s: live entry skipped -- would push total portfolio risk past %.1f%% heat cap.", sym, self.max_portfolio_heat_pct)
-                    continue
-                self._enter(sig, now)
+            for strat in self.strategies[market]:
+                if self._try_enter(strat, sym, now):
+                    break                        # one position per symbol across all strategies
 
 
 def _acquire_process_lock(account_id: str):

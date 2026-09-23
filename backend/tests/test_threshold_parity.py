@@ -31,9 +31,16 @@ class TestThresholdParity(unittest.TestCase):
     def test_currency_min_orb_is_the_same_value(self):
         self.assertEqual(entry_signal.CURRENCY_MIN_ORB, backtest_currency._MIN_ORB)
 
-    def test_live_dryrun_and_live_trading_use_the_same_entry_signal_function(self):
-        self.assertIs(live_dryrun.compute_entry_signal, entry_signal.compute_entry_signal)
-        self.assertIs(live_trading.compute_entry_signal, entry_signal.compute_entry_signal)
+    def test_live_dryrun_and_live_trading_get_their_strategies_from_the_same_registry(self):
+        # Entry/exit decisions live in the Strategy objects, so both runners can only drift apart if
+        # one stops using the shared registry.
+        from core import registry
+        self.assertIs(live_dryrun.registry, registry)
+        self.assertIs(live_trading.registry, registry)
+
+    def test_the_commodity_scalping_strategy_wraps_the_shared_entry_signal_function(self):
+        from markets.commodity.scalping import strategy as commodity_strategy
+        self.assertIs(commodity_strategy.compute_entry_signal, entry_signal.compute_entry_signal)
 
     def test_all_live_traded_commodity_symbols_have_dedicated_thresholds(self):
         # Anything live_dryrun.py's is_natgas/is_gold/is_silver detection can match

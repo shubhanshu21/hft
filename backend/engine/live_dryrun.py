@@ -52,17 +52,13 @@ import pandas as pd
 from services.broker.feed_streamer import UpstoxFeedStreamer
 from services.broker.upstox_broker import UpstoxBroker, token_invalid_event
 from engine.database import TradingDB
-from markets.commodity.costs import compute_mcx_commodity_costs, COMMODITY_SPECS
-from markets.currency.costs import (
-    compute_ncd_currency_costs, CURRENCY_SPECS,
-)
-from markets.commodity.scalping.entry_signal import compute_entry_signal, is_currency as _is_currency
-from markets.equity.scalping.entry_signal import (
-    compute_equity_entry_signal, is_equity as _is_equity,
-    MAX_CONCURRENT_EQUITY_POSITIONS, BE_LOCK_BUFFER_PCT as EQUITY_BE_LOCK_BUFFER_PCT,
-)
-from markets.equity.costs import compute_nse_equity_costs
-from markets.equity.features import compute_equity_features
+from markets.commodity.costs import COMMODITY_SPECS
+from markets.currency.costs import CURRENCY_SPECS
+from markets.commodity.scalping.entry_signal import is_currency as _is_currency
+from markets.equity.scalping.entry_signal import is_equity as _is_equity
+from core import registry, sessions
+from core.risk import RiskGates
+from core.strategy import EntryContext, ExitContext
 from markets.equity.universe import NIFTY50_SYMBOLS
 from core.sector_correlation import SectorCorrelationGate
 
@@ -121,22 +117,8 @@ def _get_market(sym: str) -> str:
     return "commodity"
 
 
-# Wall-clock (minutes since midnight IST) trading windows per market, used
-# only to gate spread sampling (see _maybe_sample_spread) -- NOT the entry
-# gates themselves, which already have their own tighter windows in
-# entry_signal.py/equity_entry_signal.py. Deliberately the OUTER session
-# bounds (broker feed is live), not the narrower entry-gate window.
-_SESSION_WINDOW_MIN = {
-    "commodity": (9 * 60, 23 * 60 + 30),     # 09:00-23:30 IST
-    "currency": (9 * 60, 17 * 60),           # 09:00-17:00 IST
-    "equity": (9 * 60 + 15, 15 * 60 + 30),   # 09:15-15:30 IST
-}
-
-
 def _is_market_session_open(sym: str, now: datetime) -> bool:
-    lo, hi = _SESSION_WINDOW_MIN[_get_market(sym)]
-    mins = now.hour * 60 + now.minute
-    return lo <= mins <= hi
+    return sessions.is_open(_get_market(sym), now)
 
 
 from services.broker.instruments import build_mcx_commodity_map, build_currency_map, get_instrument_key
@@ -275,11 +257,34 @@ def _fetch_candles(broker: UpstoxBroker, symbol: str, today: str) -> list[dict]:
     return list(reversed(raw))
 
 
+def _fetch_intraday(broker: UpstoxBroker, symbol: str, unit: str, interval: int, today: str) -> list[dict]:
+    """Today's candles for any intraday timeframe (the 5-minute case is _fetch_candles)."""
+    ikey = SYMBOL_MAP.get(symbol)
+    if not ikey:
+        return []
+    raw = broker.get_intraday_candles(ikey, unit=unit, interval=interval)
+    if not raw:
+        raw = broker.get_historical_candles(ikey, unit=unit, interval=interval, to_date=today)
+    return list(reversed(raw)) if raw else []
+
+
+def _fetch_history(broker: UpstoxBroker, symbol: str, unit: str, interval: int, lookback_days: int) -> list[dict]:
+    """`lookback_days` of history for daily / multi-day strategies, chronological. The newest bar
+    can be today's still-forming one; a strategy that needs completed bars should drop it."""
+    ikey = SYMBOL_MAP.get(symbol)
+    if not ikey:
+        return []
+    today = date.today()
+    raw = broker.get_historical_candles(ikey, unit=unit, interval=interval, to_date=today.isoformat(),
+                                        from_date=(today - timedelta(days=lookback_days)).isoformat())
+    return sorted(raw, key=lambda c: c["timestamp"]) if raw else []
+
+
 # ---------------------------------------------------------------------------
 # Core Paper Trading Runner
 # ---------------------------------------------------------------------------
 
-class DryRunner:
+class DryRunner(RiskGates):
     def __init__(self, broker: UpstoxBroker, db: TradingDB, symbols: list[str],
                  capital: float, risk_pct: float, leverage: float,
                  account_id: str = "DRYRUN_ACCOUNT",
@@ -308,26 +313,35 @@ class DryRunner:
             self.capital = acct["current_capital"]
 
 
-        # Restore open positions from DB if any
+        # Strategies switched on per market (COMMODITY_/CURRENCY_/EQUITY_STRATEGIES in .env).
+        self.strategies = {m: registry.active(m) for m in registry.MARKETS}
+        log.info("Strategies: %s", {m: [x.name for x in v] for m, v in self.strategies.items()})
+
+        # Restore open positions from DB if any. Each is handed back to the strategy that opened it
+        # (rows saved before strategies existed read as that market's "scalping").
         self.positions: dict[str, dict] = {}
         for p in self.db.get_open_positions(self.account_id):
-            self.positions[p["symbol"]] = {
+            strat_name = p.get("strategy") or "scalping"
+            pos = {
                 "position_id": p["position_id"],
                 "symbol": p["symbol"],
+                "strategy": strat_name,
                 "direction": p["direction"],
                 "entry_price": p["entry_price"],
                 "qty": p["qty"],
                 "sl": p["current_stop"],
-                "tp": p["target_price"],
-                "be": p["breakeven_price"],
                 "current_stop": p["current_stop"],
                 "best_price": p["best_price"],
-                "armed_be": bool(p["armed_be"]),
                 "entry_time": datetime.fromisoformat(p["entry_time"]) if "T" in p["entry_time"] else datetime.now(IST),
                 "stop_dist": abs(p["entry_price"] - p["current_stop"]),
                 "trade_value": p["qty"] * p["entry_price"],
                 "rsi": 50.0, "vwap_dist_pct": 0.0, "ema_slope_pct": 0.0,
             }
+            strat = registry.get(_get_market(p["symbol"]), strat_name)
+            pos.update(strat.restore(p))
+            if p.get("state"):
+                pos.update(json.loads(p["state"]))     # exact state the runner saved at entry wins over legacy fallbacks
+            self.positions[p["symbol"]] = pos
 
         self.trades: list[dict] = []
         self.today = date.today().isoformat()
@@ -363,37 +377,8 @@ class DryRunner:
         # 4% felt tighter than the existing per-trade sizing already implies.
         self.max_portfolio_heat_pct = float(os.environ.get("MAX_PORTFOLIO_HEAT_PCT", "8.0"))
 
-        # Shared margin pool cap -- found missing 2026-09-23 while auditing
-        # margin/leverage setup: each market's sizing (size_commodity_lots /
-        # size_currency_lots / size_equity_shares) independently caps its own
-        # lot/share count against the FULL current capital's margin capacity,
-        # with no awareness of margin ALREADY committed by other open
-        # positions across the other 8 symbols. A real broker margin account
-        # is one shared pool, not one per symbol -- markets/equity/scalping/backtest.py's own
-        # validated engine enforces exactly this (its `committed_margin`
-        # bookkeeping), but live_dryrun.py never mirrored it. Without this,
-        # several symbols triggering together (a real, not hypothetical,
-        # scenario -- see core/sector_correlation.py's whole reason for
-        # existing) could commit far more margin in aggregate than the
-        # configured leverage should ever allow.
-        self.max_margin_utilization_pct = float(os.environ.get("MAX_MARGIN_UTILIZATION_PCT", "90.0"))
-
-        # Per-market sub-cap on top of the shared pool above -- without this,
-        # one market (e.g. commodity, with 6 symbols vs currency's 3) could
-        # legitimately consume the entire margin pool first and starve the
-        # others of room to enter, even though each market has its own
-        # distinct risk/leverage settings (COMMODITY_LEVERAGE vs
-        # CURRENCY_LEVERAGE vs EQUITY_LEVERAGE) and shouldn't be able to
-        # crowd out the others. Mirrors the existing per-market daily-loss
-        # cooldown pattern (market_daily_pnl/market_cooldown_until below).
-        # Per-market override falls back to a shared default so this doesn't
-        # need three separate .env entries unless someone wants asymmetric caps.
-        _default_market_margin_pct = float(os.environ.get("MAX_MARKET_MARGIN_UTILIZATION_PCT", "50.0"))
-        self.max_market_margin_utilization_pct: dict[str, float] = {
-            "commodity": float(os.environ.get("COMMODITY_MAX_MARGIN_PCT", _default_market_margin_pct)),
-            "currency": float(os.environ.get("CURRENCY_MAX_MARGIN_PCT", _default_market_margin_pct)),
-            "equity": float(os.environ.get("EQUITY_MAX_MARGIN_PCT", _default_market_margin_pct)),
-        }
+        # Shared margin-pool caps (global + per market) -- see core/risk.py.
+        self._init_margin_limits()
 
         # Full-day vs evening-only trading window -- see markets/commodity/scalping/backtest.py's
         # us_session_only for the matching backtest flag/comparison. Switched
@@ -534,21 +519,6 @@ class DryRunner:
                 multiplier = COMMODITY_SPECS.get(sym, {}).get("lot_size", 1)
             total_risk_rupees += stop_dist * pos["qty"] * multiplier
         return total_risk_rupees / self.capital * 100
-
-    def _total_margin_used(self) -> float:
-        """Sum of margin already committed by every open position, across
-        all three markets -- the shared pool a new entry's margin must be
-        checked against (see __init__'s comment on max_margin_utilization_pct)."""
-        return sum(pos.get("margin_used", 0.0) for pos in self.positions.values())
-
-    def _market_margin_used(self, market: str) -> float:
-        """Same as _total_margin_used but scoped to one market -- backs the
-        per-market sub-cap (max_market_margin_utilization_pct)."""
-        return sum(
-            pos.get("margin_used", 0.0)
-            for sym, pos in self.positions.items()
-            if _get_market(sym) == market
-        )
 
     def _drawdown_risk_scale(self) -> float:
         """Anti-martingale position-size scaling: shrink new trades'
@@ -761,339 +731,144 @@ class DryRunner:
             if self._is_market_on_cooldown(market, now):
                 continue
 
-            if _is_equity(sym):
-                self._maybe_enter_equity(sym, now, signals)
-                continue
-
-            # Entry decision delegated to markets.commodity.scalping.entry_signal.compute_entry_signal
-            # -- the single shared function live_trading.py's LiveTrader also calls,
-            # eliminating what used to be near-identical logic hand-duplicated in
-            # both files (the exact "keep two files in sync by hand" drift risk
-            # ENTRY_THRESHOLDS' own extraction eliminated one layer up, on 2026-09-18).
-            candles = _fetch_candles(self.broker, sym, self.today)
-            base_risk_pct, sym_leverage = self._get_segment_risk_and_leverage(sym)
-            sym_risk_pct = base_risk_pct * self._drawdown_risk_scale()
-            regime_ok = self.commodity_regime_ok.get(sym.upper(), None) if self.use_commodity_regime_filter else True
-            sig_result = compute_entry_signal(
-                sym, candles, SYMBOL_MAP.get(sym),
-                self.full_session, self.direction_filter, self.capital, sym_risk_pct, sym_leverage,
-                regime_ok=regime_ok,
-            )
-            if not sig_result:
-                continue
-
-            is_curr = _is_currency(sym)
-            _mult = CURRENCY_SPECS.get(sym.upper(), {}).get("lot_size", 1000) if is_curr \
-                else COMMODITY_SPECS.get(sym, {}).get("lot_size", 1)
-            _new_risk_rupees = sig_result["stop_dist"] * sig_result["lots"] * _mult
-            if self.capital > 0 and (self._portfolio_heat_pct() + _new_risk_rupees / self.capital * 100) > self.max_portfolio_heat_pct:
-                log.info("%s: entry skipped -- would push total portfolio risk past the %.1f%% heat cap.", sym, self.max_portfolio_heat_pct)
-                continue
-            direction = sig_result["direction"]
-            entry = sig_result["entry_price"]
-            sl, tp, be = sig_result["sl"], sig_result["tp"], sig_result["be"]
-            lots = sig_result["lots"]
-            sdist = sig_result["stop_dist"]
-            rsi = sig_result["rsi"]
-            adx, vol_s = sig_result["adx"], sig_result["vol_surge"]
-            vwap_d, ema_s = sig_result["vwap_dist_pct"], sig_result["ema_slope_pct"]
-
-            lot_size = CURRENCY_SPECS.get(sym.upper(), {}).get("lot_size", 1000) if is_curr \
-                else COMMODITY_SPECS.get(sym, {}).get("lot_size", 1)
-            trade_val = lots * lot_size * entry
-            _new_margin = trade_val / sym_leverage
-            _mkt = _get_market(sym)
-            if self.capital > 0 and (self._total_margin_used() + _new_margin) / self.capital * 100 > self.max_margin_utilization_pct:
-                log.info("%s: entry skipped -- would push total committed margin past the %.1f%% cap.", sym, self.max_margin_utilization_pct)
-                continue
-            _mkt_cap = self.max_market_margin_utilization_pct.get(_mkt, self.max_margin_utilization_pct)
-            if self.capital > 0 and (self._market_margin_used(_mkt) + _new_margin) / self.capital * 100 > _mkt_cap:
-                log.info("%s: entry skipped -- would push %s's own committed margin past its %.1f%% sub-cap.", sym, _mkt, _mkt_cap)
-                continue
-
-            ts_tag = now.strftime('%Y%m%d_%H%M%S')
-            pos_id = f"POS_MCX_{ts_tag}_{sym}"
-            entry_order_id = f"ORD_E_MCX_{ts_tag}_{sym}"
-
-            # 1. Virtual Order & Position in DB
-            order_side = "BUY" if direction == "long" else "SELL"
-            self.db.place_order(
-                order_id=entry_order_id,
-                symbol=sym,
-                direction=order_side,
-                intent="ENTRY",
-                order_type="MARKET",
-                qty=lots,
-                requested_price=entry,
-                fill_price=entry,
-                status="FILLED",
-                tag="DRY_RUN_MCX_ENTRY",
-                account_id=self.account_id
-            )
-
-            self.db.open_position(
-                position_id=pos_id,
-                symbol=sym,
-                direction=direction,
-                qty=lots,
-                entry_price=entry,
-                current_stop=sl,
-                target_price=tp,
-                breakeven_price=be,
-                account_id=self.account_id,
-                instrument_key=SYMBOL_MAP.get(sym),
-                entry_order_id=entry_order_id,
-            )
-
-            sig = {
-                "position_id": pos_id,
-                "entry_order_id": entry_order_id,
-                "time": now.strftime("%H:%M:%S"),
-                "symbol": sym,
-                "direction": direction,
-                "entry_price": round(entry, 2),
-                "sl": sl, "tp": tp, "be": be,
-                "qty": lots, "lots": lots,
-                "setup_type": sig_result.get("setup_type", "trend_breakout"),
-                "trade_value": round(trade_val, 2),
-                # Balance/capital only ever changes on a CLOSE (see
-                # _close_position -- self.capital += net_pnl), never on
-                # entry, so the "Balance" shown in the entry Telegram alert
-                # is realized equity, not "cash left after this trade's
-                # margin" -- those are different numbers. Shows the actual
-                # margin this trade blocks so that distinction is visible
-                # instead of implying it's already netted out of Balance.
-                "margin_used": round(trade_val / sym_leverage, 2),
-                "leverage": sym_leverage,
-                "stop_dist": round(sdist, 4),
-                "rsi": round(rsi, 1),
-                "vwap_dist_pct": round(vwap_d, 4),
-                "ema_slope_pct": round(ema_s, 4),
-                "adx": round(adx, 1),
-                "vol_surge": round(vol_s, 2),
-            }
-            signals.append(sig)
-            self.positions[sym] = {
-                **sig, "entry_time": now,
-                "current_stop": sl, "best_price": entry, "armed_be": False,
-            }
+            for strat in self.strategies[market]:
+                if self._try_enter(strat, sym, now, signals):
+                    break                      # one position per symbol across all strategies
         return signals
 
-    # ---- NSE equity entry (separate from the shared commodity/currency path
-    # above because equity's exit mechanics are structurally different -- see
-    # markets/equity/scalping/entry_signal.py's module docstring) -----------------
-    def _maybe_enter_equity(self, sym: str, now: datetime, signals: list[dict]) -> None:
-        # Equity regime gate: block new entries when NIFTY50 index is mean-reverting
-        if self.use_equity_regime_filter and self.equity_regime_ok is False:
-            return
-        open_equity_count = sum(1 for s in self.positions if _is_equity(s))
-        if open_equity_count >= MAX_CONCURRENT_EQUITY_POSITIONS:
-            return
+    # ---- strategy-driven entry / exit -------------------------------------------
+    # Strategies (core/strategy.py) only decide; every gate, sizing check, DB write and alert
+    # below is shared, so a new strategy inherits all of it for free.
+    def _gate_flags(self) -> dict:
+        return {"equity_regime_ok": self.equity_regime_ok if self.use_equity_regime_filter else True}
 
-        can_enter_sec, reason_sec = self.sector_gate.can_enter(sym, list(self.positions.keys()))
-        if not can_enter_sec:
-            log.info("%s: equity entry skipped -- %s", sym, reason_sec)
-            return
+    def _strategy_of(self, pos: dict, sym: str | None = None):
+        return registry.get(_get_market(sym or pos["symbol"]), pos.get("strategy", "scalping"))
 
-        candles = _fetch_candles(self.broker, sym, self.today)
+    def _candles(self, sym: str, strat) -> list[dict]:
+        unit, interval = strat.timeframe
+        if strat.lookback_days > 0:
+            return _fetch_history(self.broker, sym, unit, interval, strat.lookback_days)
+        if (unit, interval) == ("minutes", 5):
+            return _fetch_candles(self.broker, sym, self.today)
+        return _fetch_intraday(self.broker, sym, unit, interval, self.today)
+
+    def _try_enter(self, strat, sym: str, now: datetime, signals: list[dict]) -> bool:
+        """Evaluate `strat` for `sym`; open a (paper) position if it signals and every gate passes."""
+        market = _get_market(sym)
+        if strat.blocked(self._gate_flags()):
+            return False
+        if strat.max_positions is not None:
+            open_n = sum(1 for p in self.positions.values()
+                         if p.get("strategy", "scalping") == strat.name and _get_market(p["symbol"]) == market)
+            if open_n >= strat.max_positions:
+                return False
+        if strat.sector_cap:
+            can_enter_sec, reason_sec = self.sector_gate.can_enter(sym, list(self.positions.keys()))
+            if not can_enter_sec:
+                log.info("%s: %s entry skipped -- %s", sym, market, reason_sec)
+                return False
+        if not strat.due(now):
+            return False
+
         base_risk_pct, sym_leverage = self._get_segment_risk_and_leverage(sym)
-        sym_risk_pct = base_risk_pct * self._drawdown_risk_scale()
-        sig_result = compute_equity_entry_signal(
-            sym, candles, SYMBOL_MAP.get(sym), self.capital, sym_risk_pct, sym_leverage,
-            direction_filter=self.direction_filter,
-        )
+        override = os.environ.get(f"{market.upper()}_{strat.name.upper()}_RISK_PCT")
+        if override:
+            base_risk_pct = float(override)
+        leverage = sym_leverage if strat.uses_leverage else 1.0
+        regime_ok = self.commodity_regime_ok.get(sym.upper(), None) if self.use_commodity_regime_filter else True
+        sizing_capital = self._sizing_capital(market)
+        if sizing_capital <= 0:
+            return False                      # no margin left in the pool -- nothing to size an entry against
+        candles = self._candles(sym, strat)
+        sig_result = strat.entry(EntryContext(
+            symbol=sym, candles=candles, now=now, instrument_key=SYMBOL_MAP.get(sym), capital=sizing_capital,
+            risk_pct=base_risk_pct * self._drawdown_risk_scale(), leverage=leverage,
+            direction_filter=self.direction_filter, full_session=self.full_session,
+            regime_ok=regime_ok, equity_regime_ok=self._gate_flags()["equity_regime_ok"],
+        ))
         if not sig_result:
-            return
+            return False
+        if sig_result.direction == "short" and not strat.allow_short:
+            return False
+        if candles:
+            sig_result.exit_state["entry_bar_ts"] = str(candles[-1]["timestamp"])   # see core/exits._side
 
-        _new_risk_rupees = sig_result["stop_dist"] * sig_result["qty"]  # equity: shares, no lot multiplier
-        if self.capital > 0 and (self._portfolio_heat_pct() + _new_risk_rupees / self.capital * 100) > self.max_portfolio_heat_pct:
-            log.info("%s: equity entry skipped -- would push total portfolio risk past the %.1f%% heat cap.", sym, self.max_portfolio_heat_pct)
-            return
+        rejection = self._entry_gate_rejection(sym, market, sig_result, leverage)
+        if rejection:
+            log.info("%s: %s entry skipped -- %s.", sym, market, rejection)
+            return False
 
-        direction = sig_result["direction"]
-        entry = sig_result["entry_price"]
-        sl = sig_result["sl"]
-        qty = sig_result["qty"]
-        sdist = sig_result["stop_dist"]
-        rsi, adx = sig_result["rsi"], sig_result["adx"]
-        vol_s = sig_result["vol_surge"]
-        vwap_d, ema_s = sig_result["vwap_dist_pct"], sig_result["ema_slope_pct"]
-        activation_price, trail_mult = sig_result["activation_price"], sig_result["trail_mult"]
-
-        trade_val = qty * entry
-        _new_margin = trade_val / sym_leverage
-        if self.capital > 0 and (self._total_margin_used() + _new_margin) / self.capital * 100 > self.max_margin_utilization_pct:
-            log.info("%s: equity entry skipped -- would push total committed margin past the %.1f%% cap.", sym, self.max_margin_utilization_pct)
-            return
-        _eq_cap = self.max_market_margin_utilization_pct.get("equity", self.max_margin_utilization_pct)
-        if self.capital > 0 and (self._market_margin_used("equity") + _new_margin) / self.capital * 100 > _eq_cap:
-            log.info("%s: equity entry skipped -- would push equity's own committed margin past its %.1f%% sub-cap.", sym, _eq_cap)
-            return
+        entry, sl, qty = sig_result.entry_price, sig_result.stop_loss, sig_result.qty
+        trade_val = qty * sig_result.lot_size * entry
 
         ts_tag = now.strftime('%Y%m%d_%H%M%S')
-        pos_id = f"POS_EQ_{ts_tag}_{sym}"
-        entry_order_id = f"ORD_E_EQ_{ts_tag}_{sym}"
+        pos_id = f"POS_{strat.id_prefix}_{ts_tag}_{sym}"
+        entry_order_id = f"ORD_E_{strat.id_prefix}_{ts_tag}_{sym}"
+        direction = sig_result.direction
 
-        order_side = "BUY" if direction == "long" else "SELL"
+        # 1. Virtual order + position in the DB
         self.db.place_order(
-            order_id=entry_order_id, symbol=sym, direction=order_side, intent="ENTRY",
-            order_type="MARKET", qty=qty, requested_price=entry, fill_price=entry,
-            status="FILLED", tag="DRY_RUN_EQ_ENTRY", account_id=self.account_id,
+            order_id=entry_order_id, symbol=sym, direction="BUY" if direction == "long" else "SELL",
+            intent="ENTRY", order_type="MARKET", qty=qty, requested_price=entry, fill_price=entry,
+            status="FILLED", tag=f"DRY_RUN_{strat.id_prefix}_ENTRY", account_id=self.account_id,
         )
-        # positions.target_price is NOT NULL and equity has no fixed profit
-        # target (see module docstring) -- store activation_price there
-        # instead (repurposed as "price where the trailing exit arms"), a
-        # real, meaningful number for this position rather than a fake TP or
-        # a constraint-violating NULL.
+        diag = sig_result.diagnostics
+        sig = {
+            "position_id": pos_id, "entry_order_id": entry_order_id, "strategy": strat.name,
+            "time": now.strftime("%H:%M:%S"), "symbol": sym, "direction": direction,
+            "entry_price": round(entry, 2), "sl": sl, **sig_result.alert_levels,
+            "qty": qty, "lots": qty, "setup_type": sig_result.setup_type,
+            "trade_value": round(trade_val, 2),
+            # Balance/capital only ever changes on a CLOSE (see _close_position -- self.capital +=
+            # net_pnl), never on entry, so the "Balance" in the entry alert is realized equity, not
+            # "cash left after this trade's margin". Shows the margin this trade blocks so that
+            # distinction is visible instead of implying it's already netted out of Balance.
+            "margin_used": round(trade_val / leverage, 2), "leverage": leverage,
+            "stop_dist": round(sig_result.stop_dist, 4),
+            "rsi": round(diag.get("rsi", 0.0), 1), "vwap_dist_pct": round(diag.get("vwap_dist_pct", 0.0), 4),
+            "ema_slope_pct": round(diag.get("ema_slope_pct", 0.0), 4),
+            "adx": round(diag.get("adx", 0.0), 1), "vol_surge": round(diag.get("vol_surge", 0.0), 2),
+        }
+        # Persist the strategy's exit state (+ the sizing facts a restart would otherwise lose) so an
+        # overnight or restarted position is managed exactly as if the process had never stopped.
+        state = {**sig_result.exit_state, "margin_used": sig["margin_used"], "leverage": leverage,
+                 "lot_size": sig_result.lot_size}
         self.db.open_position(
             position_id=pos_id, symbol=sym, direction=direction, qty=qty, entry_price=entry,
-            current_stop=sl, target_price=activation_price, breakeven_price=activation_price,
-            account_id=self.account_id,
-            instrument_key=SYMBOL_MAP.get(sym),
-            entry_order_id=entry_order_id,
+            current_stop=sl, target_price=sig_result.target_price, breakeven_price=sig_result.breakeven_price,
+            account_id=self.account_id, instrument_key=SYMBOL_MAP.get(sym), entry_order_id=entry_order_id,
+            strategy=strat.name, state=json.dumps(state),
         )
-
-        sig = {
-            "position_id": pos_id, "entry_order_id": entry_order_id,
-            "time": now.strftime("%H:%M:%S"), "symbol": sym, "direction": direction,
-            "entry_price": round(entry, 2), "sl": sl, "tp": activation_price,
-            "qty": qty, "lots": qty, "trade_value": round(trade_val, 2),
-            "setup_type": sig_result.get("setup_type", "trend_breakout"),
-            "margin_used": round(trade_val / sym_leverage, 2),
-            "leverage": sym_leverage,
-            "stop_dist": round(sdist, 4), "rsi": round(rsi, 1),
-            "vwap_dist_pct": round(vwap_d, 4), "ema_slope_pct": round(ema_s, 4),
-            "adx": round(adx, 1), "vol_surge": round(vol_s, 2),
-        }
         signals.append(sig)
-        self.positions[sym] = {
-            **sig, "entry_time": now, "current_stop": sl, "best_price": entry,
-            "armed_trail": False, "activation_price": activation_price, "trail_mult": trail_mult,
-        }
+        self.positions[sym] = {**sig, "entry_time": now, "current_stop": sl, "best_price": entry, **sig_result.exit_state}
+        return True
 
-    # ---- NSE equity exit: dynamic ADX-scaled trailing, no fixed TP -- see
-    # markets/equity/scalping/entry_signal.py's module docstring for why this is a
-    # separate method rather than another branch inside the shared one below.
-    def _maybe_exit_equity(self, sym: str, now: datetime):
-        pos = self.positions[sym]
-        candles = _fetch_candles(self.broker, sym, self.today)
-        if not candles or len(candles) < 25:
-            return
-        raw_df = pd.DataFrame(candles)
-        feat_df = compute_equity_features(raw_df)
-        latest = candles[-1]
-        high, low = float(latest["high"]), float(latest["low"])
-        cur_atr = float(feat_df["atr"].iloc[-1]) if len(feat_df) else pos["stop_dist"]
-        d = 1 if pos["direction"] == "long" else -1
-        fav = high if d == 1 else low
-        adv = low if d == 1 else high
-
-        market_close = datetime.now(IST).replace(hour=15, minute=15, second=0, microsecond=0)
-
-        exit_p = None; reason = None
-        if (adv <= pos["current_stop"] if d == 1 else adv >= pos["current_stop"]):
-            exit_p = pos["current_stop"]; reason = "trail_stop" if pos["armed_trail"] else "initial_stop"
-        elif (now - pos["entry_time"]).total_seconds() >= 80 * 60:
-            exit_p = float(latest["close"]); reason = "timeout_exit"
-        elif now >= market_close:
-            exit_p = float(latest["close"]); reason = "eod_squareoff"
-
-        if exit_p is not None:
-            self._close_position(sym, pos, exit_p, reason, now)
-            return
-
-        armed_before = pos["armed_trail"]
-        stop_before = pos["current_stop"]
-        if not pos["armed_trail"] and (fav >= pos["activation_price"] if d == 1 else fav <= pos["activation_price"]):
-            pos["armed_trail"] = True
-            pos["current_stop"] = pos["entry_price"] + EQUITY_BE_LOCK_BUFFER_PCT * pos["entry_price"] * d
-        if pos["armed_trail"]:
-            pos["best_price"] = max(pos["best_price"], fav) if d == 1 else min(pos["best_price"], fav)
-            trail_dist = pos["trail_mult"] * max(cur_atr, pos["stop_dist"] * 0.1)
-            trail = pos["best_price"] - trail_dist * d
-            pos["current_stop"] = (max(pos["current_stop"], trail) if d == 1 else min(pos["current_stop"], trail))
-
-        if pos["current_stop"] != stop_before or pos["armed_trail"] != armed_before:
-            self.db.update_position_stop(
-                position_id=pos["position_id"], current_stop=pos["current_stop"],
-                best_price=pos["best_price"], armed_be=pos["armed_trail"],
-            )
-
-    # ---- exit check ---------------------------------------------------------
     def _maybe_exit(self, sym: str, now: datetime):
-        if _is_equity(sym):
-            self._maybe_exit_equity(sym, now)
-            return
         pos = self.positions[sym]
-        candles = _fetch_candles(self.broker, sym, self.today)
+        strat = self._strategy_of(pos, sym)
+        candles = self._candles(sym, strat)
         if not candles:
             return
-        latest = candles[-1]
-        high, low = float(latest["high"]), float(latest["low"])
-        d = 1 if pos["direction"] == "long" else -1
-        fav = high if d == 1 else low
-        adv = low  if d == 1 else high
-
-        # NSE currency derivatives close at 17:00 IST -- square off at 16:50
-        # (matches markets/currency/scalping/backtest.py's m_open>=470 cutoff exactly), well
-        # ahead of MCX's own close. Upstox RMS auto-squareoff for MCX
-        # Commodities is 22:50 IST; square off 5 mins prior (22:45) to avoid
-        # RMS broker penalty charges. These two were previously conflated
-        # under a single is_commodity flag (both MCX and currency share this
-        # DryRunner instance) -- a currency position would incorrectly sit
-        # open until 22:45 waiting on stale/absent candles from a market
-        # that already closed at 17:00. Fixed 2026-09-18, gated per-symbol.
-        if _is_currency(sym):
-            market_close = datetime.now(IST).replace(hour=16, minute=50, second=0, microsecond=0)
-        else:
-            market_close = datetime.now(IST).replace(hour=22, minute=45, second=0, microsecond=0)
-
-        exit_p = None; reason = None
-        if (fav >= pos["tp"] if d == 1 else fav <= pos["tp"]):
-            exit_p = pos["tp"];           reason = "take_profit"
-        elif (adv <= pos["current_stop"] if d == 1 else adv >= pos["current_stop"]):
-            exit_p = pos["current_stop"]; reason = "be_stop" if pos["armed_be"] else "initial_stop"
-        elif (now - pos["entry_time"]).total_seconds() >= 80 * 60:
-            exit_p = float(latest["close"]); reason = "timeout_exit"
-        elif now >= market_close:
-            exit_p = float(latest["close"]); reason = "eod_squareoff"
-
-        if exit_p is not None:
-            self._close_position(sym, pos, exit_p, reason, now)
-        else:
-            # Trail stop & Breakeven Lock
-            armed_before = pos["armed_be"]
-            stop_before = pos["current_stop"]
-            if not pos["armed_be"] and (fav >= pos["be"] if d == 1 else fav <= pos["be"]):
-                pos["armed_be"] = True
-                lock_buffer = 0.0020  # matches markets/commodity/scalping/backtest.py's BE_LOCK_BUFFER_PCT (backtested 2026-09-10 improvement)
-                pos["current_stop"] = pos["entry_price"] + lock_buffer * pos["entry_price"] * d
-            if pos["armed_be"]:
-                pos["best_price"] = max(pos["best_price"], fav) if d == 1 else min(pos["best_price"], fav)
-                trail_mult = 0.30
-                trail = pos["best_price"] - trail_mult * pos["stop_dist"] * d
-                pos["current_stop"] = (max(pos["current_stop"], trail) if d == 1
-                                       else min(pos["current_stop"], trail))
-
-            if pos["current_stop"] != stop_before or pos["armed_be"] != armed_before:
-                self.db.update_position_stop(
-                    position_id=pos["position_id"],
-                    current_stop=pos["current_stop"],
-                    best_price=pos["best_price"],
-                    armed_be=pos["armed_be"]
-                )
+        armed_key = "armed_be" if "armed_be" in pos else "armed_trail"
+        before = (pos["current_stop"], pos.get(armed_key))
+        decision = strat.manage(pos, ExitContext(symbol=sym, candles=candles, now=now))
+        if decision is not None:
+            self._close_position(sym, pos, decision.price, decision.reason, now)
+            return
+        if (pos["current_stop"], pos.get(armed_key)) != before:
+            self.db.update_position_stop(
+                position_id=pos["position_id"], current_stop=pos["current_stop"],
+                best_price=pos["best_price"], armed_be=bool(pos.get(armed_key, False)),
+            )
 
     def _close_position(self, sym: str, pos: dict, exit_p: float, reason: str, now: datetime):
         """Shared exit path for SL/TP/timeout/EOD exits AND the manual Telegram
         kill switch (force_exit_all) -- one place that writes the DB order/
         position/trade/snapshot records, updates capital, and alerts."""
-        # 1. Calculate Exact Itemized Costs
-        if _is_equity(sym):
-            cost_info = compute_nse_equity_costs(pos["direction"], pos["entry_price"], exit_p, pos.get("lots", pos.get("qty", 1)))
-        elif _is_currency(sym):
-            cost_info = compute_ncd_currency_costs(sym, pos["direction"], pos["entry_price"], exit_p, pos.get("lots", pos.get("qty", 1)))
-        else:
-            cost_info = compute_mcx_commodity_costs(sym, pos["direction"], pos["entry_price"], exit_p, pos.get("lots", pos.get("qty", 1)))
+        # 1. Calculate Exact Itemized Costs (the strategy's own cost model: intraday vs delivery, per market)
+        strat = self._strategy_of(pos, sym)
+        cost_info = strat.costs(sym, pos["direction"], pos["entry_price"], exit_p, pos.get("lots", pos.get("qty", 1)))
 
         net_pnl = cost_info["net"]
         gross_pnl = cost_info["gross"]
@@ -1193,7 +968,8 @@ class DryRunner:
             adx=pos.get("adx"),
             vwap_dist_pct=pos.get("vwap_dist_pct"),
             ema_slope_pct=pos.get("ema_slope_pct"),
-            account_id=self.account_id
+            account_id=self.account_id,
+            strategy=strat.name,
         )
 
         # 5. Record Portfolio Equity Snapshot in DB
@@ -1251,7 +1027,7 @@ class DryRunner:
         n = 0
         for sym in list(self.positions.keys()):
             pos = self.positions[sym]
-            candles = _fetch_candles(self.broker, sym, self.today)
+            candles = self._candles(sym, self._strategy_of(pos, sym))
             exit_p = float(candles[-1]["close"]) if candles else pos["entry_price"]
             self._close_position(sym, pos, exit_p, "manual_kill_switch", now)
             n += 1
