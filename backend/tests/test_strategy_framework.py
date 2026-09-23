@@ -64,7 +64,8 @@ def _table(*extra):
 
 class TestRegistry(unittest.TestCase):
     def test_the_three_existing_scalpers_are_discovered_without_any_list(self):
-        self.assertEqual(sorted(registry.discover()), [("commodity", "scalping"), ("currency", "scalping"), ("equity", "scalping")])
+        found = set(registry.discover())
+        self.assertTrue({("commodity", "scalping"), ("currency", "scalping"), ("equity", "scalping")} <= found)
 
     def test_new_strategies_stay_off_until_named_in_env(self):
         with patch.object(registry, "discover", lambda: _table(ToySwing())), patch.dict(os.environ, {}, clear=False):

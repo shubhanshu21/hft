@@ -58,6 +58,47 @@ def compute_nse_equity_costs(direction: str, entry: float, exit_p: float, qty: i
     }
 
 
+# ---- Delivery (CNC) -- for overnight / swing strategies ------------------------------------------------
+# Checked against Upstox's published charges on 2026-09-23 (upstox.com/calculator/brokerage-calculator): delivery
+# STT 0.1% on BOTH buy and sell, stamp duty 0.015% on the buy side, DP charge Rs18.50 + 18% GST per scrip on each sell,
+# brokerage the lower of 0.1% or Rs20 per order (some aggregators list delivery brokerage as Rs0; Rs20 is the
+# conservative reading). Exchange / SEBI fees are the same constants as above. Intraday rates above are unchanged.
+DELIVERY_RATES_LAST_VERIFIED = "2026-09-23"
+DELIVERY_STT_PCT_BOTH_SIDES = 0.1
+DELIVERY_STAMP_DUTY_PCT_BUY = 0.015
+DELIVERY_DP_CHARGE = 18.50            # per scrip per sell day, before GST
+DELIVERY_BROKERAGE_PCT = 0.1
+DELIVERY_BROKERAGE_CAP = 20.0
+
+
+def compute_nse_equity_delivery_costs(direction: str, entry: float, exit_p: float, qty: int, tick_size: float = 0.05, symbol: str = "") -> dict:
+    """Itemised costs of a delivery (held overnight) equity round trip. Same dict shape as compute_nse_equity_costs.
+    Long only: delivery cannot short."""
+    if direction.lower() != "long":
+        raise ValueError("equity delivery is long-only")
+    ev, xv = qty * entry, qty * exit_p
+    gross = qty * (exit_p - entry)
+
+    def brok_leg(v: float) -> float:
+        return min(v * DELIVERY_BROKERAGE_PCT / 100, DELIVERY_BROKERAGE_CAP)
+    brok = (brok_leg(ev) + brok_leg(xv)) * (1 + GST_RATE)
+    stt = (ev + xv) * DELIVERY_STT_PCT_BOTH_SIDES / 100
+    stamp = ev * DELIVERY_STAMP_DUTY_PCT_BUY / 100
+    exch = (ev + xv) * (EQUITY_EXCHANGE_TXN_PCT / 100)
+    sebi = (ev + xv) * (EQUITY_SEBI_PCT / 100)
+    dp = DELIVERY_DP_CHARGE * (1 + GST_RATE)
+    gst_charges = (exch + sebi) * GST_RATE
+    slip_per_leg = adaptive_slippage_per_leg(symbol, tick_size * 0.5) if symbol else tick_size * 0.5
+    slip = slip_per_leg * qty * 2
+    total_friction = brok + stt + stamp + exch + sebi + dp + gst_charges + slip
+    return {
+        "gross": round(gross, 2), "brokerage": round(brok + dp, 2), "stt": round(stt, 2),
+        "stamp_duty": round(stamp, 2), "exchange_txn": round(exch, 2), "sebi": round(sebi, 2),
+        "gst": round(gst_charges, 2), "slippage": round(slip, 2),
+        "total": round(total_friction, 2), "net": round(gross - total_friction, 2), "qty": qty,
+    }
+
+
 def size_equity_shares(capital: float, entry_price: float, stop_distance: float, risk_pct: float, leverage: float = 5.0) -> int:
     """Sizes integer share quantity via the same dual risk/margin-cap logic as
     size_commodity_lots/size_currency_lots -- no lot-size multiplier here,
