@@ -2,7 +2,7 @@
 tests/test_sector_correlation.py — Unit tests for Sector Correlation & Concentration Gate.
 """
 import unittest
-from strategy.sector_correlation import SectorCorrelationGate, NIFTY_SECTOR_MAP
+from core.sector_correlation import SectorCorrelationGate, NIFTY_SECTOR_MAP
 
 
 class TestSectorCorrelation(unittest.TestCase):

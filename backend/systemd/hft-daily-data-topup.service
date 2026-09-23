@@ -4,15 +4,15 @@ Description=Daily real MCX commodity + NSE currency + NSE index futures + NSE eq
 [Service]
 Type=oneshot
 WorkingDirectory=/var/www/html/hft/backend
-ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m real_commodity_data --topup
+ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m markets.commodity.data --topup
 # Added 2026-09-18: currency derivatives top-up, same daily job (multiple ExecStart=
 # lines run sequentially for a oneshot service) rather than a second timer -- both are
 # small, fast, real-data top-ups against the same broker/account.
-ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m real_currency_data --topup
+ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m markets.currency.data --topup
 # Added 2026-09-18: NSE index futures (NIFTY/BANKNIFTY) top-up -- still under
 # evaluation (only ~2.5 months of real archive so far, not yet live), but growing
 # the archive daily now means it'll be ready to re-validate sooner.
-ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m real_index_futures_data --topup
+ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m markets.index_futures.data --topup
 # Added 2026-09-18: daily paper_trading.db backup -- previously no backup
 # existed at all for the entire trading history.
 ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m backup_db
@@ -20,4 +20,4 @@ ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m backup_db
 # (see .env's DRYRUN_INCLUDE_EQUITY) -- keeps all 49 archives current so the
 # validated entry thresholds keep seeing fresh real data, same as every
 # other asset here.
-ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m real_equity_data --topup
+ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m markets.equity.data --topup

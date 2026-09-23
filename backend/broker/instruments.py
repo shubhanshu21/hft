@@ -194,7 +194,7 @@ def _load_mcx_master() -> None:
                     # the real SILVER contract, nearest-expiry selection below
                     # picked it instead -- silently trading a contract with a
                     # ~100x different price scale and a real lot_size (100) that
-                    # doesn't match strategy/commodity_costs.py's COMMODITY_SPECS
+                    # doesn't match markets/commodity/costs.py's COMMODITY_SPECS
                     # assumption (30), corrupting both price and every
                     # size/margin/P&L calculation for "SILVER". Must be excluded
                     # explicitly, the same way SILVERMIC/SILVERM are disambiguated
@@ -203,7 +203,7 @@ def _load_mcx_master() -> None:
                         continue
                     # Match base symbols -- extended 2026-09-17 to survey other MCX
                     # commodities beyond crude/natgas (Gold Mini, Silver Mini/Micro,
-                    # Copper already have cost-model support in strategy/commodity_costs.py's
+                    # Copper already have cost-model support in markets/commodity/costs.py's
                     # get_contract_multiplier fallbacks; this was the actual blocker,
                     # not data availability -- Upstox's MCX master already lists these.
                     # Order matters: startswith() means a more specific prefix (SILVERMIC,

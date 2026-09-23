@@ -4,7 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from strategy.regime import regime_ok
+from core.regime import regime_ok
 
 
 class TestRegime(unittest.TestCase):
@@ -14,8 +14,8 @@ class TestRegime(unittest.TestCase):
     def test_trending_series_passes_default_gate(self):
         # Strictly increasing closes -- every daily return is positive and
         # roughly similar in magnitude, a textbook trending/persistent series.
-        # Uses `is True`, not just truthy -- real callers (backtest_commodity.py,
-        # strategy/entry_signal.py) check `is False`/`is True` specifically to
+        # Uses `is True`, not just truthy -- real callers (markets/commodity/scalping/backtest.py,
+        # markets/commodity/scalping/entry_signal.py) check `is False`/`is True` specifically to
         # distinguish a real answer from None, and a numpy.bool_ (which a naive
         # `autocorr >= threshold` returns) fails an `is` check even when equal --
         # this is the exact bug found and fixed 2026-09-18.

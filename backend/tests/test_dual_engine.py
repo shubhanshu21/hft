@@ -3,8 +3,8 @@ from datetime import datetime, timedelta
 import pandas as pd
 import numpy as np
 
-from strategy.equity_entry_signal import compute_equity_entry_signal
-from strategy.entry_signal import compute_entry_signal
+from markets.equity.scalping.entry_signal import compute_equity_entry_signal
+from markets.commodity.scalping.entry_signal import compute_entry_signal
 
 class TestDualEngine(unittest.TestCase):
     def _generate_synthetic_candles(self, n=50, base_price=2500.0, trend="neutral"):

@@ -4,20 +4,20 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import backtest_commodity
-import backtest_currency
-import strategy.entry_signal as entry_signal
+import markets.commodity.scalping.backtest as backtest_commodity
+import markets.currency.scalping.backtest as backtest_currency
+import markets.commodity.scalping.entry_signal as entry_signal
 import live_dryrun
 import live_trading
 
 
 class TestThresholdParity(unittest.TestCase):
     """live_dryrun.py (and, since 2026-09-18, live_trading.py) used to duplicate
-    backtest_commodity.py's/backtest_currency.py's ENTRY_THRESHOLDS as hand-copied
+    markets/commodity/scalping/backtest.py's/backtest_currency.py's ENTRY_THRESHOLDS as hand-copied
     literals, with only a comment ("keep these two/three in sync by hand") standing
     between them and silent drift -- exactly the kind of bug that let a currency
     EOD-squareoff mismatch and gold's own stale thresholds ship unnoticed earlier in
-    this project. Fixed by routing everything through strategy.entry_signal, which
+    this project. Fixed by routing everything through markets.commodity.scalping.entry_signal, which
     imports the dicts directly rather than duplicating them, and is itself the one
     place both live_dryrun.py's DryRunner and live_trading.py's LiveTrader call for
     entry decisions. These are identity checks (`is`), not equality checks --

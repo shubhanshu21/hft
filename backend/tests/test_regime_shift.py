@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from regime_shift import DissimilarityGate
+from core.regime_shift import DissimilarityGate
 
 
 class TestDissimilarityGate(unittest.TestCase):
@@ -30,7 +30,7 @@ class TestDissimilarityGate(unittest.TestCase):
 
     def test_variance_compression_is_NOT_flagged(self):
         """Documented limitation, found empirically against real BTC funding
-        data (see regime_shift.py's __main__ block): a distribution that
+        data (see core/regime_shift.py's __main__ block): a distribution that
         collapses toward the training center (as BTC/ETH funding did toward
         the 0.01% baseline through 2025-2026) looks MORE typical by k-NN
         distance, not less. This is a nearest-neighbor novelty detector, not

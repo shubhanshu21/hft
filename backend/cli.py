@@ -17,7 +17,7 @@ Usage Examples:
     python3 cli.py backtest --asset futures --symbols CRUDEOILM NATGASMINI --from 2026-01-01 --to 2026-09-07
 
     # 2. Backtest NSE Currency Derivatives (standalone script, not wired into this CLI)
-    python3 backtest_currency.py --symbols USDINR EURINR GBPINR
+    python3 -m markets.currency.scalping.backtest --symbols USDINR EURINR GBPINR
 
     # 3. Live Paper-Trading Dryrun (MCX Commodities + NSE Currency)
     python3 cli.py dryrun --capital 100000 --risk-pct 5.0 --interval 30
@@ -55,7 +55,7 @@ from database import TradingDB
 
 
 def cmd_backtest(args):
-    from backtest_commodity import run_commodity_backtest
+    from markets.commodity.scalping.backtest import run_commodity_backtest
     run_commodity_backtest(
         symbols=args.symbols,
         capital=args.capital,

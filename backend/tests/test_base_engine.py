@@ -6,7 +6,7 @@ from datetime import datetime, time
 from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
 
-from strategy.base_engine import BaseTradingEngine, get_market_segment
+from core.base_engine import BaseTradingEngine, get_market_segment
 
 IST = ZoneInfo("Asia/Kolkata")
 

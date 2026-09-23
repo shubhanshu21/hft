@@ -3,8 +3,8 @@
 live_dryrun.py — Paper-trading dry run using LIVE Upstox 5-minute candles & SQLite DB.
 
 Runs 24/7 (MCX 09:00-23:30 IST, NSE currency 09:00-17:00 IST -- both handled
-internally) and fires the EXACT SAME strategy logic as backtest_commodity.py
-/ backtest_currency.py, but:
+internally) and fires the EXACT SAME strategy logic as markets/commodity/scalping/backtest.py
+/ markets/currency/scalping/backtest.py, but:
   - Places ZERO real orders in live broker (dry_run=True on Upstox broker)
   - Places & tracks VIRTUAL ORDERS in SQLite database (orders, positions, trades, snapshots)
   - Itemizes every fee (Brokerage, STT, Stamp Duty, Exchange Txn, SEBI, GST, Slippage)
@@ -51,19 +51,19 @@ import pandas as pd
 from broker.feed_streamer import UpstoxFeedStreamer
 from broker.upstox_broker import UpstoxBroker, token_invalid_event
 from database import TradingDB
-from strategy.commodity_costs import compute_mcx_commodity_costs, COMMODITY_SPECS
-from strategy.currency_costs import (
+from markets.commodity.costs import compute_mcx_commodity_costs, COMMODITY_SPECS
+from markets.currency.costs import (
     compute_ncd_currency_costs, CURRENCY_SPECS,
 )
-from strategy.entry_signal import compute_entry_signal, is_currency as _is_currency
-from strategy.equity_entry_signal import (
+from markets.commodity.scalping.entry_signal import compute_entry_signal, is_currency as _is_currency
+from markets.equity.scalping.entry_signal import (
     compute_equity_entry_signal, is_equity as _is_equity,
     MAX_CONCURRENT_EQUITY_POSITIONS, BE_LOCK_BUFFER_PCT as EQUITY_BE_LOCK_BUFFER_PCT,
 )
-from strategy.equity_costs import compute_nse_equity_costs
-from strategy.equity_features import compute_equity_features
-from strategy.equity_universe import NIFTY50_SYMBOLS
-from strategy.sector_correlation import SectorCorrelationGate
+from markets.equity.costs import compute_nse_equity_costs
+from markets.equity.features import compute_equity_features
+from markets.equity.universe import NIFTY50_SYMBOLS
+from core.sector_correlation import SectorCorrelationGate
 
 # Per-symbol risk-per-trade override (falls back to --risk-pct/DRYRUN_RISK_PCT
 # for anything not listed). SILVER re-added 2026-09-18 at half the account
@@ -82,7 +82,7 @@ from strategy.sector_correlation import SectorCorrelationGate
 # for how much this symbol's edge swings by regime. risk-pct=3.0 with the
 # filter on was the best risk/DD tradeoff found: net +17.20%, PF 1.31, max DD
 # -37.96% (vs. +21.58%/-55.80% at 5%, +9.91%/-70.10% at 7%) -- see
-# backtest_commodity.py --use-crude-regime-filter sweep in conversation
+# markets/commodity/scalping/backtest.py --use-crude-regime-filter sweep in conversation
 # history for the full risk-pct grid. Still not equally trusted as gold.
 # GBPINR intentionally NOT listed here (see _SYMBOL_LEVERAGE_OVERRIDE below
 # instead) -- a genuine train/test split couldn't be run on it (its full
@@ -107,7 +107,7 @@ _SYMBOL_RISK_PCT_OVERRIDE = {"SILVER": 5.0, "CRUDEOILM": 3.0}
 # risk_pct, so leverage is the only lever that actually shrinks its lot
 # count. 3.5 (half the account default of 7.0) cuts its real backtested lot
 # count from 6 to 3 at this account's capital -- confirmed via
-# strategy.currency_costs.size_currency_lots directly, not assumed.
+# markets.currency.costs.size_currency_lots directly, not assumed.
 _SYMBOL_LEVERAGE_OVERRIDE = {"GBPINR": 3.5}
 
 
@@ -153,7 +153,7 @@ DEFAULT_LEVERAGE = 4.0
 def _build_symbol_map() -> dict[str, str]:
     """Resolves the current nearest-expiry instrument_key for every MCX
     commodity + NSE currency base symbol. MCX/currency contracts are
-    monthly-expiry (see real_commodity_data.py/real_currency_data.py
+    monthly-expiry (see markets/commodity/data.py/real_currency_data.py
     docstrings) -- calling this again after a contract has rolled picks up
     the new one automatically, since build_mcx_commodity_map()/
     build_currency_map() always select whichever expiry is nearest >=
@@ -313,7 +313,7 @@ class DryRunner:
 
         # Wire the spread log path into the adaptive slippage module so it reads
         # the same file this process writes.
-        from strategy.slippage import set_spread_log_path
+        from core.slippage import set_spread_log_path
         set_spread_log_path(Path(__file__).parent / "logs" / "spread_samples.csv")
 
         # Sync account in SQLite
@@ -385,11 +385,11 @@ class DryRunner:
         # lot/share count against the FULL current capital's margin capacity,
         # with no awareness of margin ALREADY committed by other open
         # positions across the other 8 symbols. A real broker margin account
-        # is one shared pool, not one per symbol -- backtest_equity.py's own
+        # is one shared pool, not one per symbol -- markets/equity/scalping/backtest.py's own
         # validated engine enforces exactly this (its `committed_margin`
         # bookkeeping), but live_dryrun.py never mirrored it. Without this,
         # several symbols triggering together (a real, not hypothetical,
-        # scenario -- see strategy/sector_correlation.py's whole reason for
+        # scenario -- see core/sector_correlation.py's whole reason for
         # existing) could commit far more margin in aggregate than the
         # configured leverage should ever allow.
         self.max_margin_utilization_pct = float(os.environ.get("MAX_MARGIN_UTILIZATION_PCT", "90.0"))
@@ -411,7 +411,7 @@ class DryRunner:
             "equity": float(os.environ.get("EQUITY_MAX_MARGIN_PCT", _default_market_margin_pct)),
         }
 
-        # Full-day vs evening-only trading window -- see backtest_commodity.py's
+        # Full-day vs evening-only trading window -- see markets/commodity/scalping/backtest.py's
         # us_session_only for the matching backtest flag/comparison. Switched
         # to full-session by default 2026-09-17 per user decision: real
         # backtest on the full 2022-2026 archive showed full session more
@@ -434,7 +434,7 @@ class DryRunner:
         # Per-symbol daily-loss kill switch, same MAX_DAILY_LOSS_PCT threshold
         # but tracked per symbol against that symbol's own realized PnL today --
         # added 2026-09-18 so one symbol having a genuinely bad day (e.g. crude
-        # hitting a bad regime, see backtest_commodity.py's ENTRY_THRESHOLDS
+        # hitting a bad regime, see markets/commodity/scalping/backtest.py's ENTRY_THRESHOLDS
         # comment) doesn't halt entries account-wide for symbols that are fine.
         # The existing account-wide switch above still exists as the final
         # backstop for a bad day across the whole book.
@@ -615,14 +615,14 @@ class DryRunner:
         NATGASMINI, then REVERTED 2026-09-23 back to CRUDEOILM-only after
         train/test validation: the autocorrelation regime signal was derived
         from and only ever validated against CRUDEOILM's own two known
-        regimes (see strategy/regime.py's docstring). Testing the extension
+        regimes (see core/regime.py's docstring). Testing the extension
         found it clearly harmful for SILVER (TEST net Rs482k -> Rs68k, PF
         2.67 -> 1.71, trades 62 -> 17) and merely trade-count-reducing for
         GOLDM with no net benefit (TEST trades 39 -> 20, net roughly flat)
         -- i.e. it generalizes to neither. Only CRUDEOILM showed the actual
         regime-dependent failure mode this gate exists to catch.
         """
-        from strategy.regime import regime_ok as _regime_ok
+        from core.regime import regime_ok as _regime_ok
         mcx_symbols = [s for s in self.symbols if s.upper() == "CRUDEOILM"]
         yesterday = (datetime.now(IST) - timedelta(days=1)).strftime("%Y-%m-%d")
         for sym in mcx_symbols:
@@ -652,7 +652,7 @@ class DryRunner:
         """Fetches NIFTY50 index daily candles through YESTERDAY and recomputes
         self.equity_regime_ok. Fails open (True) if the fetch fails.
         Added 2026-09-22 -- gates ALL new NSE equity entries."""
-        from strategy.regime import regime_ok as _regime_ok
+        from core.regime import regime_ok as _regime_ok
         nifty_key = "NSE_INDEX|Nifty 50"
         yesterday = (datetime.now(IST) - timedelta(days=1)).strftime("%Y-%m-%d")
         try:
@@ -681,7 +681,7 @@ class DryRunner:
         # same frozen last-known bid/ask over and over -- logs/spread_samples.csv
         # had dozens of byte-identical EURINR rows spanning 1.5+ hours
         # (17:04-18:44 IST). Those stale, non-executable "spreads" fed
-        # directly into strategy/slippage.py's empirical median once
+        # directly into core/slippage.py's empirical median once
         # MIN_SAMPLES was crossed, inflating real intraday slippage cost
         # estimates for the affected symbols. Gate on the market actually
         # being open before sampling at all.
@@ -782,7 +782,7 @@ class DryRunner:
                 self._maybe_enter_equity(sym, now, signals)
                 continue
 
-            # Entry decision delegated to strategy.entry_signal.compute_entry_signal
+            # Entry decision delegated to markets.commodity.scalping.entry_signal.compute_entry_signal
             # -- the single shared function live_trading.py's LiveTrader also calls,
             # eliminating what used to be near-identical logic hand-duplicated in
             # both files (the exact "keep two files in sync by hand" drift risk
@@ -898,7 +898,7 @@ class DryRunner:
 
     # ---- NSE equity entry (separate from the shared commodity/currency path
     # above because equity's exit mechanics are structurally different -- see
-    # strategy/equity_entry_signal.py's module docstring) -----------------
+    # markets/equity/scalping/entry_signal.py's module docstring) -----------------
     def _maybe_enter_equity(self, sym: str, now: datetime, signals: list[dict]) -> None:
         # Equity regime gate: block new entries when NIFTY50 index is mean-reverting
         if self.use_equity_regime_filter and self.equity_regime_ok is False:
@@ -989,7 +989,7 @@ class DryRunner:
         }
 
     # ---- NSE equity exit: dynamic ADX-scaled trailing, no fixed TP -- see
-    # strategy/equity_entry_signal.py's module docstring for why this is a
+    # markets/equity/scalping/entry_signal.py's module docstring for why this is a
     # separate method rather than another branch inside the shared one below.
     def _maybe_exit_equity(self, sym: str, now: datetime):
         pos = self.positions[sym]
@@ -1052,7 +1052,7 @@ class DryRunner:
         adv = low  if d == 1 else high
 
         # NSE currency derivatives close at 17:00 IST -- square off at 16:50
-        # (matches backtest_currency.py's m_open>=470 cutoff exactly), well
+        # (matches markets/currency/scalping/backtest.py's m_open>=470 cutoff exactly), well
         # ahead of MCX's own close. Upstox RMS auto-squareoff for MCX
         # Commodities is 22:50 IST; square off 5 mins prior (22:45) to avoid
         # RMS broker penalty charges. These two were previously conflated
@@ -1083,7 +1083,7 @@ class DryRunner:
             stop_before = pos["current_stop"]
             if not pos["armed_be"] and (fav >= pos["be"] if d == 1 else fav <= pos["be"]):
                 pos["armed_be"] = True
-                lock_buffer = 0.0020  # matches backtest_commodity.py's BE_LOCK_BUFFER_PCT (backtested 2026-09-10 improvement)
+                lock_buffer = 0.0020  # matches markets/commodity/scalping/backtest.py's BE_LOCK_BUFFER_PCT (backtested 2026-09-10 improvement)
                 pos["current_stop"] = pos["entry_price"] + lock_buffer * pos["entry_price"] * d
             if pos["armed_be"]:
                 pos["best_price"] = max(pos["best_price"], fav) if d == 1 else min(pos["best_price"], fav)
@@ -1406,10 +1406,10 @@ def main():
     default_symbols = ["CRUDEOILM", "NATGASMINI"]
     symbols = args.symbols or default_symbols
     # NSE equity intraday scalper wired in 2026-09-19 (see
-    # strategy/equity_entry_signal.py's module docstring) -- opt-in via
+    # markets/equity/scalping/entry_signal.py's module docstring) -- opt-in via
     # DRYRUN_INCLUDE_EQUITY=true rather than folded into DRYRUN_SYMBOLS,
     # since the full validated universe is all 49 NIFTY50 names (see
-    # strategy/equity_universe.py) and hand-typing that into a symbols list
+    # markets/equity/universe.py) and hand-typing that into a symbols list
     # would be unwieldy. Extends whatever commodity/currency symbols are
     # already configured rather than replacing them -- equity runs
     # alongside, not instead of.

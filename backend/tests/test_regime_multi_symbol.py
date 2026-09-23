@@ -4,7 +4,7 @@ tests/test_regime_multi_symbol.py — Tests multi-symbol commodity regime filter
 from __future__ import annotations
 
 import unittest
-from strategy.regime import regime_ok
+from core.regime import regime_ok
 
 
 class TestRegimeMultiSymbol(unittest.TestCase):

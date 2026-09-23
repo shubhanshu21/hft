@@ -89,21 +89,21 @@ backend/
 ├── safety_gate.py                   # Layered live-trading kill switch (source constant + .env flag + armed-state file)
 ├── database.py                      # SQLite persistence: accounts, orders, positions, trades, snapshots
 ├── cli.py                           # Master Unified CLI
-├── backtest_commodity.py            # 5-Minute MCX Commodity Futures Backtest CLI (ENTRY_THRESHOLDS per symbol)
-├── backtest_currency.py             # 5-Minute NSE Currency Derivatives Backtest CLI (ENTRY_THRESHOLDS per pair)
-├── backtest_equity.py               # 5-Minute NSE Equity Intraday Backtest CLI (ONE shared ENTRY_THRESHOLDS for universe)
+├── markets/commodity/scalping/backtest.py            # 5-Minute MCX Commodity Futures Backtest CLI (ENTRY_THRESHOLDS per symbol)
+├── markets/currency/scalping/backtest.py             # 5-Minute NSE Currency Derivatives Backtest CLI (ENTRY_THRESHOLDS per pair)
+├── markets/equity/scalping/backtest.py               # 5-Minute NSE Equity Intraday Backtest CLI (ONE shared ENTRY_THRESHOLDS for universe)
 ├── live_dryrun.py                   # Live 24/7 Paper-Trading Daemon (commodity + currency + equity)
 ├── live_trading.py                  # Real-order execution engine -- gated by multi-layer safety switch
-├── real_commodity_data.py           # Real MCX historical data downloader/top-up (via Upstox)
-├── real_currency_data.py            # Real NSE currency derivatives historical data downloader/top-up
-└── real_equity_data.py              # Real NSE equity (NIFTY50) historical data downloader/top-up
+├── markets/commodity/data.py           # Real MCX historical data downloader/top-up (via Upstox)
+├── markets/currency/data.py            # Real NSE currency derivatives historical data downloader/top-up
+└── markets/equity/data.py              # Real NSE equity (NIFTY50) historical data downloader/top-up
 ```
 
 ---
 
 ## Supported Instruments & Trading Profiles
 
-Every symbol below is calibrated with its **own** entry thresholds in `backtest_commodity.py`'s `ENTRY_THRESHOLDS` dict (mirrored in `live_dryrun.py`) — nothing is shared across symbols by assumption; each was validated independently on real data.
+Every symbol below is calibrated with its **own** entry thresholds in `markets/commodity/scalping/backtest.py`'s `ENTRY_THRESHOLDS` dict (mirrored in `live_dryrun.py`) — nothing is shared across symbols by assumption; each was validated independently on real data.
 
 ### Live-traded (`DRYRUN_SYMBOLS` in `.env`)
 
@@ -123,7 +123,7 @@ Every symbol below is calibrated with its **own** entry thresholds in `backtest_
 
 Full session (10:00–22:30 IST) by default (`DRYRUN_FULL_SESSION=true`) — a real-data sweep found this **more than doubles total net PnL** versus the narrower evening-only US-overlap window (18:30–22:00 IST), at the cost of ~3x more trades, a ~5-point lower win rate, and higher fee drag. Toggle via `.env` if you'd rather trade the narrower, cleaner window.
 
-### NSE Currency Derivatives (`backtest_currency.py`, `ENTRY_THRESHOLDS` per pair)
+### NSE Currency Derivatives (`markets/currency/scalping/backtest.py`, `ENTRY_THRESHOLDS` per pair)
 
 Same feature engine and entry-rule shape as commodities, with pair-specific thresholds calibrated from a 375-combo real-data sweep per pair (2026-09-18) — `strategy.currency_costs` swaps in the genuinely different NCD_FO fee schedule (no STT/CTT at all on currency derivatives; different stamp duty/exchange-fee rates). Session is 09:00–17:00 IST — no MCX-style evening/US-overlap window (a currency pair has no analogous "second session").
 
@@ -136,11 +136,11 @@ Same feature engine and entry-rule shape as commodities, with pair-specific thre
 
 **Important shape difference from commodities**: all three live pairs win *under 50%* of trades but are solidly profitable (profit factors 2.2–3.8x) — winners run 2-4x bigger than losers, the opposite payoff shape from crude/gold's 65-70%-win-rate/tight-R:R style. Don't judge these by win rate alone.
 
-### NSE Equity: NIFTY50 Intraday Scalping (`backtest_equity.py`, ONE shared `ENTRY_THRESHOLDS`)
+### NSE Equity: NIFTY50 Intraday Scalping (`markets/equity/scalping/backtest.py`, ONE shared `ENTRY_THRESHOLDS`)
 
 Structurally different from commodity/currency in three ways, all deliberate:
 
-1. **One shared entry-rule set for the entire 49-stock universe, not per-symbol tuning.** The original version of this scalper (removed 2026-09-18) hand-curated a small "best" universe *because* those stocks already backtested well — a circular selection that guarantees an inflated result regardless of whether any real edge exists. The rebuild fixes this by deciding the universe (`strategy/equity_universe.py` — all NIFTY50 names except `TATAMOTORS`, which no longer resolves in Upstox's instrument master) *before* any backtest, and applying identical thresholds to every stock. A stock trades often or rarely purely because its own price action does or doesn't clear the bar — nothing is ever pruned after the fact based on how it performed.
+1. **One shared entry-rule set for the entire 49-stock universe, not per-symbol tuning.** The original version of this scalper (removed 2026-09-18) hand-curated a small "best" universe *because* those stocks already backtested well — a circular selection that guarantees an inflated result regardless of whether any real edge exists. The rebuild fixes this by deciding the universe (`markets/equity/universe.py` — all NIFTY50 names except `TATAMOTORS`, which no longer resolves in Upstox's instrument master) *before* any backtest, and applying identical thresholds to every stock. A stock trades often or rarely purely because its own price action does or doesn't clear the bar — nothing is ever pruned after the fact based on how it performed.
 2. **Dynamic ADX-scaled trailing exits, no fixed take-profit.** Once a trade proves itself (moves favorably past an activation threshold that itself scales with how strong the trend looked at entry), a trailing stop — recomputed from the *current* bar's ATR every bar, not frozen at entry — manages the rest of the trade. A strong trend can run well past where a fixed target would have capped it.
 3. **A hard cap of 3 concurrent open positions across the whole universe.** An earlier, uncapped version of this backtest allowed up to 10 simultaneous positions at 5% risk each — correlated market-wide moves hit many of them at once on the same bad days (worst single day: -₹11,053 across 16 trades, ~11% of capital), nearly wiping the account despite a profit factor above 1 in aggregate. The cap is a real portfolio-concentration constraint, not a backtest artifact.
 
@@ -193,7 +193,7 @@ Everything the CLI needs to run with **zero flags** lives in `backend/.env` (cop
 ### Backtest Defaults (`cli.py backtest`)
 | Variable | Default | Meaning |
 |---|---|---|
-| `BACKTEST_SYMBOLS` | *(blank)* | Space-separated MCX symbol override, e.g. `CRUDEOILM GOLDM`. Blank = default list. Currency is backtested standalone — run `backtest_currency.py` directly (see [Unified CLI Cheat Sheet](#unified-cli-cheat-sheet)). |
+| `BACKTEST_SYMBOLS` | *(blank)* | Space-separated MCX symbol override, e.g. `CRUDEOILM GOLDM`. Blank = default list. Currency is backtested standalone — run `markets/currency/scalping/backtest.py` directly (see [Unified CLI Cheat Sheet](#unified-cli-cheat-sheet)). |
 | `BACKTEST_RISK_PCT` | `5.0` | Risk % per trade. |
 | `BACKTEST_LEVERAGE` | `4.0` | Margin leverage for backtests specifically. Blank = fall back to `INTRADAY_LEVERAGE`. |
 | `BACKTEST_FROM` / `BACKTEST_TO` | *(blank)* | `YYYY-MM-DD` date range. Blank = full available history. |
@@ -244,7 +244,7 @@ python3 cli.py backtest [--symbols SYM [SYM ...]]
 ```
 | Flag | Meaning |
 |---|---|
-| `--symbols` | Override the default MCX symbol list. NSE currency is backtested standalone via `backtest_currency.py` (see #6 below) — not wired into this command. |
+| `--symbols` | Override the default MCX symbol list. NSE currency is backtested standalone via `markets/currency/scalping/backtest.py` (see #6 below) — not wired into this command. |
 | `--capital` | Starting capital in ₹. |
 | `--risk-pct` | Risk % of capital per trade. |
 | `--leverage` | MIS margin leverage multiplier. |
@@ -322,24 +322,24 @@ python3 live_dryrun.py --report --account DRYRUN_ACCOUNT
 python3 live_dryrun.py --reset-db --capital 100000
 ```
 
-### 6. Backtest scripts directly (`backtest_commodity.py`, `backtest_currency.py`, `backtest_equity.py`)
+### 6. Backtest scripts directly (`markets/commodity/scalping/backtest.py`, `markets/currency/scalping/backtest.py`, `markets/equity/scalping/backtest.py`)
 
 Same engines `cli.py backtest` delegates to, callable directly when you want their full native flag set:
 
 ```bash
 # MCX Commodity Scalper
-python3 backtest_commodity.py --symbols CRUDEOILM --capital 100000 --risk-pct 10.0 --leverage 7.0
-python3 backtest_commodity.py --symbols CRUDEOILM GOLDM --capital 100000 --risk-pct 10.0 --leverage 7.0
-python3 backtest_commodity.py --symbols CRUDEOILM --capital 100000 --risk-pct 10.0 --size-mode risk   # pure risk-budgeted, unconstrained by margin
+python3 -m markets.commodity.scalping.backtest --symbols CRUDEOILM --capital 100000 --risk-pct 10.0 --leverage 7.0
+python3 -m markets.commodity.scalping.backtest --symbols CRUDEOILM GOLDM --capital 100000 --risk-pct 10.0 --leverage 7.0
+python3 -m markets.commodity.scalping.backtest --symbols CRUDEOILM --capital 100000 --risk-pct 10.0 --size-mode risk   # pure risk-budgeted, unconstrained by margin
 
 # NSE Currency Derivatives Scalper
-python3 backtest_currency.py --symbols USDINR --capital 100000 --risk-pct 10.0 --leverage 7.0
-python3 backtest_currency.py --symbols USDINR EURINR GBPINR --capital 100000 --risk-pct 10.0 --leverage 7.0
+python3 -m markets.currency.scalping.backtest --symbols USDINR --capital 100000 --risk-pct 10.0 --leverage 7.0
+python3 -m markets.currency.scalping.backtest --symbols USDINR EURINR GBPINR --capital 100000 --risk-pct 10.0 --leverage 7.0
 
 # NSE Equity Intraday Scalper (full NIFTY50 universe if --symbols omitted)
-python3 backtest_equity.py --capital 100000 --risk-pct 5.0 --leverage 5.0
-python3 backtest_equity.py --symbols RELIANCE TCS HDFCBANK --capital 100000 --risk-pct 5.0 --leverage 5.0
-python3 backtest_equity.py --capital 100000 --risk-pct 5.0 --leverage 5.0 --from 2025-07-01 --to 2026-09-18   # one of the 3 validated OOS folds
+python3 -m markets.equity.scalping.backtest --capital 100000 --risk-pct 5.0 --leverage 5.0
+python3 -m markets.equity.scalping.backtest --symbols RELIANCE TCS HDFCBANK --capital 100000 --risk-pct 5.0 --leverage 5.0
+python3 -m markets.equity.scalping.backtest --capital 100000 --risk-pct 5.0 --leverage 5.0 --from 2025-07-01 --to 2026-09-18   # one of the 3 validated OOS folds
 ```
 
 ---
@@ -355,7 +355,7 @@ All unit files are checked into **`backend/systemd/`** — not hidden away in `~
 | Unit | Type | Purpose | Schedule |
 |---|---|---|---|
 | `hft-dryrun.service` | persistent daemon | Runs `cli.py dryrun` — the 24/7 paper-trading loop | Always on (`Restart=always`) |
-| `hft-daily-data-topup.service` + `.timer` | oneshot + timer | Runs `real_commodity_data.py --topup` (MCX) then `real_currency_data.py --topup` (NSE currency) — two `ExecStart=` lines in one job — appending the day's real candles (1min/5min/15min/1day) to `archive_commodities/*.csv` / `archive_currency/*.csv` for all tracked symbols | Daily, 00:30 IST |
+| `hft-daily-data-topup.service` + `.timer` | oneshot + timer | Runs `markets/commodity/data.py --topup` (MCX) then `markets/currency/data.py --topup` (NSE currency) — two `ExecStart=` lines in one job — appending the day's real candles (1min/5min/15min/1day) to `archive_commodities/*.csv` / `archive_currency/*.csv` for all tracked symbols | Daily, 00:30 IST |
 | `hft-weekly-finetune.service` + `.timer` | oneshot + timer | Runs `ml/weekly_finetune.py` — tops up archives, fine-tunes the LightGBM models on new data, restarts the dry-run service to load them | Weekly, Sunday 02:00 IST |
 
 ### First-time setup on a new machine
@@ -467,7 +467,7 @@ Trade entry signals are determined via multi-factor technical and microstructure
 - **VWAP Alignment**: Confirms execution direction relative to institutional volume-weighted average price.
 - **Volume Surge Ratio**: Requires volume expansion relative to rolling average volume.
 
-### 2. Multi-Symbol Autocorrelation Market Regime Filter (`strategy/regime.py`)
+### 2. Multi-Symbol Autocorrelation Market Regime Filter (`core/regime.py`)
 Rather than relying on black-box ML models (which overfit and reduce profits during volatile chop), the system utilizes an institutional daily-return autocorrelation regime filter:
 - Computes rolling lag-1 autocorrelation ($\rho_1$) on daily log returns.
 - **Persistent Trend Regime ($\rho_1 > 0$)**: Trend breakouts continue with high follow-through; signals execute normally.
@@ -482,32 +482,32 @@ Rather than relying on black-box ML models (which overfit and reduce profits dur
 
 ## Real MCX Data via Upstox
 
-`archive_commodities/*.csv` is populated from **genuine historical MCX candles**, fetched via `real_commodity_data.py` using the same Upstox broker/account this bot already live-trades through — no separate data vendor or credentials needed. `download_commodity_data.py`'s earlier random-walk generator is no longer used for training or backtesting (see git history 2026-09-10 for why: everything validated against it — win rates, parameter tuning — was fit to synthetic patterns, not real market behavior).
+`archive_commodities/*.csv` is populated from **genuine historical MCX candles**, fetched via `markets/commodity/data.py` using the same Upstox broker/account this bot already live-trades through — no separate data vendor or credentials needed. `markets/commodity/synthetic_data.py`'s earlier random-walk generator is no longer used for training or backtesting (see git history 2026-09-10 for why: everything validated against it — win rates, parameter tuning — was fit to synthetic patterns, not real market behavior).
 
-**Hard constraint**: MCX commodity futures are monthly-expiry contracts, not continuously-listed instruments. Upstox's real history for the *current* active contract only reaches back to that contract's own listing date — typically ~1 month, not years. Requesting further back returns zero candles, not a clipped result. Real history accumulates one genuine trading day at a time via the daily top-up job; there's no way to get more than ~1 month at once without a paid data vendor (TrueData, Global Data Feeds, PortaraCQG all carry real MCX intraday history, but pricing is quote-based, not self-serve). **Every backtest result quoted in this README reflects this real, currently ~32-day, window** — `backtest_commodity.py` prints the actual archive date range it used on every run (never a hardcoded/stale label) specifically so this can't be silently misrepresented.
+**Hard constraint**: MCX commodity futures are monthly-expiry contracts, not continuously-listed instruments. Upstox's real history for the *current* active contract only reaches back to that contract's own listing date — typically ~1 month, not years. Requesting further back returns zero candles, not a clipped result. Real history accumulates one genuine trading day at a time via the daily top-up job; there's no way to get more than ~1 month at once without a paid data vendor (TrueData, Global Data Feeds, PortaraCQG all carry real MCX intraday history, but pricing is quote-based, not self-serve). **Every backtest result quoted in this README reflects this real, currently ~32-day, window** — `markets/commodity/scalping/backtest.py` prints the actual archive date range it used on every run (never a hardcoded/stale label) specifically so this can't be silently misrepresented.
 
 **Four intervals maintained per symbol**: 1-minute, 5-minute (the one the strategy/ML model actually consumes), 15-minute, and 1-day (which Upstox retains for noticeably longer than intraday — often several months back even when intraday is capped at ~1 month).
 
 ```bash
-python3 -m real_commodity_data           # full initial backfill, all tracked symbols, all 4 intervals
-python3 -m real_commodity_data --topup     # incremental: fetch only candles newer than what's archived (what the daily timer runs)
+python3 -m markets.commodity.data           # full initial backfill, all tracked symbols, all 4 intervals
+python3 -m markets.commodity.data --topup     # incremental: fetch only candles newer than what's archived (what the daily timer runs)
 ```
 
-Symbols covered: `CRUDEOILM`/`CRUDEOIL`, `GOLDM`/`GOLD`, `SILVERMIC`/`SILVER`, `COPPER` (base-symbol and mini-contract archive files are kept aligned — `train_commodity.py`/`backtest_commodity.py` look up whichever name they're given via an alias map).
+Symbols covered: `CRUDEOILM`/`CRUDEOIL`, `GOLDM`/`GOLD`, `SILVERMIC`/`SILVER`, `COPPER` (base-symbol and mini-contract archive files are kept aligned — `train_commodity.py`/`markets/commodity/scalping/backtest.py` look up whichever name they're given via an alias map).
 
-**NSE currency derivatives** (`archive_currency/*.csv`, via `real_currency_data.py`) hit the same real-data wall — same ~1-month-per-contract cap, verified the same way (a wide single-call request to Upstox's history API was found to silently truncate instead of erroring; `real_currency_data.py` fetches in small chunks and unions the results rather than trusting one wide call). No free third-party dataset fills this gap either — checked GitHub and Kaggle directly (2026-09-18): `ShabbirHasan1/NSE-Data` has no currency segment at all, and `jugaad-data`'s official-NSE-bhavcopy library doesn't cover currency derivatives in its roadmap either. Real data here, same as MCX, only grows one real day at a time via the daily top-up job.
+**NSE currency derivatives** (`archive_currency/*.csv`, via `markets/currency/data.py`) hit the same real-data wall — same ~1-month-per-contract cap, verified the same way (a wide single-call request to Upstox's history API was found to silently truncate instead of erroring; `markets/currency/data.py` fetches in small chunks and unions the results rather than trusting one wide call). No free third-party dataset fills this gap either — checked GitHub and Kaggle directly (2026-09-18): `ShabbirHasan1/NSE-Data` has no currency segment at all, and `jugaad-data`'s official-NSE-bhavcopy library doesn't cover currency derivatives in its roadmap either. Real data here, same as MCX, only grows one real day at a time via the daily top-up job.
 
 ```bash
-python3 -m real_currency_data           # full initial backfill, all 4 pairs, all 4 intervals
-python3 -m real_currency_data --topup     # incremental (what the daily timer runs)
+python3 -m markets.currency.data           # full initial backfill, all 4 pairs, all 4 intervals
+python3 -m markets.currency.data --topup     # incremental (what the daily timer runs)
 ```
 
-**NSE equity** (`archive_equity/*.csv`, via `real_equity_data.py`) does NOT hit the monthly-expiry wall above — NSE cash equities are continuously-listed, not futures/derivatives contracts, so real history goes back to each stock's own genuine listing/data-availability date. Confirmed directly: ~76,500 real 5-minute candles per symbol, 2022-08-01 through today, for all 49 NIFTY50 names. Uses the same shared `fetch_real_history_backward` chunked-fetch utility as commodity/currency (a hard per-chunk timeout with retry-then-gap logic was added here specifically — a genuine network hang was found and fixed while building this downloader; a timed-out chunk is now retried and, if still stuck, left as an honest gap rather than being misread as "end of history" and silently truncating everything older).
+**NSE equity** (`archive_equity/*.csv`, via `markets/equity/data.py`) does NOT hit the monthly-expiry wall above — NSE cash equities are continuously-listed, not futures/derivatives contracts, so real history goes back to each stock's own genuine listing/data-availability date. Confirmed directly: ~76,500 real 5-minute candles per symbol, 2022-08-01 through today, for all 49 NIFTY50 names. Uses the same shared `fetch_real_history_backward` chunked-fetch utility as commodity/currency (a hard per-chunk timeout with retry-then-gap logic was added here specifically — a genuine network hang was found and fixed while building this downloader; a timed-out chunk is now retried and, if still stuck, left as an honest gap rather than being misread as "end of history" and silently truncating everything older).
 
 ```bash
-python3 -m real_equity_data              # full initial backfill, all 49 NIFTY50 symbols
-python3 -m real_equity_data --topup        # incremental (what the daily timer runs)
-python3 -m real_equity_data --symbols RELIANCE TCS   # subset
+python3 -m markets.equity.data              # full initial backfill, all 49 NIFTY50 symbols
+python3 -m markets.equity.data --topup        # incremental (what the daily timer runs)
+python3 -m markets.equity.data --symbols RELIANCE TCS   # subset
 ```
 
 ---
@@ -550,7 +550,7 @@ Currency derivatives carry the lightest friction of the three — no STT/CTT at 
 
 ### NSE Currency Derivatives (24-60 days depending on pair, per-pair calibrated thresholds)
 
-Same capital/risk/leverage as above; `backtest_currency.py`, no ML filter (no trained model exists yet for currency).
+Same capital/risk/leverage as above; `markets/currency/scalping/backtest.py`, no ML filter (no trained model exists yet for currency).
 
 | Pair | Trades | Win Rate | Profit Factor | Net Realized | Max Drawdown |
 |---|---|---|---|---|---|
@@ -562,7 +562,7 @@ Note the win rates: all under 50%, yet all profitable with strong profit factors
 
 ### NSE Equity — full NIFTY50 universe (2022-08 to 2026-09, 3 independent train/test folds)
 
-Unlike commodity/currency, equity has a genuine multi-year real archive (NSE cash has no monthly-expiry cap), so this was validated with real out-of-sample folds rather than one short window. Capital ₹100,000, risk 5%, leverage 5x, max 3 concurrent positions, `backtest_equity.py`, no ML filter (see [Equity's ML model](#equitys-ml-model-trained-but-deliberately-not-used-live) for why).
+Unlike commodity/currency, equity has a genuine multi-year real archive (NSE cash has no monthly-expiry cap), so this was validated with real out-of-sample folds rather than one short window. Capital ₹100,000, risk 5%, leverage 5x, max 3 concurrent positions, `markets/equity/scalping/backtest.py`, no ML filter (see [Equity's ML model](#equitys-ml-model-trained-but-deliberately-not-used-live) for why).
 
 | Fold | Test period | Trades | Win Rate | Profit Factor | Net Realized |
 |---|---|---|---|---|---|

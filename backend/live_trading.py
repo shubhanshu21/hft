@@ -22,7 +22,7 @@ changes before ever touching that.
 live_dryrun.py WAS touched, once, on 2026-09-18: its entry-decision logic
 used to be duplicated here almost verbatim (the exact "keep two files in
 sync by hand" drift risk ENTRY_THRESHOLDS' own extraction eliminated one
-layer up). Both files now call the same shared strategy.entry_signal.
+layer up). Both files now call the same shared markets.commodity.scalping.entry_signal.
 compute_entry_signal() instead. This changed live_dryrun.py's SOURCE, not
 its BEHAVIOR -- verified by running its DryRunner.scan() directly before and
 after and confirming identical output, plus the full test suite (23/23) and
@@ -107,17 +107,17 @@ from broker.order_manager import SmartOrderManager
 from broker.upstox_broker import UpstoxBroker, token_invalid_event
 from config import UpstoxConfig
 from database import TradingDB
-from strategy.commodity_costs import compute_mcx_commodity_costs, COMMODITY_SPECS
-from strategy.currency_costs import compute_ncd_currency_costs, CURRENCY_SPECS
-from strategy.entry_signal import compute_entry_signal, is_currency as _is_currency
-from strategy.equity_entry_signal import (
+from markets.commodity.costs import compute_mcx_commodity_costs, COMMODITY_SPECS
+from markets.currency.costs import compute_ncd_currency_costs, CURRENCY_SPECS
+from markets.commodity.scalping.entry_signal import compute_entry_signal, is_currency as _is_currency
+from markets.equity.scalping.entry_signal import (
     compute_equity_entry_signal, is_equity as _is_equity,
     MAX_CONCURRENT_EQUITY_POSITIONS, BE_LOCK_BUFFER_PCT as EQUITY_BE_LOCK_BUFFER_PCT,
 )
-from strategy.equity_costs import compute_nse_equity_costs
-from strategy.equity_features import compute_equity_features
-from strategy.equity_universe import NIFTY50_SYMBOLS
-from strategy.sector_correlation import SectorCorrelationGate
+from markets.equity.costs import compute_nse_equity_costs
+from markets.equity.features import compute_equity_features
+from markets.equity.universe import NIFTY50_SYMBOLS
+from core.sector_correlation import SectorCorrelationGate
 from broker.instruments import build_mcx_commodity_map, build_currency_map, get_instrument_key
 import pandas as pd
 from utils.logger import get_logger, setup_logger
@@ -427,7 +427,7 @@ class LiveTrader:
         telegram.send(msg)
 
     def _refresh_commodity_regimes(self) -> None:
-        from strategy.regime import regime_ok as _regime_ok
+        from core.regime import regime_ok as _regime_ok
         yesterday = (datetime.now(IST) - timedelta(days=1)).strftime("%Y-%m-%d")
         for sym in ["CRUDEOILM", "GOLDM", "SILVER", "NATGASMINI"]:
             ikey = self.symbol_map.get(sym)
@@ -446,7 +446,7 @@ class LiveTrader:
                 log.warning("Could not fetch daily candles for %s regime gate: %s", sym, exc)
 
     def _refresh_equity_regime(self) -> None:
-        from strategy.regime import regime_ok as _regime_ok
+        from core.regime import regime_ok as _regime_ok
         yesterday = (datetime.now(IST) - timedelta(days=1)).strftime("%Y-%m-%d")
         try:
             candles = self.broker.get_historical_candles("NSE_INDEX|Nifty 50", unit="days", interval=1, to_date=yesterday)
@@ -477,7 +477,7 @@ class LiveTrader:
 
     # ---- NSE equity: separate entry/exit path, same reasoning as
     # live_dryrun.py's DryRunner._maybe_enter_equity/_maybe_exit_equity (see
-    # strategy/equity_entry_signal.py's module docstring for why equity can't
+    # markets/equity/scalping/entry_signal.py's module docstring for why equity can't
     # share the commodity/currency shape -- no fixed take-profit, dynamic
     # ADX-scaled trailing instead). This module stays fully unwired regardless
     # (see module docstring) -- adding equity here keeps it in sync with the
