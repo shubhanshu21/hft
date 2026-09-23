@@ -34,6 +34,7 @@ class TradingDB:
         conn = sqlite3.connect(str(self.db_path), timeout=30.0)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode = WAL;")
+        conn.execute("PRAGMA synchronous = NORMAL;")
         conn.execute("PRAGMA foreign_keys = ON;")
         return conn
 
@@ -530,6 +531,56 @@ class TradingDB:
                       f"{o['quantity']} @ ₹{o['fill_price']:.2f} | {st_col}{o['status']}{R} | {o['intent']}")
 
         print(f"{BOLD}{CY}{'='*80}{R}\n")
+
+    def get_dashboard_summary(self, account_id: str = "DRYRUN_ACCOUNT") -> dict:
+        """Returns structured dictionary of account summary, positions, recent trades, and equity curve for API/Web Dashboard."""
+        acc = self.get_account(account_id)
+        if not acc:
+            acc = {"initial_capital": 100000.0, "current_capital": 100000.0, "leverage": 4.0, "risk_pct": 5.0}
+
+        positions = self.get_open_positions(account_id)
+        trades = self.get_trades(limit=50, account_id=account_id)
+        orders = self.get_orders(limit=20, account_id=account_id)
+
+        # Performance metrics
+        total_trades = len(trades)
+        win_trades = [t for t in trades if t.get("net_pnl", 0) > 0]
+        loss_trades = [t for t in trades if t.get("net_pnl", 0) < 0]
+        win_rate = (len(win_trades) / total_trades * 100.0) if total_trades > 0 else 0.0
+
+        net_pnl_sum = sum(t.get("net_pnl", 0) for t in trades)
+        gross_pnl_sum = sum(t.get("gross_pnl", 0) for t in trades)
+        friction_sum = sum(t.get("total_friction", 0) for t in trades)
+
+        # Daily snapshots for equity curve
+        with self._get_conn() as conn:
+            cur = conn.execute(
+                "SELECT timestamp, date, current_capital, net_pnl, win_rate FROM portfolio_snapshots WHERE account_id = ? ORDER BY id ASC",
+                (account_id,)
+            )
+            snapshots = [dict(r) for r in cur.fetchall()]
+
+        return {
+            "account_id": account_id,
+            "initial_capital": acc["initial_capital"],
+            "current_capital": acc["current_capital"],
+            "leverage": acc["leverage"],
+            "risk_pct": acc["risk_pct"],
+            "total_pnl": acc["current_capital"] - acc["initial_capital"],
+            "total_pnl_pct": ((acc["current_capital"] - acc["initial_capital"]) / acc["initial_capital"] * 100.0) if acc["initial_capital"] > 0 else 0.0,
+            "net_pnl_sum": net_pnl_sum,
+            "gross_pnl_sum": gross_pnl_sum,
+            "friction_sum": friction_sum,
+            "total_trades": total_trades,
+            "win_trades_count": len(win_trades),
+            "loss_trades_count": len(loss_trades),
+            "win_rate": round(win_rate, 2),
+            "open_positions": positions,
+            "recent_trades": trades[:15],
+            "recent_orders": orders[:10],
+            "snapshots": snapshots[-30:],
+        }
+
 
 
 # -----------------------------------------------------------------------------

@@ -49,23 +49,24 @@ EQUITY_SYMBOLS = set(NIFTY50_SYMBOLS)
 # 422-599) and its max drawdown is EQUAL OR BETTER than 0.22 on all three
 # folds simultaneously (e.g. fold 1: 30.9% vs 37.4%) -- a genuine improvement
 # in trade frequency, not a tradeoff traded away against risk.
-# Asymmetric Long vs Short Thresholds:
-# Longs ride gradual institutional accumulation (moderate ADX, steady volume, wider trail)
-# Shorts capture rapid liquidation panics (heavy volume cascade, steep drop, fast BE lock)
-LONG_THRESHOLDS = {
-    "min_adx": 20.0, "min_vol": 1.3, "min_orb": 0.08, "min_vwap": 0.08,
-    "min_stop_pct": 0.005, "min_ema_slope": 0.15, "stop_mult": 1.4,
-    "be_activation_mult": 0.60, "trail_dist_mult": 0.35,
+# Asymmetric long/short thresholds (added 2026-09-22 without train/test
+# validation) REVERTED 2026-09-23: train/test evidence showed this variant
+# is strictly worse than the single validated threshold set below on BOTH
+# windows -- TRAIN net -Rs9,067 -> -Rs31,294 (DD 21.8% -> 43.4%), TEST net
+# +Rs15,711 -> -Rs4,872 (DD 14.1% -> 31.2%), i.e. it turns a profitable
+# held-out window into a losing one. The looser long-side thresholds
+# (min_adx 22->20, min_vol 1.5->1.3, min_ema_slope 0.18->0.15) let in
+# marginal entries -- observed live as a same-day whipsaw chasing TATASTEEL
+# at RSI 87-91 (deep exhaustion), something the tighter validated
+# thresholds would have filtered out. Back to ONE shared set for both
+# directions, matching backtest_equity.py's validated ENTRY_THRESHOLDS.
+ENTRY_THRESHOLDS = {
+    "min_adx": 22.0, "min_vol": 1.5, "min_orb": 0.10, "min_vwap": 0.10,
+    "min_stop_pct": 0.005, "min_ema_slope": 0.18, "stop_mult": 1.4,
+    "be_activation_mult": 0.60, "trail_dist_mult": 0.30,
 }
-
-SHORT_THRESHOLDS = {
-    "min_adx": 26.0, "min_vol": 1.8, "min_orb": 0.12, "min_vwap": 0.12,
-    "min_stop_pct": 0.005, "min_ema_slope": 0.22, "stop_mult": 1.2,
-    "be_activation_mult": 0.40, "trail_dist_mult": 0.20,
-}
-
-# Legacy fallback for test compatibility
-ENTRY_THRESHOLDS = LONG_THRESHOLDS
+LONG_THRESHOLDS = ENTRY_THRESHOLDS
+SHORT_THRESHOLDS = ENTRY_THRESHOLDS
 
 BE_ACTIVATION_MULT = 0.60
 TRAIL_DIST_MULT = 0.30

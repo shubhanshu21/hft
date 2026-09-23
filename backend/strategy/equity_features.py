@@ -113,3 +113,43 @@ def compute_equity_features(df: pd.DataFrame) -> pd.DataFrame:
     df["orb_breakout_dn"] = np.where((df["close"] < orb_low_cum) & (~is_orb_bar), 1.0, 0.0)
 
     return df.fillna(0.0)
+
+
+def compute_garman_klass_vol(df: pd.DataFrame, window: int = 14) -> pd.Series:
+    """
+    Computes Garman-Klass intraday volatility estimator incorporating Open, High, Low, and Close prices:
+    GK = 0.5 * ln(H/L)^2 - (2*ln(2) - 1) * ln(C/O)^2
+    """
+    log_hl = np.log(np.maximum(df["high"] / np.maximum(df["low"], 1e-6), 1.0))
+    log_co = np.log(np.maximum(df["close"] / np.maximum(df["open"], 1e-6), 1e-6))
+    gk = 0.5 * (log_hl ** 2) - (2 * np.log(2) - 1) * (log_co ** 2)
+    rolling_gk = np.sqrt(np.maximum(gk.rolling(window).mean(), 0.0)) * 100
+    return rolling_gk.fillna(0.3)
+
+
+def compute_order_book_imbalance(bids: list[dict] | list[tuple], asks: list[dict] | list[tuple]) -> float:
+    """
+    Computes Level 2 Order Book Imbalance (OBI) from top bid and ask queues:
+    OBI = (Total Bid Qty - Total Ask Qty) / (Total Bid Qty + Total Ask Qty)
+    Returns value in [-1.0, +1.0] (positive = buy pressure, negative = sell pressure).
+    """
+    bid_qty = 0.0
+    ask_qty = 0.0
+
+    for b in bids:
+        if isinstance(b, dict):
+            bid_qty += float(b.get("quantity", b.get("qty", 0)))
+        elif isinstance(b, (list, tuple)) and len(b) >= 2:
+            bid_qty += float(b[1])
+
+    for a in asks:
+        if isinstance(a, dict):
+            ask_qty += float(a.get("quantity", a.get("qty", 0)))
+        elif isinstance(a, (list, tuple)) and len(a) >= 2:
+            ask_qty += float(a[1])
+
+    total = bid_qty + ask_qty
+    if total <= 0:
+        return 0.0
+    return float((bid_qty - ask_qty) / total)
+

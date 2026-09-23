@@ -102,6 +102,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import safety_gate
 from auth.upstox_auto_login import ensure_fresh_upstox_token
+from broker.feed_streamer import UpstoxFeedStreamer
+from broker.order_manager import SmartOrderManager
 from broker.upstox_broker import UpstoxBroker, token_invalid_event
 from config import UpstoxConfig
 from database import TradingDB
@@ -115,6 +117,7 @@ from strategy.equity_entry_signal import (
 from strategy.equity_costs import compute_nse_equity_costs
 from strategy.equity_features import compute_equity_features
 from strategy.equity_universe import NIFTY50_SYMBOLS
+from strategy.sector_correlation import SectorCorrelationGate
 from broker.instruments import build_mcx_commodity_map, build_currency_map, get_instrument_key
 import pandas as pd
 from utils.logger import get_logger, setup_logger
@@ -316,6 +319,12 @@ class LiveTrader:
             "currency": os.environ.get("ENABLE_CURRENCY_TRADING", "true").lower() in ("1", "true", "yes"),
             "equity": os.environ.get("ENABLE_EQUITY_TRADING", os.environ.get("DRYRUN_INCLUDE_EQUITY", "true")).lower() in ("1", "true", "yes"),
         }
+
+        # Sector Correlation Risk Gate & Smart Order Manager
+        self.sector_gate = SectorCorrelationGate(
+            max_per_sector=int(os.environ.get("MAX_POSITIONS_PER_SECTOR", "1"))
+        )
+        self.order_manager = SmartOrderManager(self.broker)
 
         self.max_portfolio_heat_pct = float(os.environ.get("MAX_PORTFOLIO_HEAT_PCT", "8.0"))
         self._midday_summary_sent = False
@@ -1122,6 +1131,10 @@ class LiveTrader:
                     continue
                 open_equity_count = sum(1 for s in self.positions if _is_equity(s))
                 if open_equity_count >= MAX_CONCURRENT_EQUITY_POSITIONS:
+                    continue
+                can_enter_sec, reason_sec = self.sector_gate.can_enter(sym, list(self.positions.keys()))
+                if not can_enter_sec:
+                    log.info("%s: live equity entry skipped -- %s", sym, reason_sec)
                     continue
                 sig = self._entry_signal_equity(sym, now)
                 if sig:

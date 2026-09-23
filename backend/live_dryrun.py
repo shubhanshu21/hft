@@ -48,6 +48,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import pandas as pd
 
+from broker.feed_streamer import UpstoxFeedStreamer
 from broker.upstox_broker import UpstoxBroker, token_invalid_event
 from database import TradingDB
 from strategy.commodity_costs import compute_mcx_commodity_costs, COMMODITY_SPECS
@@ -62,6 +63,7 @@ from strategy.equity_entry_signal import (
 from strategy.equity_costs import compute_nse_equity_costs
 from strategy.equity_features import compute_equity_features
 from strategy.equity_universe import NIFTY50_SYMBOLS
+from strategy.sector_correlation import SectorCorrelationGate
 
 # Per-symbol risk-per-trade override (falls back to --risk-pct/DRYRUN_RISK_PCT
 # for anything not listed). SILVER re-added 2026-09-18 at half the account
@@ -429,6 +431,12 @@ class DryRunner:
             "equity": os.environ.get("ENABLE_EQUITY_TRADING", os.environ.get("DRYRUN_INCLUDE_EQUITY", "true")).lower() in ("1", "true", "yes"),
         }
 
+        # Sector & Correlation Risk Gate
+        self.sector_gate = SectorCorrelationGate(
+            max_per_sector=int(os.environ.get("MAX_POSITIONS_PER_SECTOR", "1"))
+        )
+
+
         # Real bid-ask spread sampling (added 2026-09-18): every cost model in
         # this project assumes a flat half-tick-per-leg slippage guess, never
         # measured against a real order book. A one-off check found real
@@ -538,10 +546,19 @@ class DryRunner:
         symbol and recomputes self.commodity_regime_ok. Fails open per symbol
         (leaves previous value or None) if the fetch fails -- a broker hiccup
         should never silently block entries for the day.
-        Extended 2026-09-22 from CRUDEOILM-only to cover GOLDM, SILVER, NATGASMINI.
+        Extended 2026-09-22 from CRUDEOILM-only to cover GOLDM, SILVER,
+        NATGASMINI, then REVERTED 2026-09-23 back to CRUDEOILM-only after
+        train/test validation: the autocorrelation regime signal was derived
+        from and only ever validated against CRUDEOILM's own two known
+        regimes (see strategy/regime.py's docstring). Testing the extension
+        found it clearly harmful for SILVER (TEST net Rs482k -> Rs68k, PF
+        2.67 -> 1.71, trades 62 -> 17) and merely trade-count-reducing for
+        GOLDM with no net benefit (TEST trades 39 -> 20, net roughly flat)
+        -- i.e. it generalizes to neither. Only CRUDEOILM showed the actual
+        regime-dependent failure mode this gate exists to catch.
         """
         from strategy.regime import regime_ok as _regime_ok
-        mcx_symbols = [s for s in self.symbols if not _is_currency(s) and not _is_equity(s)]
+        mcx_symbols = [s for s in self.symbols if s.upper() == "CRUDEOILM"]
         yesterday = (datetime.now(IST) - timedelta(days=1)).strftime("%Y-%m-%d")
         for sym in mcx_symbols:
             ikey = SYMBOL_MAP.get(sym)
@@ -801,6 +818,11 @@ class DryRunner:
             return
         open_equity_count = sum(1 for s in self.positions if _is_equity(s))
         if open_equity_count >= MAX_CONCURRENT_EQUITY_POSITIONS:
+            return
+
+        can_enter_sec, reason_sec = self.sector_gate.can_enter(sym, list(self.positions.keys()))
+        if not can_enter_sec:
+            log.info("%s: equity entry skipped -- %s", sym, reason_sec)
             return
 
         candles = _fetch_candles(self.broker, sym, self.today)
@@ -1163,8 +1185,19 @@ class DryRunner:
     def _save(self):
         if not self.trades:
             return
+        # fieldnames must cover every trade's keys, not just the first --
+        # position dicts vary by asset type (equity/commodity/currency have
+        # different fields, e.g. 'armed_be'/'be'), so a later trade can carry
+        # keys the first one didn't, which crashes DictWriter otherwise.
+        fieldnames = []
+        seen = set()
+        for t in self.trades:
+            for k in t.keys():
+                if k not in seen:
+                    seen.add(k)
+                    fieldnames.append(k)
         with open(self.log_path, "w", newline="") as f:
-            w = csv.DictWriter(f, fieldnames=list(self.trades[0].keys()))
+            w = csv.DictWriter(f, fieldnames=fieldnames)
             w.writeheader(); w.writerows(self.trades)
 
 

@@ -189,6 +189,13 @@ def main():
     p_disarm.add_argument("--component", default=None, choices=["upstox", "binance", "ALL", None])
     p_disarm.set_defaults(func=cmd_disarm_live_trading)
 
+    # Web Dashboard Subcommand
+    p_dash = subparsers.add_parser("dashboard", help="Start real-time web monitoring console")
+    p_dash.add_argument("--port", type=int, default=8080, help="Port to bind dashboard (default: 8080)")
+    p_dash.add_argument("--account", default="DRYRUN_ACCOUNT", help="Account ID")
+    p_dash.add_argument("--db", default=None, help="SQLite DB path")
+    p_dash.set_defaults(func=lambda a: __import__("dashboard.server", fromlist=["run_dashboard_server"]).run_dashboard_server(port=a.port, account_id=a.account, db_path=a.db))
+
     args = parser.parse_args()
     args.func(args)
 
