@@ -9,7 +9,7 @@ exchange. Deliberately minimal compared to where this was adapted from:
 no database, no Telegram/notification integration, no cross-process
 broker-cache invalidation (those all assumed a specific multi-process app
 this project isn't). The refreshed token is written to
-cache/upstox_token.json (not .env — see config.py's module docstring for
+var/cache/upstox_token.json (not .env — see config.py's module docstring for
 why) via UpstoxConfig.save_access_token() — call
 ensure_fresh_upstox_token()'s `on_token_refreshed` callback if you have a
 long-lived UpstoxBroker instance that also needs the new token
@@ -58,9 +58,9 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 from upstox_client.rest import ApiException
 
-from auth.upstox_auth import UpstoxAuthClient
-from config import UpstoxConfig
-from utils.logger import get_logger
+from services.auth.upstox_auth import UpstoxAuthClient
+from engine.config import UpstoxConfig
+from services.utils.logger import get_logger
 
 log = get_logger(__name__)
 
@@ -72,7 +72,7 @@ def token_expiry_epoch(token: str) -> float | None:
     Read the `exp` claim (unix seconds) straight out of the access token's
     JWT payload, without verifying the signature — this only ever reads a
     token this app already trusts (issued by Upstox, read back from our
-    own cache/upstox_token.json), never one from an untrusted source, so there's nothing to
+    own var/cache/upstox_token.json), never one from an untrusted source, so there's nothing to
     verify against. Returns None if `token` is empty or isn't a parseable
     JWT — callers should fall back to their own periodic-check interval
     in that case, not treat it as "never expires".
@@ -356,7 +356,7 @@ def _auto_login_get_code() -> str:
 def ensure_fresh_upstox_token(force: bool = False, on_token_refreshed: Callable[[str], None] | None = None) -> str | None:
     """
     Ensure UpstoxConfig.ACCESS_TOKEN is valid, refreshing it headlessly if
-    needed and persisting the result to cache/upstox_token.json. No-ops (returns None
+    needed and persisting the result to var/cache/upstox_token.json. No-ops (returns None
     immediately, no Selenium/network call) if auto-login isn't configured
     — see UpstoxConfig.auto_login_configured(); treat that as "fall back
     to the manual daily refresh," not a failure.

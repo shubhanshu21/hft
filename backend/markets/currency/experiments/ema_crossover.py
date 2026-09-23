@@ -9,7 +9,7 @@ Supports:
 """
 from __future__ import annotations
 
-from core.paths import BACKEND_ROOT
+from core.paths import ARCHIVE_ROOT
 import argparse
 from pathlib import Path
 import numpy as np
@@ -256,7 +256,7 @@ def main():
     total_friction_all = 0
 
     for sym in args.symbols:
-        csv_file = BACKEND_ROOT / "archive_currency" / f"{sym.upper()}_{'15minute' if args.tf == '15m' else ('5minute' if args.tf == '5m' else '1minute')}.csv"
+        csv_file = ARCHIVE_ROOT / "currency" / f"{sym.upper()}_{'15minute' if args.tf == '15m' else ('5minute' if args.tf == '5m' else '1minute')}.csv"
         if not csv_file.exists():
             print(f"⚠️ Data file not found for {sym}: {csv_file}")
             continue

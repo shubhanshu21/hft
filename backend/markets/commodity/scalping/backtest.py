@@ -11,7 +11,7 @@ Features:
 """
 from __future__ import annotations
 
-from core.paths import BACKEND_ROOT
+from core.paths import ARCHIVE_ROOT, BACKEND_ROOT, CACHE_DIR
 import argparse
 import os
 from datetime import datetime
@@ -31,7 +31,7 @@ from markets.commodity.costs import (
 )
 from markets.commodity.features import compute_commodity_features
 
-ARCHIVE_DIR = BACKEND_ROOT / "archive_commodities"
+ARCHIVE_DIR = ARCHIVE_ROOT / "commodity"
 
 HOLD_BARS = 16
 TAKE_PROFIT_MULT = 1.80  # was 1.20 -- backtested 2026-09-11: on only 1 month of real archive data (2026-08-10 to 2026-09-10, the full history Upstox has for these contracts -- see markets/commodity/data.py), a wider target diluted the flat ~Rs47/trade round-trip brokerage over a bigger win, cutting fees from 65% to well under half of gross PnL
@@ -340,9 +340,9 @@ def run_commodity_backtest(
         atrs = feat_df["atr"].values if "atr" in feat_df.columns else (feat_df["avg_range_pct"].values / 100.0) * closes
 
         # Load LightGBM model if available
-        model_path = BACKEND_ROOT / "cache" / "commodity_models" / f"lgb_{sym.lower()}.pkl"
+        model_path = CACHE_DIR / "commodity_models" / f"lgb_{sym.lower()}.pkl"
         if not model_path.exists():
-            model_path = BACKEND_ROOT / "cache" / "commodity_models" / f"lgb_{base_sym.lower()}.pkl"
+            model_path = CACHE_DIR / "commodity_models" / f"lgb_{base_sym.lower()}.pkl"
 
         model = None
         if model_path.exists():
@@ -360,7 +360,7 @@ def run_commodity_backtest(
                 p_ups = model.predict_proba(X_feats)[:, 1]
             except Exception as e:
                 # Found 2026-09-17 surveying GOLDM/SILVERMIC/COPPER: stale model
-                # files from 2026-09-08 (cache/commodity_models/lgb_gold.pkl etc.)
+                # files from 2026-09-08 (var/cache/commodity_models/lgb_gold.pkl etc.)
                 # were trained on an older 28-feature schema; COMMODITY_FEATURE_COLUMNS
                 # is now 33. That crashed the WHOLE backtest even with
                 # no_ml_filter=True, which is wrong -- when ML isn't usable, this

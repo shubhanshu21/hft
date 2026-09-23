@@ -3,7 +3,7 @@ tests/test_order_manager.py — Unit tests for SmartOrderManager.
 """
 import unittest
 from unittest.mock import MagicMock
-from broker.order_manager import SmartOrderManager
+from services.broker.order_manager import SmartOrderManager
 
 
 class TestSmartOrderManager(unittest.TestCase):

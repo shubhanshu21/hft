@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional, Set
 import upstox_client
 from upstox_client.feeder.market_data_streamer_v3 import MarketDataStreamerV3
 
-from utils.logger import get_logger
+from services.utils.logger import get_logger
 
 log = get_logger(__name__)
 

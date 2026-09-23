@@ -14,7 +14,7 @@ Strategy Reference:
 """
 from __future__ import annotations
 
-from core.paths import BACKEND_ROOT
+from core.paths import ARCHIVE_ROOT
 import argparse
 from pathlib import Path
 import numpy as np
@@ -238,9 +238,9 @@ def main():
     args = parser.parse_args()
 
     data_map = {
-        "1m": BACKEND_ROOT / "archive_commodities" / "GOLD_1minute.csv",
-        "5m": BACKEND_ROOT / "archive_commodities" / "GOLD_5minute.csv",
-        "15m": BACKEND_ROOT / "archive_commodities" / "GOLD_15minute.csv",
+        "1m": ARCHIVE_ROOT / "commodity" / "GOLD_1minute.csv",
+        "5m": ARCHIVE_ROOT / "commodity" / "GOLD_5minute.csv",
+        "15m": ARCHIVE_ROOT / "commodity" / "GOLD_15minute.csv",
     }
     csv_file = data_map[args.tf]
     if not csv_file.exists():

@@ -4,7 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from utils.position_reconciliation import find_discrepancies
+from services.utils.position_reconciliation import find_discrepancies
 
 
 class _FakeBroker:

@@ -14,7 +14,7 @@ Typical daily workflow:
   -> Open it in a browser, log in, and copy the `code` from the redirect URL
   -> Paste the code (or the full redirect URL) back into the terminal
   -> The script prints the new access_token and optionally saves it to
-     cache/upstox_token.json
+     var/cache/upstox_token.json
 
 Security notes:
   - client_secret is read from environment variables; never hardcoded.
@@ -28,8 +28,8 @@ import urllib.parse
 
 import requests
 
-from config import UpstoxConfig
-from utils.logger import get_logger
+from engine.config import UpstoxConfig
+from services.utils.logger import get_logger
 
 log = get_logger(__name__)
 
@@ -139,9 +139,9 @@ if __name__ == "__main__":
 
     print("\n[SUCCESS] New access_token obtained.")
 
-    save = input("\nSave to cache/upstox_token.json now? [y/N]: ").strip().lower()
+    save = input("\nSave to var/cache/upstox_token.json now? [y/N]: ").strip().lower()
     if save in ("y", "yes"):
         UpstoxConfig.save_access_token(token)
-        print("[SAVED] Token written to cache/upstox_token.json.")
+        print("[SAVED] Token written to var/cache/upstox_token.json.")
     else:
         print(f"\nToken (not saved):\n{token}\n")

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-backup_db.py — daily backup of data/paper_trading.db.
+backup_db.py — daily backup of var/db/paper_trading.db.
 
 Added 2026-09-18: the entire paper-trading history (every trade, every
 position, account balances) lives in one SQLite file with no backup
@@ -14,18 +14,19 @@ Keeps the last KEEP_BACKUPS daily snapshots, pruning older ones so this
 doesn't grow unbounded.
 
 Usage:
-    python3 -m backup_db
+    python3 -m engine.backup_db
 """
 from __future__ import annotations
 
+from core.paths import DB_DIR, LOG_DIR
 import sqlite3
 from datetime import date
 from pathlib import Path
 
-from utils.logger import get_logger, setup_logger
+from services.utils.logger import get_logger, setup_logger
 
-DB_PATH = Path(__file__).resolve().parent / "data" / "paper_trading.db"
-BACKUP_DIR = Path(__file__).resolve().parent / "data" / "backups"
+DB_PATH = DB_DIR / "paper_trading.db"
+BACKUP_DIR = DB_DIR / "backups"
 KEEP_BACKUPS = 14
 
 log = get_logger("backup_db")
@@ -58,7 +59,7 @@ def backup_once() -> Path | None:
 
 
 if __name__ == "__main__":
-    setup_logger("", log_file=str(Path(__file__).resolve().parent / "logs" / "backup_db.log"))
+    setup_logger("", log_file=str(LOG_DIR / "backup_db.log"))
     result = backup_once()
     if result:
         print(f"Backed up to {result}")

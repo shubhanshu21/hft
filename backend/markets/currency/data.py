@@ -17,7 +17,7 @@ Usage:
 """
 from __future__ import annotations
 
-from core.paths import BACKEND_ROOT
+from core.paths import ARCHIVE_ROOT, BACKEND_ROOT, LOG_DIR
 import argparse
 import sys
 from datetime import date, timedelta
@@ -27,13 +27,13 @@ sys.path.insert(0, str(BACKEND_ROOT))
 
 import pandas as pd
 
-from auth.upstox_auto_login import ensure_fresh_upstox_token
-from broker.instruments import build_currency_map
-from broker.upstox_broker import UpstoxBroker
-from config import UpstoxConfig
-from utils.logger import get_logger, setup_logger
+from services.auth.upstox_auto_login import ensure_fresh_upstox_token
+from services.broker.instruments import build_currency_map
+from services.broker.upstox_broker import UpstoxBroker
+from engine.config import UpstoxConfig
+from services.utils.logger import get_logger, setup_logger
 
-ARCHIVE_DIR = BACKEND_ROOT / "archive_currency"
+ARCHIVE_DIR = ARCHIVE_ROOT / "currency"
 
 SYMBOLS = ["USDINR", "EURINR", "GBPINR", "JPYINR"]
 
@@ -58,7 +58,7 @@ def download_real_currency_history(symbol: str, unit: str, interval: int, instru
                                      max_lookback_days: int = 120) -> pd.DataFrame | None:
     """Chunked fetch via data.candles.fetch_real_history_backward -- see that function's
     docstring for why a single wide from=/to= call silently under-returns data."""
-    from data.candles import fetch_real_history_backward
+    from services.data.candles import fetch_real_history_backward
     broker = _get_broker()
     candles = fetch_real_history_backward(broker, instrument_key, unit, interval, max_lookback_days=max_lookback_days)
     if not candles:
@@ -87,7 +87,7 @@ def topup_real_currency_history(symbol: str, unit: str, interval: int, instrumen
     if from_date > to_date:
         return 0
 
-    from data.candles import fetch_real_history_backward
+    from services.data.candles import fetch_real_history_backward
     broker = _get_broker()
     gap_days = (date.fromisoformat(to_date) - date.fromisoformat(from_date)).days + 1
     candles = fetch_real_history_backward(broker, instrument_key, unit, interval, max_lookback_days=gap_days)
@@ -130,7 +130,7 @@ def build_all_real_currency_archives(topup: bool = False) -> None:
 
 
 if __name__ == "__main__":
-    setup_logger("", log_file=str(BACKEND_ROOT / "logs" / "real_currency_data.log"))
+    setup_logger("", log_file=str(LOG_DIR / "real_currency_data.log"))
     parser = argparse.ArgumentParser(description="Real NSE currency derivatives data (USDINR/EURINR/GBPINR/JPYINR) via Upstox")
     parser.add_argument("--topup", action="store_true", help="Incremental top-up instead of a full backfill")
     args = parser.parse_args()

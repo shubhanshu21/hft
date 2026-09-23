@@ -11,7 +11,7 @@ SQLite.
 THIS FILE IS NOT WIRED UP. Written 2026-09-18 at the user's explicit request
 ("create actual live trading code but dont wire up") -- it exists, it is
 complete, and it is reachable ONLY by running it directly with
-`python3 live_trading.py`. Nothing else in this codebase imports or invokes
+`python3 -m engine.live_trading`. Nothing else in this codebase imports or invokes
 it:
   - cli.py has no subcommand for it (dryrun/backtest are unchanged).
   - No systemd unit references it (only hft-dryrun.service exists, and it
@@ -86,10 +86,11 @@ Real-order specifics live_dryrun.py's simulation never had to deal with:
     guess at a state it can't reconstruct.
 
 Usage (once actually armed -- see above):
-    python3 live_trading.py --capital 100000 --risk-pct 5.0 --leverage 4.0
+    python3 -m engine.live_trading --capital 100000 --risk-pct 5.0 --leverage 4.0
 """
 from __future__ import annotations
 
+from core.paths import BACKEND_ROOT, DB_DIR, LOG_DIR
 import argparse
 import os
 import sys
@@ -98,15 +99,15 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(BACKEND_ROOT))
 
-import safety_gate
-from auth.upstox_auto_login import ensure_fresh_upstox_token
-from broker.feed_streamer import UpstoxFeedStreamer
-from broker.order_manager import SmartOrderManager
-from broker.upstox_broker import UpstoxBroker, token_invalid_event
-from config import UpstoxConfig
-from database import TradingDB
+import engine.safety_gate as safety_gate
+from services.auth.upstox_auto_login import ensure_fresh_upstox_token
+from services.broker.feed_streamer import UpstoxFeedStreamer
+from services.broker.order_manager import SmartOrderManager
+from services.broker.upstox_broker import UpstoxBroker, token_invalid_event
+from engine.config import UpstoxConfig
+from engine.database import TradingDB
 from markets.commodity.costs import compute_mcx_commodity_costs, COMMODITY_SPECS
 from markets.currency.costs import compute_ncd_currency_costs, CURRENCY_SPECS
 from markets.commodity.scalping.entry_signal import compute_entry_signal, is_currency as _is_currency
@@ -118,10 +119,10 @@ from markets.equity.costs import compute_nse_equity_costs
 from markets.equity.features import compute_equity_features
 from markets.equity.universe import NIFTY50_SYMBOLS
 from core.sector_correlation import SectorCorrelationGate
-from broker.instruments import build_mcx_commodity_map, build_currency_map, get_instrument_key
+from services.broker.instruments import build_mcx_commodity_map, build_currency_map, get_instrument_key
 import pandas as pd
-from utils.logger import get_logger, setup_logger
-from utils import telegram
+from services.utils.logger import get_logger, setup_logger
+from services.utils import telegram
 
 IST = ZoneInfo("Asia/Kolkata")
 log = get_logger("live_trading")
@@ -1000,7 +1001,7 @@ class LiveTrader:
         tracked position never reaches that point."""
         if not self.positions:
             return
-        from utils.position_reconciliation import find_discrepancies
+        from services.utils.position_reconciliation import find_discrepancies
         discrepancies = find_discrepancies(self.broker, self.positions, self.symbol_map)
         for sym, disc in discrepancies.items():
             if disc["kind"] == "unknown":
@@ -1165,7 +1166,7 @@ def _acquire_process_lock(account_id: str):
     the SAME account still correctly refuse to double-run (which, with real
     orders, could double-size or double-enter positions)."""
     import fcntl
-    lock_dir = Path(__file__).parent / "data"
+    lock_dir = DB_DIR
     lock_dir.mkdir(exist_ok=True)
     lock_path = lock_dir / f".LIVE_{account_id}.lock"
     fh = open(lock_path, "w")
@@ -1183,7 +1184,7 @@ def _acquire_process_lock(account_id: str):
 
 
 def main() -> None:
-    setup_logger("", log_file=str(Path(__file__).parent / "logs" / "live_trading.log"))
+    setup_logger("", log_file=str(LOG_DIR / "live_trading.log"))
 
     ap = argparse.ArgumentParser(description="REAL-MONEY live trading engine (MCX commodities + NSE currency). NOT wired into cli.py -- run directly, and see this file's module docstring before ever doing so.")
     ap.add_argument("--capital", type=float, default=100_000, help="Starting capital tracked in the LIVE_ACCOUNT ledger row (informational -- real capital lives at the broker, not here)")
@@ -1252,7 +1253,7 @@ def main() -> None:
         mclose = now.replace(hour=23, minute=30, second=0, microsecond=0)
 
         if now > mclose:
-            from utils.market_holidays import get_trading_holidays
+            from services.utils.market_holidays import get_trading_holidays
             trading_holidays = get_trading_holidays()
             next_day = now + timedelta(days=1)
             while next_day.weekday() >= 5 or next_day.date() in trading_holidays:
@@ -1327,10 +1328,10 @@ def main() -> None:
             f"Trades today: {len(todays_trades)}  Total PnL: ₹{total_pnl:+,.2f}\n"
             f"Balance: ₹{trader.capital:,.2f}"
         )
-        from utils.chart import generate_equity_curve
+        from services.utils.chart import generate_equity_curve
         chart_path = generate_equity_curve(
             db.get_snapshots(args.account), args.account,
-            Path(__file__).parent / "logs" / f"equity_{args.account}.png",
+            LOG_DIR / f"equity_{args.account}.png",
         )
         if chart_path:
             telegram.send_photo(chart_path, caption=f"📈 Live Equity Curve — {args.account} ({trader.today})")

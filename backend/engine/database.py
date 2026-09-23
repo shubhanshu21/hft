@@ -10,6 +10,7 @@ Tracks:
 """
 from __future__ import annotations
 
+from core.paths import DB_DIR
 import argparse
 import sqlite3
 from datetime import datetime
@@ -18,7 +19,7 @@ from typing import List, Optional
 from zoneinfo import ZoneInfo
 
 IST = ZoneInfo("Asia/Kolkata")
-DEFAULT_DB_PATH = Path(__file__).parent / "data" / "paper_trading.db"
+DEFAULT_DB_PATH = DB_DIR / "paper_trading.db"
 
 
 class TradingDB:

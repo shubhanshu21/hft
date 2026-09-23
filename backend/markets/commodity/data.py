@@ -41,7 +41,7 @@ Usage:
 """
 from __future__ import annotations
 
-from core.paths import BACKEND_ROOT
+from core.paths import ARCHIVE_ROOT, BACKEND_ROOT, LOG_DIR
 import argparse
 import sys
 from datetime import date, timedelta
@@ -51,13 +51,13 @@ sys.path.insert(0, str(BACKEND_ROOT))
 
 import pandas as pd
 
-from auth.upstox_auto_login import ensure_fresh_upstox_token
-from broker.instruments import build_mcx_commodity_map
-from broker.upstox_broker import UpstoxBroker
-from config import UpstoxConfig
-from utils.logger import get_logger, setup_logger
+from services.auth.upstox_auto_login import ensure_fresh_upstox_token
+from services.broker.instruments import build_mcx_commodity_map
+from services.broker.upstox_broker import UpstoxBroker
+from engine.config import UpstoxConfig
+from services.utils.logger import get_logger, setup_logger
 
-ARCHIVE_DIR = BACKEND_ROOT / "archive_commodities"
+ARCHIVE_DIR = ARCHIVE_ROOT / "commodity"
 
 # {archive filename prefix: MCX trading symbol used to resolve the instrument_key}
 SYMBOLS = {
@@ -105,7 +105,7 @@ def download_real_commodity_history(symbol: str, unit: str, interval: int, mcx_s
     Uses data.candles.fetch_real_history_backward -- see that function's docstring for why a single
     wide from=/to= call (the previous approach here, via _find_earliest_available + one call) was
     silently under-archiving this exact dataset for as long as this module has existed."""
-    from data.candles import fetch_real_history_backward
+    from services.data.candles import fetch_real_history_backward
     broker = _get_broker()
     instrument_key = build_mcx_commodity_map().get(mcx_symbol)
     if not instrument_key:
@@ -150,7 +150,7 @@ def topup_real_commodity_history(symbol: str, unit: str, interval: int, mcx_symb
         log.warning("%s: could not resolve MCX instrument_key.", mcx_symbol)
         return 0
 
-    from data.candles import fetch_real_history_backward
+    from services.data.candles import fetch_real_history_backward
     gap_days = (date.fromisoformat(to_date) - date.fromisoformat(from_date)).days + 1
     candles = fetch_real_history_backward(broker, instrument_key, unit, interval, max_lookback_days=gap_days)
     if not candles:
@@ -202,7 +202,7 @@ def build_all_real_commodity_archives(topup: bool = False) -> None:
 
 
 if __name__ == "__main__":
-    setup_logger("", log_file=str(BACKEND_ROOT / "logs" / "real_commodity_data.log"))
+    setup_logger("", log_file=str(LOG_DIR / "real_commodity_data.log"))
     parser = argparse.ArgumentParser(description="Real MCX commodity data (CRUDEOILM/NATGASMINI/GOLDM/SILVERMIC/COPPER) via Upstox")
     parser.add_argument("--topup", action="store_true", help="Incremental top-up instead of a full backfill")
     args = parser.parse_args()

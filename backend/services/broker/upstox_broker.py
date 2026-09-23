@@ -28,9 +28,9 @@ import time
 import upstox_client
 from upstox_client.rest import ApiException
 
-from broker.base_broker import BaseBroker
-from utils.instrument_cache import InstrumentCache
-from utils.logger import get_logger
+from services.broker.base_broker import BaseBroker
+from services.utils.instrument_cache import InstrumentCache
+from services.utils.logger import get_logger
 
 log = get_logger(__name__)
 
@@ -131,7 +131,7 @@ class UpstoxBroker(BaseBroker):
         # dry_run=False only gets it if the kill switch, .env flag, and
         # armed-state file all agree. Every current call site hardcodes
         # dry_run=True, so this only matters if that ever changes.
-        from safety_gate import enforce_dry_run
+        from engine.safety_gate import enforce_dry_run
         self.dry_run = enforce_dry_run("upstox", dry_run)
 
         # --- Initialise the SDK configuration ---

@@ -29,7 +29,7 @@ Usage:
 """
 from __future__ import annotations
 
-from core.paths import BACKEND_ROOT
+from core.paths import ARCHIVE_ROOT, BACKEND_ROOT
 import argparse
 from pathlib import Path
 import sys
@@ -44,7 +44,7 @@ load_dotenv(dotenv_path=BACKEND_ROOT / ".env")
 from markets.currency.costs import compute_ncd_currency_costs, size_currency_lots
 from markets.commodity.features import compute_commodity_features
 
-ARCHIVE_DIR = BACKEND_ROOT / "archive_currency"
+ARCHIVE_DIR = ARCHIVE_ROOT / "currency"
 
 HOLD_BARS = 16
 TAKE_PROFIT_MULT = 1.80

@@ -14,8 +14,8 @@ import logging
 import time
 from typing import Optional, Tuple
 
-from broker.upstox_broker import UpstoxBroker
-from utils.logger import get_logger
+from services.broker.upstox_broker import UpstoxBroker
+from services.utils.logger import get_logger
 
 log = get_logger(__name__)
 

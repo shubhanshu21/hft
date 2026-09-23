@@ -57,46 +57,45 @@ The framework is architected into 5 modular, production-grade layers:
 
 ```
 backend/
-├── broker/                          # Broker Integration & Dynamic Master Feed
-│   ├── upstox_broker.py             # Broker client (Quotes, Intraday/Historical Candles & Execution) — always dry_run
-│   └── instruments.py               # Dynamic MCX/NSE master downloader & instrument-key resolver
+├── cli.py                            # Unified CLI (backtest, dryrun, report, reset-db, arm/disarm live trading)
+├── .env / .env.example / requirements.txt
 │
-├── strategy/                        # Feature engineering, regime gates & cost models
-│   ├── commodity_features.py        # ADX/DMI, VWAP distance, EMA slope, ORB, volume surge, RSI (shared by commodity + currency)
-│   ├── commodity_costs.py           # MCX statutory cost engine (CTT, stamp duty, exchange fee, SEBI, GST) + lot sizing
-│   ├── currency_costs.py            # NSE currency derivatives cost engine (no STT/CTT, different stamp duty/exchange fee) + lot sizing
-│   ├── equity_universe.py           # Fixed NIFTY50 list (49 names), decided BEFORE any backtest -- never edited by performance
-│   ├── equity_features.py           # Equity's own 09:15-anchored feature set (same core indicators, no MCX-only session/inventory constructs)
-│   ├── equity_costs.py              # NSE equity intraday (MIS) statutory cost engine (STT, stamp duty, exchange fee, SEBI, GST) + share sizing
-│   ├── equity_entry_signal.py       # Shared entry/exit decision logic for equity (dynamic ADX-scaled trailing exits, no fixed TP)
-│   ├── entry_signal.py              # Pure rule-based momentum entry signal generator for commodity & currency
-│   ├── regime.py                    # Multi-symbol daily-return autocorrelation market regime gate
-│   └── slippage.py                  # Real-market bid/ask spread & adaptive slippage tracking
+├── engine/                           # What runs: runners + plumbing
+│   ├── live_dryrun.py                # 24/7 paper-trading daemon (commodity + currency + equity)
+│   ├── live_trading.py               # Real-order engine -- gated by the multi-layer safety switch
+│   ├── safety_gate.py                # Layered live-trading kill switch (source constant + .env flag + armed-state file)
+│   ├── database.py                   # SQLite persistence: accounts, orders, positions, trades, snapshots
+│   ├── config.py                     # Upstox credentials/token handling
+│   └── backup_db.py                  # Daily SQLite backup (14-day retention)
 │
-├── systemd/                         # systemd --user unit files (symlinked from ~/.config/systemd/user/)
-│   ├── hft-dryrun.service                     # 24/7 paper-trading daemon
-│   └── hft-daily-data-topup.service/.timer    # Nightly real MCX/currency/equity data top-up (00:30 IST)
+├── markets/                          # What trades: one folder per market
+│   ├── commodity/                    # MCX
+│   │   ├── costs.py  features.py  data.py        # shared by every commodity strategy (statutory costs, indicators, Upstox top-up)
+│   │   ├── scalping/                 # entry_signal.py (also serves currency), backtest.py -- the live strategy
+│   │   └── experiments/              # throwaway research (EMA crossover)
+│   ├── currency/                     # NSE currency derivatives -- same shape (costs, data, scalping/, experiments/)
+│   ├── equity/                       # NSE NIFTY50 -- costs, features, universe, data, scalping/ (own entry_signal + backtest)
+│   └── index_futures/                # costs, data, backtest
+│                                     # a new strategy (e.g. swing) = a new sibling folder of scalping/
 │
-├── tests/                           # Automated Unit Testing Suite
-│   ├── test_regime_multi_symbol.py  # Autocorrelation regime gate test coverage
-│   ├── test_market_cooldown.py      # Adaptive loss-overshoot cooldown unit tests
-│   └── ...
+├── core/                             # Market-agnostic logic
+│   ├── regime.py  regime_shift.py    # daily-return autocorrelation gate; out-of-distribution gate
+│   ├── slippage.py                   # real bid/ask spread -> adaptive slippage
+│   ├── sector_correlation.py  base_engine.py
+│   └── paths.py                      # single source of truth for every filesystem path
 │
-├── utils/
-│   ├── market_holidays.py           # Real, auto-updating NSE/CDS/MCX holiday calendar (Upstox's own public API)
-│   └── chart.py                     # Daily equity curve chart visualizer for Telegram reports
+├── services/                         # External plumbing
+│   ├── broker/                       # Upstox client, instrument-master resolver, order manager, feed streamer
+│   ├── auth/                         # Upstox OAuth2 + headless auto-login
+│   ├── utils/                        # telegram, logger, market_holidays, chart, position_reconciliation
+│   └── data/                         # candle fetching helpers
 │
-├── safety_gate.py                   # Layered live-trading kill switch (source constant + .env flag + armed-state file)
-├── database.py                      # SQLite persistence: accounts, orders, positions, trades, snapshots
-├── cli.py                           # Master Unified CLI
-├── markets/commodity/scalping/backtest.py            # 5-Minute MCX Commodity Futures Backtest CLI (ENTRY_THRESHOLDS per symbol)
-├── markets/currency/scalping/backtest.py             # 5-Minute NSE Currency Derivatives Backtest CLI (ENTRY_THRESHOLDS per pair)
-├── markets/equity/scalping/backtest.py               # 5-Minute NSE Equity Intraday Backtest CLI (ONE shared ENTRY_THRESHOLDS for universe)
-├── live_dryrun.py                   # Live 24/7 Paper-Trading Daemon (commodity + currency + equity)
-├── live_trading.py                  # Real-order execution engine -- gated by multi-layer safety switch
-├── markets/commodity/data.py           # Real MCX historical data downloader/top-up (via Upstox)
-├── markets/currency/data.py            # Real NSE currency derivatives historical data downloader/top-up
-└── markets/equity/data.py              # Real NSE equity (NIFTY50) historical data downloader/top-up
+├── deploy/systemd/                   # systemd --user units (symlinked from ~/.config/systemd/user/)
+│   ├── hft-dryrun.service            # 24/7 paper-trading daemon
+│   └── hft-daily-data-topup.service/.timer   # nightly data top-up + DB backup (00:30 IST)
+│
+├── tests/                            # unit tests
+└── var/                              # ALL runtime state (gitignored): archive/<market>/, cache/, logs/, db/
 ```
 
 ---
@@ -181,7 +180,7 @@ Everything the CLI needs to run with **zero flags** lives in `backend/.env` (cop
 |---|---|
 | `UPSTOX_API_KEY` / `UPSTOX_API_SECRET` | OAuth2 app credentials from [developer.upstox.com](https://developer.upstox.com/). |
 | `UPSTOX_REDIRECT_URI` | OAuth2 redirect URL registered with your Upstox app. |
-| `UPSTOX_USERNAME` / `UPSTOX_PIN` / `UPSTOX_TOTP_SECRET` | Optional — enables `auth/upstox_auto_login.py`'s headless daily token refresh (Selenium). Leave all three blank to do the manual `python3 -m auth.upstox_auth` refresh instead. **`TOTP_SECRET` is your 2FA seed — combined with `PIN` it's permanent full login access to the real account, treat it like a password.** `ACCESS_TOKEN` itself is *not* stored in `.env` — it's cached at `cache/upstox_token.json` and rewritten daily by the auth flow. |
+| `UPSTOX_USERNAME` / `UPSTOX_PIN` / `UPSTOX_TOTP_SECRET` | Optional — enables `services/auth/upstox_auto_login.py`'s headless daily token refresh (Selenium). Leave all three blank to do the manual `python3 -m auth.upstox_auth` refresh instead. **`TOTP_SECRET` is your 2FA seed — combined with `PIN` it's permanent full login access to the real account, treat it like a password.** `ACCESS_TOKEN` itself is *not* stored in `.env` — it's cached at `var/cache/upstox_token.json` and rewritten daily by the auth flow. |
 
 ### Shared Trading Parameters
 | Variable | Default | Used by |
@@ -350,13 +349,12 @@ python3 -m markets.equity.scalping.backtest --capital 100000 --risk-pct 5.0 --le
 
 ### Unit files live in the repo, not just in systemd's directory
 
-All unit files are checked into **`backend/systemd/`** — not hidden away in `~/.config/systemd/user/` where they'd be invisible to the repo and easy to lose track of. `~/.config/systemd/user/` holds only **symlinks** pointing back into `backend/systemd/`, so systemd reads the exact file you see and edit in the project — no separate "deploy" step, no copying, no drift between what's committed and what's running.
+All unit files are checked into **`backend/deploy/systemd/`** — not hidden away in `~/.config/systemd/user/` where they'd be invisible to the repo and easy to lose track of. `~/.config/systemd/user/` holds only **symlinks** pointing back into `backend/deploy/systemd/`, so systemd reads the exact file you see and edit in the project — no separate "deploy" step, no copying, no drift between what's committed and what's running.
 
 | Unit | Type | Purpose | Schedule |
 |---|---|---|---|
 | `hft-dryrun.service` | persistent daemon | Runs `cli.py dryrun` — the 24/7 paper-trading loop | Always on (`Restart=always`) |
-| `hft-daily-data-topup.service` + `.timer` | oneshot + timer | Runs `markets/commodity/data.py --topup` (MCX) then `markets/currency/data.py --topup` (NSE currency) — two `ExecStart=` lines in one job — appending the day's real candles (1min/5min/15min/1day) to `archive_commodities/*.csv` / `archive_currency/*.csv` for all tracked symbols | Daily, 00:30 IST |
-| `hft-weekly-finetune.service` + `.timer` | oneshot + timer | Runs `ml/weekly_finetune.py` — tops up archives, fine-tunes the LightGBM models on new data, restarts the dry-run service to load them | Weekly, Sunday 02:00 IST |
+| `hft-daily-data-topup.service` + `.timer` | oneshot + timer | Runs `markets/commodity/data.py --topup` (MCX) then `markets/currency/data.py --topup` (NSE currency) — two `ExecStart=` lines in one job — appending the day's real candles (1min/5min/15min/1day) to `var/archive/commodity/*.csv` / `var/archive/currency/*.csv` for all tracked symbols | Daily, 00:30 IST |
 
 ### First-time setup on a new machine
 
@@ -365,7 +363,7 @@ cd /var/www/html/hft/backend
 
 # 1. Symlink every unit file from the repo into systemd's user directory
 mkdir -p ~/.config/systemd/user
-for f in systemd/*; do
+for f in deploy/systemd/*; do
     ln -s "$(pwd)/$f" ~/.config/systemd/user/"$(basename "$f")"
 done
 
@@ -376,7 +374,6 @@ loginctl enable-linger "$USER"
 systemctl --user daemon-reload
 systemctl --user enable --now hft-dryrun.service
 systemctl --user enable --now hft-daily-data-topup.timer
-systemctl --user enable --now hft-weekly-finetune.timer
 
 # 4. Confirm
 systemctl --user status hft-dryrun.service --no-pager
@@ -385,7 +382,7 @@ systemctl --user list-timers --all --no-pager
 
 ### Editing a unit
 
-Edit the file directly in `backend/systemd/` (same as any other project file — visible in your IDE, tracked by git, no secrets in it so safe to commit). Then:
+Edit the file directly in `backend/deploy/systemd/` (same as any other project file — visible in your IDE, tracked by git, no secrets in it so safe to commit). Then:
 
 ```bash
 systemctl --user daemon-reload                # always needed after any unit-file edit
@@ -408,9 +405,7 @@ journalctl --user -u hft-dryrun.service --no-pager -n 100    # last 100 lines
 
 systemctl --user list-timers --all --no-pager                          # next scheduled fire for every timer
 systemctl --user start hft-daily-data-topup.service                     # trigger a data top-up right now (don't wait for 00:30 IST)
-systemctl --user start hft-weekly-finetune.service                      # trigger a fine-tune right now (don't wait for Sunday)
 journalctl --user -u hft-daily-data-topup.service --no-pager -n 50       # last data top-up's output
-journalctl --user -u hft-weekly-finetune.service --no-pager -n 50        # last fine-tune's output
 ```
 
 `Restart=always` on `hft-dryrun.service` is safe with `systemctl stop` — systemd doesn't apply the restart policy to an explicit stop request, only to unexpected exits/crashes.
@@ -425,7 +420,7 @@ Built into `live_dryrun.py`'s `DryRunner`/`main()` — all active by default, no
 - **Daily-loss kill switch** (`MAX_DAILY_LOSS_PCT`) — halts *new* entries for the rest of the day once realized loss hits the configured % of the day's starting capital. Open positions still get managed/exited normally. Sends a Telegram alert once when tripped, resets automatically the next trading day.
 - **Token refresh loop** (`TOKEN_CHECK_INTERVAL_MIN`) — proactively re-validates the Upstox token on a timer, or immediately if the broker's 401 circuit breaker trips. Auto-refreshes via headless login if `UPSTOX_USERNAME`/`PIN`/`TOTP_SECRET` are configured; otherwise alerts via Telegram that a manual `python3 -m auth.upstox_auth` is needed.
 - **Graceful shutdown** — both Ctrl-C and `systemctl stop` (SIGTERM) trigger a clean exit with a Telegram alert, not an unhandled crash. The SIGTERM handler is one-shot (re-arms to `SIG_IGN` after the first signal) so a second signal arriving mid-shutdown can't inject a second async exception into the cleanup path.
-- **Real, auto-updating holiday calendar** (`utils/market_holidays.py`) — the overnight day-rollover loop used to only skip Sunday (an admitted gap in an earlier version of its own comment); it now also skips Saturday and every real NSE/CDS/MCX trading holiday, sourced live from Upstox's own public holiday API (`GET /v2/market/holidays`, no auth needed) rather than a hand-maintained list. Never hardcodes a year — always reflects whatever year it currently is, cached and refetched automatically once a day (and across a year boundary).
+- **Real, auto-updating holiday calendar** (`services/utils/market_holidays.py`) — the overnight day-rollover loop used to only skip Sunday (an admitted gap in an earlier version of its own comment); it now also skips Saturday and every real NSE/CDS/MCX trading holiday, sourced live from Upstox's own public holiday API (`GET /v2/market/holidays`, no auth needed) rather than a hand-maintained list. Never hardcodes a year — always reflects whatever year it currently is, cached and refetched automatically once a day (and across a year boundary).
 - **Layered live-trading kill switch** (`safety_gate.py`) — see [`cli.py arm-live-trading`](#4-cliparm-live-trading--disarm-live-trading--the-layered-kill-switch) above.
 
 > **Note on scope**: this is a paper-trading system end to end — `UpstoxBroker` is always constructed with `dry_run=True` (enforced independently by `safety_gate.py` even if a caller ever requested otherwise), and no code path currently places real orders. These safety features harden the *paper* daemon (crash alerting, daily-loss discipline, token hygiene); they are prerequisites for eventually going live, not a live-trading switch.
@@ -446,11 +441,11 @@ Set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` in `.env` (see [Environment Conf
 | Token refresh failed | 🔴 |
 | End of trading day | 🏁 trade count, total PnL, balance (sourced from the DB, not an in-memory counter — survives a mid-session restart) — **plus the equity curve chart as a photo** |
 
-The equity curve (`utils/chart.py`) is a matplotlib line chart built from `database.py`'s `portfolio_snapshots` table (one row recorded per trade close), aggregated to **one point per calendar day** (that day's end-of-day capital) spanning from the first trading day through today — not a noisy per-trade intraday chart. It's regenerated and sent to Telegram at the end of every trading day, and also saved to `logs/equity_<ACCOUNT_ID>.png` on every `--report` call:
+The equity curve (`services/utils/chart.py`) is a matplotlib line chart built from `database.py`'s `portfolio_snapshots` table (one row recorded per trade close), aggregated to **one point per calendar day** (that day's end-of-day capital) spanning from the first trading day through today — not a noisy per-trade intraday chart. It's regenerated and sent to Telegram at the end of every trading day, and also saved to `logs/equity_<ACCOUNT_ID>.png` on every `--report` call:
 
 ```bash
 python3 live_dryrun.py --report --commodity --account DRYRUN_ACCOUNT
-# -> prints the dashboard AND saves logs/equity_DRYRUN_ACCOUNT.png
+# -> prints the dashboard AND saves var/logs/equity_DRYRUN_ACCOUNT.png
 ```
 
 ---
@@ -482,7 +477,7 @@ Rather than relying on black-box ML models (which overfit and reduce profits dur
 
 ## Real MCX Data via Upstox
 
-`archive_commodities/*.csv` is populated from **genuine historical MCX candles**, fetched via `markets/commodity/data.py` using the same Upstox broker/account this bot already live-trades through — no separate data vendor or credentials needed. `markets/commodity/synthetic_data.py`'s earlier random-walk generator is no longer used for training or backtesting (see git history 2026-09-10 for why: everything validated against it — win rates, parameter tuning — was fit to synthetic patterns, not real market behavior).
+`var/archive/commodity/*.csv` is populated from **genuine historical MCX candles**, fetched via `markets/commodity/data.py` using the same Upstox broker/account this bot already live-trades through — no separate data vendor or credentials needed. `markets/commodity/synthetic_data.py`'s earlier random-walk generator is no longer used for training or backtesting (see git history 2026-09-10 for why: everything validated against it — win rates, parameter tuning — was fit to synthetic patterns, not real market behavior).
 
 **Hard constraint**: MCX commodity futures are monthly-expiry contracts, not continuously-listed instruments. Upstox's real history for the *current* active contract only reaches back to that contract's own listing date — typically ~1 month, not years. Requesting further back returns zero candles, not a clipped result. Real history accumulates one genuine trading day at a time via the daily top-up job; there's no way to get more than ~1 month at once without a paid data vendor (TrueData, Global Data Feeds, PortaraCQG all carry real MCX intraday history, but pricing is quote-based, not self-serve). **Every backtest result quoted in this README reflects this real, currently ~32-day, window** — `markets/commodity/scalping/backtest.py` prints the actual archive date range it used on every run (never a hardcoded/stale label) specifically so this can't be silently misrepresented.
 
@@ -495,14 +490,14 @@ python3 -m markets.commodity.data --topup     # incremental: fetch only candles 
 
 Symbols covered: `CRUDEOILM`/`CRUDEOIL`, `GOLDM`/`GOLD`, `SILVERMIC`/`SILVER`, `COPPER` (base-symbol and mini-contract archive files are kept aligned — `train_commodity.py`/`markets/commodity/scalping/backtest.py` look up whichever name they're given via an alias map).
 
-**NSE currency derivatives** (`archive_currency/*.csv`, via `markets/currency/data.py`) hit the same real-data wall — same ~1-month-per-contract cap, verified the same way (a wide single-call request to Upstox's history API was found to silently truncate instead of erroring; `markets/currency/data.py` fetches in small chunks and unions the results rather than trusting one wide call). No free third-party dataset fills this gap either — checked GitHub and Kaggle directly (2026-09-18): `ShabbirHasan1/NSE-Data` has no currency segment at all, and `jugaad-data`'s official-NSE-bhavcopy library doesn't cover currency derivatives in its roadmap either. Real data here, same as MCX, only grows one real day at a time via the daily top-up job.
+**NSE currency derivatives** (`var/archive/currency/*.csv`, via `markets/currency/data.py`) hit the same real-data wall — same ~1-month-per-contract cap, verified the same way (a wide single-call request to Upstox's history API was found to silently truncate instead of erroring; `markets/currency/data.py` fetches in small chunks and unions the results rather than trusting one wide call). No free third-party dataset fills this gap either — checked GitHub and Kaggle directly (2026-09-18): `ShabbirHasan1/NSE-Data` has no currency segment at all, and `jugaad-data`'s official-NSE-bhavcopy library doesn't cover currency derivatives in its roadmap either. Real data here, same as MCX, only grows one real day at a time via the daily top-up job.
 
 ```bash
 python3 -m markets.currency.data           # full initial backfill, all 4 pairs, all 4 intervals
 python3 -m markets.currency.data --topup     # incremental (what the daily timer runs)
 ```
 
-**NSE equity** (`archive_equity/*.csv`, via `markets/equity/data.py`) does NOT hit the monthly-expiry wall above — NSE cash equities are continuously-listed, not futures/derivatives contracts, so real history goes back to each stock's own genuine listing/data-availability date. Confirmed directly: ~76,500 real 5-minute candles per symbol, 2022-08-01 through today, for all 49 NIFTY50 names. Uses the same shared `fetch_real_history_backward` chunked-fetch utility as commodity/currency (a hard per-chunk timeout with retry-then-gap logic was added here specifically — a genuine network hang was found and fixed while building this downloader; a timed-out chunk is now retried and, if still stuck, left as an honest gap rather than being misread as "end of history" and silently truncating everything older).
+**NSE equity** (`var/archive/equity/*.csv`, via `markets/equity/data.py`) does NOT hit the monthly-expiry wall above — NSE cash equities are continuously-listed, not futures/derivatives contracts, so real history goes back to each stock's own genuine listing/data-availability date. Confirmed directly: ~76,500 real 5-minute candles per symbol, 2022-08-01 through today, for all 49 NIFTY50 names. Uses the same shared `fetch_real_history_backward` chunked-fetch utility as commodity/currency (a hard per-chunk timeout with retry-then-gap logic was added here specifically — a genuine network hang was found and fixed while building this downloader; a timed-out chunk is now retried and, if still stuck, left as an honest gap rather than being misread as "end of history" and silently truncating everything older).
 
 ```bash
 python3 -m markets.equity.data              # full initial backfill, all 49 NIFTY50 symbols

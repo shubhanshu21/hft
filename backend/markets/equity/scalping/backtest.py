@@ -51,7 +51,7 @@ Usage:
 """
 from __future__ import annotations
 
-from core.paths import BACKEND_ROOT
+from core.paths import ARCHIVE_ROOT, BACKEND_ROOT
 import argparse
 from pathlib import Path
 import sys
@@ -67,7 +67,7 @@ from markets.equity.costs import compute_nse_equity_costs, size_equity_shares
 from markets.equity.features import compute_equity_features
 from markets.equity.universe import NIFTY50_SYMBOLS
 
-ARCHIVE_DIR = BACKEND_ROOT / "archive_equity"
+ARCHIVE_DIR = ARCHIVE_ROOT / "equity"
 
 HOLD_BARS = 16
 TAKE_PROFIT_MULT = 1.80  # kept only as the ENTRY_THRESHOLDS default fallback key -- no longer used as a fixed TP price (see below)

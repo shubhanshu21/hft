@@ -31,7 +31,7 @@ Usage:
 """
 from __future__ import annotations
 
-from core.paths import BACKEND_ROOT
+from core.paths import ARCHIVE_ROOT, BACKEND_ROOT
 import argparse
 from pathlib import Path
 import sys
@@ -46,7 +46,7 @@ load_dotenv(dotenv_path=BACKEND_ROOT / ".env")
 from markets.index_futures.costs import compute_index_futures_costs, size_index_futures_lots
 from markets.commodity.features import compute_commodity_features
 
-ARCHIVE_DIR = BACKEND_ROOT / "archive_index_futures"
+ARCHIVE_DIR = ARCHIVE_ROOT / "index_futures"
 
 SESSION_OPEN_MINUTES = 9 * 60 + 15  # NSE F&O opens 09:15 IST -- NOT MCX/NCD's shared 09:00
 

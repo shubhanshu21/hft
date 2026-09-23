@@ -13,7 +13,7 @@ constantly (daily at minimum -- observed rewriting multiple times within
 minutes during a debugging session, since every fresh login invalidates
 whatever token existed before it), whereas .env is meant to hold static
 app credentials someone might reasonably want under source control review
-or backed up separately. It's cached instead at cache/upstox_token.json,
+or backed up separately. It's cached instead at var/cache/upstox_token.json,
 the same daily-cache directory holding the instrument master and index
 constituent lists. If you refresh ACCESS_TOKEN yourself,
 UpstoxConfig.save_access_token() writes it there for the next process
@@ -21,6 +21,7 @@ start; an already-running UpstoxBroker needs UpstoxBroker.set_access_token()
 called on it directly since it bakes the token into the SDK client at
 construction time.
 """
+from core.paths import BACKEND_ROOT, CACHE_DIR
 import json
 import logging
 import os
@@ -30,10 +31,10 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-_ENV_PATH = Path(__file__).resolve().parent / ".env"
+_ENV_PATH = BACKEND_ROOT / ".env"
 load_dotenv(dotenv_path=_ENV_PATH)
 
-_TOKEN_CACHE_PATH = Path(__file__).resolve().parent / "cache" / "upstox_token.json"
+_TOKEN_CACHE_PATH = CACHE_DIR / "upstox_token.json"
 
 
 def _optional(key: str, default: str = "") -> str:
@@ -41,7 +42,7 @@ def _optional(key: str, default: str = "") -> str:
 
 
 def _load_access_token() -> str:
-    """Prefers the cached token from cache/upstox_token.json; falls back to UPSTOX_ACCESS_TOKEN in .env only if that cache file doesn't exist yet (e.g. a token pasted manually before ever running the auth flow)."""
+    """Prefers the cached token from var/cache/upstox_token.json; falls back to UPSTOX_ACCESS_TOKEN in .env only if that cache file doesn't exist yet (e.g. a token pasted manually before ever running the auth flow)."""
     try:
         token = json.loads(_TOKEN_CACHE_PATH.read_text()).get("access_token", "")
         if token:
@@ -92,7 +93,7 @@ class UpstoxConfig:
 
     @classmethod
     def save_access_token(cls, token: str) -> None:
-        """Persist a freshly-obtained access_token to cache/upstox_token.json (not .env — see module docstring) and update this process's in-memory copy."""
+        """Persist a freshly-obtained access_token to var/cache/upstox_token.json (not .env — see module docstring) and update this process's in-memory copy."""
         _TOKEN_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
         _TOKEN_CACHE_PATH.write_text(json.dumps({
             "access_token": token,

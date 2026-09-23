@@ -13,19 +13,20 @@ internally) and fires the EXACT SAME strategy logic as markets/commodity/scalpin
 
 Usage:
     # Run paper trading during market hours
-    python3 live_dryrun.py
+    python3 -m engine.live_dryrun
 
     # View current DB PnL, Capital, Open Positions & Order History
-    python3 live_dryrun.py --report
+    python3 -m engine.live_dryrun --report
 
     # Reset paper trading DB with custom capital
-    python3 live_dryrun.py --reset-db --capital 200000
+    python3 -m engine.live_dryrun --reset-db --capital 200000
 
     # Custom settings
-    python3 live_dryrun.py --capital 100000 --risk-pct 5.0 --leverage 4.0
+    python3 -m engine.live_dryrun --capital 100000 --risk-pct 5.0 --leverage 4.0
 """
 from __future__ import annotations
 
+from core.paths import BACKEND_ROOT, CACHE_DIR, DB_DIR, LOG_DIR
 import os
 import sys
 from pathlib import Path
@@ -44,13 +45,13 @@ from datetime import date, datetime, timedelta
 
 from zoneinfo import ZoneInfo
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(BACKEND_ROOT))
 
 import pandas as pd
 
-from broker.feed_streamer import UpstoxFeedStreamer
-from broker.upstox_broker import UpstoxBroker, token_invalid_event
-from database import TradingDB
+from services.broker.feed_streamer import UpstoxFeedStreamer
+from services.broker.upstox_broker import UpstoxBroker, token_invalid_event
+from engine.database import TradingDB
 from markets.commodity.costs import compute_mcx_commodity_costs, COMMODITY_SPECS
 from markets.currency.costs import (
     compute_ncd_currency_costs, CURRENCY_SPECS,
@@ -138,10 +139,10 @@ def _is_market_session_open(sym: str, now: datetime) -> bool:
     return lo <= mins <= hi
 
 
-from broker.instruments import build_mcx_commodity_map, build_currency_map, get_instrument_key
-from utils.logger import get_logger, setup_logger
-from utils import telegram
-from utils.market_holidays import get_trading_holidays
+from services.broker.instruments import build_mcx_commodity_map, build_currency_map, get_instrument_key
+from services.utils.logger import get_logger, setup_logger
+from services.utils import telegram
+from services.utils.market_holidays import get_trading_holidays
 
 log = get_logger("live_dryrun")
 
@@ -197,7 +198,7 @@ def _acquire_process_lock(account_id: str):
     double-enter positions. Holds the lock (via an inherited open fd) for
     the life of the process; released automatically on exit/crash.
     """
-    lock_dir = Path(__file__).parent / "data"
+    lock_dir = DB_DIR
     lock_dir.mkdir(exist_ok=True)
     lock_path = lock_dir / f".{account_id}.lock"
     fh = open(lock_path, "w")
@@ -217,14 +218,14 @@ def _acquire_process_lock(account_id: str):
 def _load_token() -> str:
     # 1. Check if token already loaded in UpstoxConfig
     try:
-        from config import UpstoxConfig
+        from engine.config import UpstoxConfig
         if UpstoxConfig.ACCESS_TOKEN:
             return UpstoxConfig.ACCESS_TOKEN
     except Exception:
         pass
 
-    # 2. Check cache/upstox_token.json
-    cache_path = Path(__file__).parent / "cache" / "upstox_token.json"
+    # 2. Check var/cache/upstox_token.json
+    cache_path = CACHE_DIR / "upstox_token.json"
     if cache_path.exists():
         try:
             import json
@@ -236,7 +237,7 @@ def _load_token() -> str:
             pass
 
     # 3. Check .env file
-    env = Path(__file__).parent / ".env"
+    env = BACKEND_ROOT / ".env"
     if env.exists():
         for line in env.read_text().splitlines():
             line = line.strip()
@@ -251,7 +252,7 @@ def _load_token() -> str:
 
     # 5. Try auto-login if configured
     try:
-        from auth.upstox_auto_login import ensure_fresh_upstox_token
+        from services.auth.upstox_auto_login import ensure_fresh_upstox_token
         token = ensure_fresh_upstox_token()
         if token:
             return token
@@ -314,7 +315,7 @@ class DryRunner:
         # Wire the spread log path into the adaptive slippage module so it reads
         # the same file this process writes.
         from core.slippage import set_spread_log_path
-        set_spread_log_path(Path(__file__).parent / "logs" / "spread_samples.csv")
+        set_spread_log_path(LOG_DIR / "spread_samples.csv")
 
         # Sync account in SQLite
         self.db.init_account(account_id=self.account_id, capital=self.capital,
@@ -496,12 +497,12 @@ class DryRunner:
         # not a fluke, but one snapshot isn't a distribution. This logs a real
         # sample (throttled to once per SPREAD_SAMPLE_INTERVAL_MIN per symbol,
         # not every scan, to stay well under API rate limits) to
-        # logs/spread_samples.csv so a genuine empirical slippage model can
+        # var/logs/spread_samples.csv so a genuine empirical slippage model can
         # eventually replace the flat guess -- accumulates automatically as
         # this daemon runs, no separate job needed.
         self.spread_sample_interval_min = float(os.environ.get("SPREAD_SAMPLE_INTERVAL_MIN", "5"))
         self._last_spread_sample: dict[str, datetime] = {}
-        self.spread_log_path = Path(__file__).parent / "logs" / "spread_samples.csv"
+        self.spread_log_path = LOG_DIR / "spread_samples.csv"
 
         # Midday summary flag -- initialized here so scan() can read it without
         # the getattr workaround (which was masking the missing init).
@@ -511,7 +512,7 @@ class DryRunner:
         # one above. Loaded from disk so a "stop" sent before a restart is
         # still honored after it.
         self.trading_enabled = self._load_trading_enabled()
-        logs_dir = Path(__file__).parent / "logs"
+        logs_dir = LOG_DIR
         logs_dir.mkdir(exist_ok=True)
         self.log_path = logs_dir / f"dryrun_{self.today}.csv"
 
@@ -678,7 +679,7 @@ class DryRunner:
         # Found 2026-09-23: with no session gate here, off-hours calls kept
         # hitting the broker's market-depth endpoint for closed markets
         # (currency after 17:00, equity after 15:30) and it returned the
-        # same frozen last-known bid/ask over and over -- logs/spread_samples.csv
+        # same frozen last-known bid/ask over and over -- var/logs/spread_samples.csv
         # had dozens of byte-identical EURINR rows spanning 1.5+ hours
         # (17:04-18:44 IST). Those stale, non-executable "spreads" fed
         # directly into core/slippage.py's empirical median once
@@ -1236,7 +1237,7 @@ class DryRunner:
     # systemd restart: the daemon must come back up still halted, not quietly
     # resume trading just because the process happened to restart.
     def _control_path(self) -> Path:
-        return Path(__file__).parent / "data" / f".{self.account_id}_control.json"
+        return DB_DIR / f".{self.account_id}_control.json"
 
     def _load_control(self) -> dict:
         try:
@@ -1331,7 +1332,7 @@ def main():
     # reaches a persistent log file via propagation, not just stdout/stderr
     # (which is all journalctl captures; nothing was ever written to
     # logs/ before this, since get_logger() alone never attaches handlers).
-    setup_logger("", log_file=str(Path(__file__).parent / "logs" / "live_dryrun.log"))
+    setup_logger("", log_file=str(LOG_DIR / "live_dryrun.log"))
 
     ap = argparse.ArgumentParser(description="Live paper-trading dry run with SQLite virtual order & PnL tracking")
     ap.add_argument("--token",     default=None,           help="Upstox access token")
@@ -1339,7 +1340,7 @@ def main():
     ap.add_argument("--risk-pct",  type=float, default=DEFAULT_RISK_PCT, help="Risk %% per trade")
     ap.add_argument("--leverage",  type=float, default=DEFAULT_LEVERAGE, help="MIS leverage (default 4.0)")
     ap.add_argument("--symbols",   nargs="+",  default=None,        help="MCX commodity / NSE currency symbols to trade")
-    ap.add_argument("--db",        default=None,           help="Path to SQLite DB (default: data/paper_trading.db)")
+    ap.add_argument("--db",        default=None,           help="Path to SQLite DB (default: var/db/paper_trading.db)")
     ap.add_argument("--account",   default="DRYRUN_ACCOUNT", help="Account identifier")
     ap.add_argument("--long-only", action="store_true",    help="Execute LONG orders only (skip all short setups)")
     ap.add_argument("--direction", choices=["both", "long", "short"], default="both", help="Trade direction filter: both, long, or short")
@@ -1359,10 +1360,10 @@ def main():
 
     if args.report:
         db.print_dashboard(args.account)
-        from utils.chart import generate_equity_curve
+        from services.utils.chart import generate_equity_curve
         chart_path = generate_equity_curve(
             db.get_snapshots(args.account), args.account,
-            Path(__file__).parent / "logs" / f"equity_{args.account}.png",
+            LOG_DIR / f"equity_{args.account}.png",
         )
         if chart_path:
             print(f"{GY}Equity curve chart saved: {WH}{chart_path}{R}")
@@ -1378,8 +1379,8 @@ def main():
     # token and only discovering it hours later via the in-loop check is not
     # acceptable. Validate now and force a refresh if needed, before the
     # daemon ever claims to be running.
-    from auth.upstox_auto_login import _token_is_valid, ensure_fresh_upstox_token
-    from config import UpstoxConfig as _UC
+    from services.auth.upstox_auto_login import _token_is_valid, ensure_fresh_upstox_token
+    from engine.config import UpstoxConfig as _UC
     if not token or not _token_is_valid(token):
         print(f"{YL}Cached/provided token is missing or invalid -- attempting auto-login refresh...{R}")
         if _UC.auto_login_configured():
@@ -1445,7 +1446,7 @@ def main():
         f"Send <b>/stop</b> to halt new entries and force-close all open positions, or <b>/start</b> to resume."
     )
 
-    from config import UpstoxConfig
+    from engine.config import UpstoxConfig
     token_check_interval_sec = int(os.environ.get("TOKEN_CHECK_INTERVAL_MIN", "15")) * 60
     last_token_check = time.monotonic()
 
@@ -1523,7 +1524,7 @@ def main():
                     )
 
         runner.today = mopen.strftime("%Y-%m-%d")
-        runner.log_path = Path(__file__).parent / "logs" / f"dryrun_{runner.today}.csv"
+        runner.log_path = LOG_DIR / f"dryrun_{runner.today}.csv"
 
         now = datetime.now(IST)
         if now < mopen:
@@ -1617,7 +1618,7 @@ def main():
                 token_invalid_event.clear()
                 if UpstoxConfig.auto_login_configured():
                     try:
-                        from auth.upstox_auto_login import ensure_fresh_upstox_token
+                        from services.auth.upstox_auto_login import ensure_fresh_upstox_token
                         old_token = UpstoxConfig.ACCESS_TOKEN
                         new_token = ensure_fresh_upstox_token(on_token_refreshed=broker.set_access_token)
                         if new_token is None:
@@ -1692,10 +1693,10 @@ def main():
             f"Balance: ₹{runner.capital:,.2f}"
         )
 
-        from utils.chart import generate_equity_curve
+        from services.utils.chart import generate_equity_curve
         chart_path = generate_equity_curve(
             db.get_snapshots(args.account), args.account,
-            Path(__file__).parent / "logs" / f"equity_{args.account}.png",
+            LOG_DIR / f"equity_{args.account}.png",
         )
         if chart_path:
             telegram.send_photo(chart_path, caption=f"📈 Equity Curve — {args.account} ({runner.today})")

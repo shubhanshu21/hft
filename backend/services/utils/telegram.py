@@ -9,6 +9,7 @@ Never raises: a Telegram outage or bad config must not crash the trading
 loop it's alerting from, so every send failure is logged and swallowed.
 """
 
+from core.paths import BACKEND_ROOT
 import logging
 import os
 from pathlib import Path
@@ -16,7 +17,7 @@ from pathlib import Path
 import requests
 from dotenv import load_dotenv
 
-load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env")
+load_dotenv(dotenv_path=BACKEND_ROOT / ".env")
 
 _BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 _CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")

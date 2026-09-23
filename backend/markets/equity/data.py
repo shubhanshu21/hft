@@ -16,7 +16,7 @@ Usage:
 """
 from __future__ import annotations
 
-from core.paths import BACKEND_ROOT
+from core.paths import ARCHIVE_ROOT, BACKEND_ROOT, LOG_DIR
 import argparse
 import sys
 from datetime import date, timedelta
@@ -26,14 +26,14 @@ sys.path.insert(0, str(BACKEND_ROOT))
 
 import pandas as pd
 
-from auth.upstox_auto_login import ensure_fresh_upstox_token
-from broker.instruments import ensure_master, get_instrument_key
-from broker.upstox_broker import UpstoxBroker
-from config import UpstoxConfig
+from services.auth.upstox_auto_login import ensure_fresh_upstox_token
+from services.broker.instruments import ensure_master, get_instrument_key
+from services.broker.upstox_broker import UpstoxBroker
+from engine.config import UpstoxConfig
 from markets.equity.universe import NIFTY50_SYMBOLS
-from utils.logger import get_logger, setup_logger
+from services.utils.logger import get_logger, setup_logger
 
-ARCHIVE_DIR = BACKEND_ROOT / "archive_equity"
+ARCHIVE_DIR = ARCHIVE_ROOT / "equity"
 _MAX_LOOKBACK_DAYS = 1500  # generous upper bound; real cutoff is each stock's own listing date, discovered not assumed
 log = get_logger("real_equity_data")
 
@@ -46,7 +46,7 @@ def _get_broker() -> UpstoxBroker:
 
 
 def download_real_equity_history(symbol: str) -> pd.DataFrame | None:
-    from data.candles import fetch_real_history_backward
+    from services.data.candles import fetch_real_history_backward
     broker = _get_broker()
     ikey = get_instrument_key(symbol)
     if not ikey:
@@ -79,7 +79,7 @@ def topup_real_equity_history(symbol: str) -> int:
         log.info("%s: already up to date.", symbol)
         return 0
 
-    from data.candles import fetch_real_history_backward
+    from services.data.candles import fetch_real_history_backward
     broker = _get_broker()
     ikey = get_instrument_key(symbol)
     if not ikey:
@@ -118,7 +118,7 @@ def build_all_equity_archives(symbols: list[str] | None = None, topup: bool = Fa
 
 
 if __name__ == "__main__":
-    setup_logger("", log_file=str(BACKEND_ROOT / "logs" / "real_equity_data.log"))
+    setup_logger("", log_file=str(LOG_DIR / "real_equity_data.log"))
     parser = argparse.ArgumentParser(description="Real NSE equity data (NIFTY50) via Upstox")
     parser.add_argument("--topup", action="store_true", help="Incremental top-up instead of a full backfill")
     parser.add_argument("--symbols", nargs="+", default=None, help="Subset of symbols instead of the full NIFTY50 list")

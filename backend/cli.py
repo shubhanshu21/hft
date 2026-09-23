@@ -51,7 +51,7 @@ def _env(key: str, default: str) -> str:
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from database import TradingDB
+from engine.database import TradingDB
 
 
 def cmd_backtest(args):
@@ -72,7 +72,7 @@ def cmd_dryrun(args):
     import subprocess
     cmd = [
         str(_venv_py if _venv_py.exists() else "python3"),
-        str(Path(__file__).parent / "live_dryrun.py"),
+        "-m", "engine.live_dryrun",
         "--capital", str(args.capital),
         "--risk-pct", str(args.risk_pct),
         "--leverage", str(args.leverage),
@@ -83,7 +83,7 @@ def cmd_dryrun(args):
     if args.direction:
         cmd.extend(["--direction", args.direction])
 
-    subprocess.run(cmd)
+    subprocess.run(cmd, cwd=Path(__file__).parent)
 
 
 def cmd_report(args):
@@ -92,7 +92,7 @@ def cmd_report(args):
 
 
 def cmd_arm_live_trading(args):
-    from safety_gate import arm, KILL_SWITCH_ENGAGED
+    from engine.safety_gate import arm, KILL_SWITCH_ENGAGED
     ok = arm(args.component, args.confirm)
     if ok and KILL_SWITCH_ENGAGED:
         print("\033[93mNote: safety_gate.KILL_SWITCH_ENGAGED is still True in source -- "
@@ -101,7 +101,7 @@ def cmd_arm_live_trading(args):
 
 
 def cmd_disarm_live_trading(args):
-    from safety_gate import disarm
+    from engine.safety_gate import disarm
     disarm(args.component)
 
 
@@ -188,13 +188,6 @@ def main():
     p_disarm = subparsers.add_parser("disarm-live-trading", help="Remove the armed-state gate (always safe)")
     p_disarm.add_argument("--component", default=None, choices=["upstox", "binance", "ALL", None])
     p_disarm.set_defaults(func=cmd_disarm_live_trading)
-
-    # Web Dashboard Subcommand
-    p_dash = subparsers.add_parser("dashboard", help="Start real-time web monitoring console")
-    p_dash.add_argument("--port", type=int, default=8080, help="Port to bind dashboard (default: 8080)")
-    p_dash.add_argument("--account", default="DRYRUN_ACCOUNT", help="Account ID")
-    p_dash.add_argument("--db", default=None, help="SQLite DB path")
-    p_dash.set_defaults(func=lambda a: __import__("dashboard.server", fromlist=["run_dashboard_server"]).run_dashboard_server(port=a.port, account_id=a.account, db_path=a.db))
 
     args = parser.parse_args()
     args.func(args)

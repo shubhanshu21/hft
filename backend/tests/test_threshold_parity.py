@@ -7,10 +7,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import markets.commodity.scalping.backtest as backtest_commodity
 import markets.currency.scalping.backtest as backtest_currency
 import markets.commodity.scalping.entry_signal as entry_signal
-import live_dryrun
-import live_trading
-
-
+import engine.live_dryrun as live_dryrun
+import engine.live_trading as live_trading
 class TestThresholdParity(unittest.TestCase):
     """live_dryrun.py (and, since 2026-09-18, live_trading.py) used to duplicate
     markets/commodity/scalping/backtest.py's/backtest_currency.py's ENTRY_THRESHOLDS as hand-copied

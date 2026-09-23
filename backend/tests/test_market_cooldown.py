@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 from zoneinfo import ZoneInfo
 
-from live_dryrun import DryRunner, _get_market
+from engine.live_dryrun import DryRunner, _get_market
 
 IST = ZoneInfo("Asia/Kolkata")
 
@@ -45,9 +45,9 @@ class TestMarketCooldownLogic(unittest.TestCase):
         broker_instance.get_market_depth.return_value = None
         broker_instance.get_historical_candles.return_value = []
 
-        with patch("live_dryrun.TradingDB", return_value=db_instance), \
-             patch("live_dryrun.UpstoxBroker", return_value=broker_instance), \
-             patch("live_dryrun._build_symbol_map", return_value={"CRUDEOILM": "MCX_1", "USDINR": "CDS_1", "RELIANCE": "NSE_1"}):
+        with patch("engine.live_dryrun.TradingDB", return_value=db_instance), \
+             patch("engine.live_dryrun.UpstoxBroker", return_value=broker_instance), \
+             patch("engine.live_dryrun._build_symbol_map", return_value={"CRUDEOILM": "MCX_1", "USDINR": "CDS_1", "RELIANCE": "NSE_1"}):
             runner = DryRunner(
                 broker=broker_instance,
                 db=db_instance,
@@ -72,9 +72,9 @@ class TestMarketCooldownLogic(unittest.TestCase):
         runner.positions["CRUDEOILM"] = pos_commodity
 
         # Simulate closing a commodity position with a Rs 3,500 loss (3.5% of 100k capital)
-        with patch("live_dryrun.compute_mcx_commodity_costs", return_value={"net": -3500.0, "gross": -3400.0, "total": 100.0}), \
-             patch("utils.telegram.send"), \
-             patch("utils.telegram.alert_exit"):
+        with patch("engine.live_dryrun.compute_mcx_commodity_costs", return_value={"net": -3500.0, "gross": -3400.0, "total": 100.0}), \
+             patch("services.utils.telegram.send"), \
+             patch("services.utils.telegram.alert_exit"):
             runner._close_position("CRUDEOILM", pos_commodity, 5900.0, "stop_loss", now)
 
         # Commodity should be on cooldown
@@ -93,7 +93,7 @@ class TestMarketCooldownLogic(unittest.TestCase):
         now = datetime(2026, 9, 22, 11, 0, 0, tzinfo=IST)
         runner.market_cooldown_until["commodity"] = now + timedelta(minutes=60)
 
-        with patch("utils.telegram.send"):
+        with patch("services.utils.telegram.send"):
             # Before 60 minutes: cooldown is active
             self.assertTrue(runner._is_market_on_cooldown("commodity", now + timedelta(minutes=30)))
 
@@ -110,9 +110,9 @@ class TestMarketCooldownLogic(unittest.TestCase):
 
         # Simulate new day scan call with patched datetime
         next_day = datetime(2026, 9, 23, 9, 15, 0, tzinfo=IST)
-        with patch("live_dryrun.datetime") as mock_dt, \
-             patch("live_dryrun._fetch_candles", return_value=[]), \
-             patch("utils.telegram.send"):
+        with patch("engine.live_dryrun.datetime") as mock_dt, \
+             patch("engine.live_dryrun._fetch_candles", return_value=[]), \
+             patch("services.utils.telegram.send"):
             mock_dt.now.return_value = next_day
             mock_dt.strftime = datetime.strftime
             runner.scan()

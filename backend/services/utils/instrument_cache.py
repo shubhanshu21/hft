@@ -23,7 +23,7 @@ Cache strategy:
 Source: https://assets.upstox.com/market-quote/instruments/exchange/NSE.csv.gz
 
 Usage:
-    from utils.instrument_cache import InstrumentCache
+    from services.utils.instrument_cache import InstrumentCache
     cache = InstrumentCache()
     df = cache.get_or_refresh()  # Returns a pandas DataFrame
 """
@@ -36,7 +36,7 @@ from pathlib import Path
 import pandas as pd
 import requests
 
-from utils.logger import get_logger
+from services.utils.logger import get_logger
 
 log = get_logger(__name__)
 

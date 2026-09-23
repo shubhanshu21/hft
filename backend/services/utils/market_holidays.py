@@ -27,6 +27,7 @@ across a year boundary.
 """
 from __future__ import annotations
 
+from core.paths import CACHE_DIR
 import json
 import logging
 from datetime import date, datetime
@@ -37,7 +38,7 @@ import requests
 log = logging.getLogger("market_holidays")
 
 _HOLIDAYS_URL = "https://api.upstox.com/v2/market/holidays"
-_CACHE_PATH = Path(__file__).resolve().parent.parent / "cache" / "market_holidays.json"
+_CACHE_PATH = CACHE_DIR / "market_holidays.json"
 
 # Exchanges relevant to this project's live-traded instruments (MCX commodities,
 # NSE currency derivatives via CDS, NSE equities) -- a day counts as a holiday

@@ -5,13 +5,14 @@ Downloads the official Upstox NSE.csv.gz instrument master once per day,
 caches it locally, and provides fast symbol -> instrument_key lookup.
 
 Usage:
-    from broker.instruments import resolve_symbols, get_instrument_key
+    from services.broker.instruments import resolve_symbols, get_instrument_key
 
     key = get_instrument_key("RELIANCE")        # "NSE_EQ|INE002A01018"
     sym_map = resolve_symbols(["RELIANCE", "HDFCBANK", "TCS"])
 """
 from __future__ import annotations
 
+from core.paths import CACHE_DIR
 import csv
 import re
 import gzip
@@ -25,7 +26,7 @@ from typing import Optional
 log = logging.getLogger(__name__)
 
 _MASTER_URL = "https://assets.upstox.com/market-quote/instruments/exchange/NSE.csv.gz"
-_CACHE_DIR  = Path(__file__).parent.parent / "cache"
+_CACHE_DIR  = CACHE_DIR
 _CACHE_FILE = _CACHE_DIR / "upstox_instruments_nse.csv.gz"
 _META_FILE  = _CACHE_DIR / "upstox_instruments_meta.json"
 

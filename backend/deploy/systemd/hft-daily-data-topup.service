@@ -15,7 +15,7 @@ ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m markets.currency.data -
 ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m markets.index_futures.data --topup
 # Added 2026-09-18: daily paper_trading.db backup -- previously no backup
 # existed at all for the entire trading history.
-ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m backup_db
+ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m engine.backup_db
 # Added 2026-09-19: NSE equity (NIFTY50) top-up, now live in paper trading
 # (see .env's DRYRUN_INCLUDE_EQUITY) -- keeps all 49 archives current so the
 # validated entry thresholds keep seeing fresh real data, same as every

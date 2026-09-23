@@ -21,11 +21,11 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from broker.feed_streamer import UpstoxFeedStreamer
-from broker.instruments import build_mcx_commodity_map, build_currency_map, get_instrument_key
-from broker.upstox_broker import UpstoxBroker
-from config import UpstoxConfig
-from database import TradingDB
+from services.broker.feed_streamer import UpstoxFeedStreamer
+from services.broker.instruments import build_mcx_commodity_map, build_currency_map, get_instrument_key
+from services.broker.upstox_broker import UpstoxBroker
+from engine.config import UpstoxConfig
+from engine.database import TradingDB
 from markets.commodity.costs import compute_mcx_commodity_costs, COMMODITY_SPECS
 from markets.currency.costs import compute_ncd_currency_costs, CURRENCY_SPECS
 from markets.commodity.scalping.entry_signal import compute_entry_signal, is_currency as _is_currency
@@ -37,8 +37,8 @@ from markets.equity.scalping.entry_signal import (
 from markets.equity.features import compute_equity_features
 from markets.equity.universe import NIFTY50_SYMBOLS
 from core.sector_correlation import SectorCorrelationGate
-from utils.logger import get_logger
-from utils.market_holidays import get_trading_holidays
+from services.utils.logger import get_logger
+from services.utils.market_holidays import get_trading_holidays
 
 log = get_logger(__name__)
 IST = ZoneInfo("Asia/Kolkata")

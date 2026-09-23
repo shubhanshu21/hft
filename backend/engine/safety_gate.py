@@ -32,6 +32,7 @@ never accidentally permissive.
 """
 from __future__ import annotations
 
+from core.paths import DB_DIR
 import logging
 from pathlib import Path
 
@@ -43,7 +44,7 @@ log = logging.getLogger("safety_gate")
 KILL_SWITCH_ENGAGED = True
 
 CONFIRM_PHRASE = "I UNDERSTAND THIS PLACES REAL ORDERS WITH REAL MONEY"
-ARMED_STATE_DIR = Path(__file__).resolve().parent / "data"
+ARMED_STATE_DIR = DB_DIR
 ARMED_STATE_FILE = ARMED_STATE_DIR / ".live_trading_armed"
 
 

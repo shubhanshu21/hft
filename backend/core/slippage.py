@@ -2,7 +2,7 @@
 core/slippage.py — Adaptive per-symbol slippage estimator.
 
 Replaces the flat ½-tick-per-leg assumption used by every cost model in this
-project once enough real spread data has accumulated in logs/spread_samples.csv
+project once enough real spread data has accumulated in var/logs/spread_samples.csv
 (written by live_dryrun.py's DryRunner._maybe_sample_spread every
 SPREAD_SAMPLE_INTERVAL_MIN per symbol).
 
@@ -22,7 +22,7 @@ requiring a restart.
 """
 from __future__ import annotations
 
-from core.paths import BACKEND_ROOT
+from core.paths import LOG_DIR
 import csv
 import logging
 import time
@@ -57,7 +57,7 @@ def _resolve_csv() -> Path:
         return _csv_path
     # Fallback: assume this file lives inside backend/strategy/, so go up one
     # level to backend/ then into logs/.
-    return BACKEND_ROOT / "logs" / "spread_samples.csv"
+    return LOG_DIR / "spread_samples.csv"
 
 
 def _load_spread_stats() -> dict[str, float]:

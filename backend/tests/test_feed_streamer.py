@@ -3,7 +3,7 @@ tests/test_feed_streamer.py — Unit tests for QuoteCache and WebSocket Streamin
 """
 import time
 import unittest
-from broker.feed_streamer import QuoteCache
+from services.broker.feed_streamer import QuoteCache
 
 
 class TestQuoteCache(unittest.TestCase):

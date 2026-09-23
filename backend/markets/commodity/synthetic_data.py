@@ -14,7 +14,7 @@ a complete multi-year backtesting and LightGBM walk-forward training dataset.
 """
 from __future__ import annotations
 
-from core.paths import BACKEND_ROOT
+from core.paths import ARCHIVE_ROOT
 import argparse
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -81,7 +81,7 @@ COMMODITY_SPECS = {
     },
 }
 
-ARCHIVE_DIR = BACKEND_ROOT / "archive_commodities"
+ARCHIVE_DIR = ARCHIVE_ROOT / "commodity"
 
 
 def generate_multiyear_commodity_history(symbol: str, start_date: str = "2022-01-01", end_date: str = "2026-09-08") -> pd.DataFrame:
