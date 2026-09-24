@@ -17,6 +17,15 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+# Isolation: sizing and costs read Upstox's cached margin / lot / tick rates (engine/margin_rates.py). The goldens must never depend on whatever the
+# running daemon last cached in var/cache/margin_rates.json, so this process reads an empty, throw-away cache unless a test injects its own.
+import tempfile as _tempfile
+from pathlib import Path as _Path
+from engine import margin_rates as _margin_rates
+_margin_rates.RATES_PATH = _Path(_tempfile.mkdtemp()) / "margin_rates.json"
+_margin_rates._rates = {}
+
+
 IST = timezone(timedelta(hours=5, minutes=30))
 NOW = datetime(2026, 9, 10, 11, 30, tzinfo=IST)
 
