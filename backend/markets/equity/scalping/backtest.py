@@ -49,6 +49,7 @@ Usage:
 """
 from __future__ import annotations
 
+from core.exits import lock_stop
 from core.paths import ARCHIVE_ROOT, BACKEND_ROOT
 import argparse
 from pathlib import Path
@@ -201,7 +202,7 @@ def _simulate_symbol_candidates(sym: str, from_date: str | None, to_date: str | 
                 # take-profit ceiling above this; the trail manages the rest.
                 if not pos["armed_trail"] and (fav >= pos["activation_price"] if d == 1 else fav <= pos["activation_price"]):
                     pos["armed_trail"] = True
-                    pos["current_stop"] = pos["entry_price"] + BE_LOCK_BUFFER_PCT * pos["entry_price"] * d
+                    pos["current_stop"] = lock_stop(pos["entry_price"], pos["activation_price"], d)      # never above what price reached: see core/exits.lock_stop
                 if pos["armed_trail"]:
                     pos["best_price"] = max(pos["best_price"], fav) if d == 1 else min(pos["best_price"], fav)
                     trail_dist = pos["trail_mult"] * max(cur_atr, pos["stop_dist"] * 0.1)  # floor so a momentary ATR collapse can't zero out the trail

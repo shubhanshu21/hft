@@ -87,3 +87,31 @@ class TestReport(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestFictitiousLockFills(unittest.TestCase):
+    """2026-09-23 USDINR: entry 95.715, the market only ever reached 95.7525, yet the breakeven-lock 'exit' filled at 95.906 (+Rs957)."""
+
+    USDINR = _candles([("06:33", 95.715, 95.72, 95.71, 95.715), ("06:34", 95.716, 95.7525, 95.70, 95.74), ("06:35", 95.74, 95.75, 95.68, 95.69)])
+
+    def _usd(self, **over):
+        t = {"trade_id": 7, "position_id": "P7", "symbol": "USDINR", "direction": "long", "entry_price": 95.715, "exit_price": 95.90643,
+             "entry_dt": f"2026-09-23T06:33:10{TZ}", "exit_dt": f"2026-09-23T06:35:20{TZ}", "exit_reason": "be_stop",
+             "breakeven_price": 95.7500, "target_price": 96.2}
+        t.update(over)
+        return t
+
+    def test_a_lock_beyond_the_best_price_is_flagged(self):
+        kinds = [f.kind for f in audit_trade(self._usd(), self.USDINR).findings]
+        self.assertIn("exit_beyond_market", kinds)
+
+    def test_a_lock_inside_what_price_reached_passes(self):
+        kinds = [f.kind for f in audit_trade(self._usd(exit_price=95.7295), self.USDINR).findings]
+        self.assertNotIn("exit_beyond_market", kinds)
+
+    def test_short_side_is_symmetric(self):
+        cands = _candles([("06:33", 95.715, 95.72, 95.71, 95.715), ("06:34", 95.715, 95.72, 95.68, 95.69), ("06:35", 95.69, 95.70, 95.68, 95.69)])
+        beyond = self._usd(direction="short", exit_price=95.52, breakeven_price=95.68)          # 95.52 was never reached going down
+        self.assertIn("exit_beyond_market", [f.kind for f in audit_trade(beyond, cands).findings])
+        fine = self._usd(direction="short", exit_price=95.70, breakeven_price=95.68)
+        self.assertNotIn("exit_beyond_market", [f.kind for f in audit_trade(fine, cands).findings])

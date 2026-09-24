@@ -11,6 +11,7 @@ Features:
 """
 from __future__ import annotations
 
+from core.exits import lock_stop
 from core.paths import ARCHIVE_ROOT, BACKEND_ROOT
 import argparse
 import os
@@ -405,7 +406,7 @@ def run_commodity_backtest(
                     # Trail Stop & Breakeven Arming
                     if not pos["armed_be"] and (fav >= pos["be"] if d == 1 else fav <= pos["be"]):
                         pos["armed_be"] = True
-                        pos["current_stop"] = pos["entry_price"] + BE_LOCK_BUFFER_PCT * pos["entry_price"] * d
+                        pos["current_stop"] = lock_stop(pos["entry_price"], pos["be"], d)      # never above what price reached: see core/exits.lock_stop
                     if pos["armed_be"]:
                         pos["best_price"] = max(pos["best_price"], fav) if d == 1 else min(pos["best_price"], fav)
                         trail = pos["best_price"] - TRAIL_DIST_MULT * pos["stop_dist"] * d

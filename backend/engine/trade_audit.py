@@ -9,6 +9,7 @@ the trade saw, so a flag is always a genuine problem; see audit_trade):
 
   * a stop / trail exit price was actually traded through after entry            (phantom-stop detector)
   * a take-profit price was actually reached                                      (phantom-target detector)
+  * a breakeven / trail exit is not beyond the best price after entry              (fictitious-lock detector: USDINR 2026-09-23)
   * a breakeven / trail exit had really armed (price reached the breakeven level)
   * a timeout / square-off / manual exit price lies inside the exit bar's range
   * the entry price was inside the recent traded range                            (fill sanity; also reports the fill offset in bps)
@@ -43,7 +44,7 @@ TARGET_LIKE = {"take_profit", "target"}
 class Finding:
     trade_id: int
     symbol: str
-    kind: str                    # phantom_exit | phantom_target | unarmed_breakeven | exit_outside_bar | entry_off_market | no_data
+    kind: str                    # phantom_exit | phantom_target | exit_beyond_market | unarmed_breakeven | exit_outside_bar | entry_off_market | no_data
     detail: str
 
     @property
@@ -118,6 +119,14 @@ def audit_trade(trade: dict, candles: pd.DataFrame | None, suffix: str = "1minut
         if len(x_bar) and not (float(x_bar["low"].iloc[0]) * (1 - TOL) <= exit_p <= float(x_bar["high"].iloc[0]) * (1 + TOL)):
             out.findings.append(Finding(tid, sym, "exit_outside_bar",
                                         f"{why} at {exit_p} outside the exit bar's range {x_bar['low'].iloc[0]}-{x_bar['high'].iloc[0]}"))
+
+    # -- a breakeven / trail exit is a stop the bot moved to a level price had already reached; it cannot be beyond the best price seen --
+    if why in BREAKEVEN_LIKE:
+        best = hi if long_ else lo
+        beyond = exit_p > best * (1 + TOL) if long_ else exit_p < best * (1 - TOL)
+        if beyond:
+            out.findings.append(Finding(tid, sym, "exit_beyond_market",
+                                        f"{why} at {exit_p} but the best price after entry was only {best}: the stop sat beyond the market, so this fill never traded"))
 
     # -- a breakeven / trail exit implies the breakeven level was reached after entry --
     be = trade.get("breakeven_price")

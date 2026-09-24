@@ -19,6 +19,15 @@ BE_LOCK_BUFFER_PCT = 0.0020       # stop moves to entry +0.20% once the breakeve
 FIXED_TP_TRAIL_MULT = 0.30        # commodity / currency trail distance, in stop-distances
 
 
+def lock_stop(entry: float, trigger: float, d: int) -> float:
+    """The stop a breakeven / trail arm moves to: entry +/- BE_LOCK_BUFFER_PCT, but NEVER beyond the trigger level.
+    The arm fires only after price reached `trigger`, so a stop at or inside it is a price that really traded. A fixed 0.20% lock beyond
+    the trigger is a stop ABOVE the market: the paper fill then happens at a price that never traded. That is common for currency, where
+    the trigger is ~0.04% from entry (USDINR 2026-09-23: entry 95.715, best price after entry 95.7525, "exit" 95.906 for +Rs957).
+    Commodity is unaffected (its 0.35% minimum stop puts the trigger at >= 0.21%, above the 0.20% lock)."""
+    return entry + min(BE_LOCK_BUFFER_PCT * entry, abs(trigger - entry)) * d
+
+
 def _ts(value) -> datetime:
     return value if isinstance(value, datetime) else datetime.fromisoformat(str(value))
 
@@ -87,7 +96,7 @@ def fixed_tp_breakeven_trail(pos: dict, latest: dict, now: datetime, *,
 
     if not pos["armed_be"] and (fav >= pos["be"] if d == 1 else fav <= pos["be"]):
         pos["armed_be"] = True
-        pos["current_stop"] = pos["entry_price"] + BE_LOCK_BUFFER_PCT * pos["entry_price"] * d
+        pos["current_stop"] = lock_stop(pos["entry_price"], pos["be"], d)
     if pos["armed_be"]:
         pos["best_price"] = max(pos["best_price"], fav) if d == 1 else min(pos["best_price"], fav)
         trail = pos["best_price"] - FIXED_TP_TRAIL_MULT * pos["stop_dist"] * d
@@ -119,7 +128,7 @@ def activation_trail(pos: dict, latest: dict, atr: float, now: datetime, *,
 
     if not pos["armed_trail"] and (fav >= pos["activation_price"] if d == 1 else fav <= pos["activation_price"]):
         pos["armed_trail"] = True
-        pos["current_stop"] = pos["entry_price"] + BE_LOCK_BUFFER_PCT * pos["entry_price"] * d
+        pos["current_stop"] = lock_stop(pos["entry_price"], pos["activation_price"], d)
     if pos["armed_trail"]:
         pos["best_price"] = max(pos["best_price"], fav) if d == 1 else min(pos["best_price"], fav)
         trail_dist = pos["trail_mult"] * max(atr, pos["stop_dist"] * 0.1)
