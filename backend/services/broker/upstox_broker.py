@@ -22,6 +22,7 @@ Error handling strategy:
   - Missing data → logged + returns None (callers must validate)
 """
 
+import os
 import threading
 import time
 
@@ -110,6 +111,19 @@ def _trip_circuit() -> None:
     token_invalid_event.set()
 
 
+# The SDK's default is NO timeout: one stalled HTTP call would freeze the whole scan loop (and every open position with it) until
+# the OS gave up, minutes or never. Every SDK request goes through this client, so a default (connect, read) timeout applies to all
+# of them; a caller can still pass its own _request_timeout.
+REQUEST_TIMEOUT_S = (float(os.environ.get("UPSTOX_CONNECT_TIMEOUT_SEC", "5")), float(os.environ.get("UPSTOX_READ_TIMEOUT_SEC", "20")))
+
+
+class TimeoutApiClient(upstox_client.ApiClient):
+    def call_api(self, *args, **kwargs):
+        if kwargs.get("_request_timeout") is None:
+            kwargs["_request_timeout"] = REQUEST_TIMEOUT_S
+        return super().call_api(*args, **kwargs)
+
+
 class UpstoxBroker(BaseBroker):
     """
     Production-grade wrapper around the Upstox Python SDK.
@@ -141,7 +155,7 @@ class UpstoxBroker(BaseBroker):
         configuration.access_token = access_token
         self._configuration = configuration
 
-        self._api_client = upstox_client.ApiClient(configuration)
+        self._api_client = TimeoutApiClient(configuration)
 
         # Instantiate the specific API classes we need
         self._market_quote_v3 = upstox_client.MarketQuoteV3Api(self._api_client)

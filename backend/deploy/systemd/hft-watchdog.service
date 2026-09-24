@@ -1,0 +1,9 @@
+[Unit]
+Description=HFT daemon watchdog -- restarts hft-dryrun.service if it is running but has stopped scanning (heartbeat missed)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/var/www/html/hft/backend
+ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m engine.watchdog
+# Only acts on a service systemd reports ACTIVE, and at most one restart per 15 minutes (see engine/watchdog.py).
+# WATCHDOG_AUTORESTART=false in backend/.env makes it alert-only.

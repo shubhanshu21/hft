@@ -1,23 +1,10 @@
 [Unit]
-Description=Daily real MCX commodity + NSE currency + NSE index futures + NSE equity data top-up (CRUDEOILM/NATGASMINI/GOLDM/SILVERMIC/COPPER, USDINR/EURINR/GBPINR/JPYINR, NIFTY/BANKNIFTY, NIFTY50 equities, via Upstox)
+Description=Nightly maintenance: real MCX / NSE currency / NSE equity data top-up, DB backup, trade audit, archive-freshness check
 
 [Service]
 Type=oneshot
 WorkingDirectory=/var/www/html/hft/backend
-ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m markets.commodity.data --topup
-# Added 2026-09-18: currency derivatives top-up, same daily job (multiple ExecStart=
-# lines run sequentially for a oneshot service) rather than a second timer -- both are
-# small, fast, real-data top-ups against the same broker/account.
-ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m markets.currency.data --topup
-# Added 2026-09-18: NSE index futures (NIFTY/BANKNIFTY) top-up -- still under
-# evaluation (only ~2.5 months of real archive so far, not yet live), but growing
-# the archive daily now means it'll be ready to re-validate sooner.
-ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m markets.index_futures.data --topup
-# Added 2026-09-18: daily paper_trading.db backup -- previously no backup
-# existed at all for the entire trading history.
-ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m engine.backup_db
-# Added 2026-09-19: NSE equity (NIFTY50) top-up, now live in paper trading
-# (see .env's DRYRUN_INCLUDE_EQUITY) -- keeps all 49 archives current so the
-# validated entry thresholds keep seeing fresh real data, same as every
-# other asset here.
-ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m markets.equity.data --topup
+# ONE command that runs every step and carries on past a failing one (systemd would stop a oneshot at the first failing
+# ExecStart, silently skipping the DB backup and later top-ups). See engine/nightly.py. Failures go to Telegram.
+ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m engine.nightly
+TimeoutStartSec=3h

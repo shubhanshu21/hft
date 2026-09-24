@@ -100,7 +100,8 @@ def _token_is_valid(token: str) -> bool:
     try:
         configuration = upstox_client.Configuration()
         configuration.access_token = token
-        response = upstox_client.MarketQuoteV3Api(upstox_client.ApiClient(configuration)).get_ltp(instrument_key=_VALIDATION_INSTRUMENT)
+        from services.broker.upstox_broker import TimeoutApiClient      # a hung probe must not freeze the refresh (or the scan loop that calls it)
+        response = upstox_client.MarketQuoteV3Api(TimeoutApiClient(configuration)).get_ltp(instrument_key=_VALIDATION_INSTRUMENT)
         return bool(response.data)
     except ApiException as exc:
         if exc.status == 401:

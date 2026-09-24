@@ -60,7 +60,7 @@ def is_armed(component: str) -> bool:
         return False
     try:
         lines = ARMED_STATE_FILE.read_text().splitlines()
-    except OSError:
+    except (OSError, ValueError):            # ValueError covers UnicodeDecodeError: a corrupt file must read as "not armed", not crash startup
         return False
     if not lines or lines[0].strip() != CONFIRM_PHRASE:
         return False

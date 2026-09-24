@@ -8,6 +8,9 @@ Description=Daily real MCX commodity data top-up schedule
 # Harmless no-op on non-trading days (topup_real_commodity_history reports
 # 0 new rows per interval and exits cleanly).
 OnCalendar=*-*-* 00:30:00 Asia/Kolkata
+# Second pass: Upstox sometimes has not finalised the previous day's candles by 00:30 (2026-09-24: 0 new rows for every symbol). The
+# top-up is incremental and the audit re-checks recent days, so a late day is simply picked up here.
+OnCalendar=*-*-* 06:30:00 Asia/Kolkata
 Persistent=true
 
 [Install]

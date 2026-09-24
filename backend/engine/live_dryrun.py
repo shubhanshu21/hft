@@ -128,6 +128,7 @@ from services.utils.market_holidays import get_trading_holidays
 
 log = get_logger("live_dryrun")
 
+from engine import heartbeat
 IST = ZoneInfo("Asia/Kolkata")
 DEFAULT_SCAN_INTERVAL_SECONDS = 60  # 1-minute scan for fast SL/TP trailing & new bar detection
 DEFAULT_RISK_PCT = 5.0
@@ -1082,6 +1083,54 @@ def _print_sig(sig: dict, cap: float):
     telegram.alert_entry(sig, cap)
 
 
+def handle_operator_command(runner, cmd: str, now: datetime, scan_n: int) -> str | None:
+    """Apply one operator command from the Telegram chat. Returns the action taken ('stop', 'start', 'pause:<segment>',
+    'resume:<segment>', 'status') or None for an unknown command. Separate from main() so it can be tested without a live loop."""
+    if cmd in ("/stop", "stop", "stop trading"):
+        closed = runner.stop_trading(now)
+        print(f"  {BOLD}{RED}!! TRADING STOPPED via Telegram -- {closed} position(s) force-closed !!{R}", flush=True)
+        telegram.send(f"🛑 <b>TRADING STOPPED</b> (manual) — {closed} open position(s) force-closed.\n"
+                      f"New entries halted until you send /start.")
+        return "stop"
+    if cmd in ("/start", "start", "start trading"):
+        runner.start_trading()
+        print(f"  {BOLD}{GR}TRADING STARTED via Telegram{R}", flush=True)
+        telegram.send("🟢 <b>TRADING STARTED</b> (manual) — resuming normal entries.")
+        return "start"
+    for seg in ("commodity", "currency", "equity"):
+        if cmd in (f"/stop {seg}", f"/disable {seg}", f"stop {seg}"):
+            runner.segment_enabled[seg] = False
+            telegram.send(f"⏸ <b>{seg.upper()} TRADING PAUSED</b> (manual) — new {seg} entries halted.")
+            return f"pause:{seg}"
+        if cmd in (f"/start {seg}", f"/enable {seg}", f"start {seg}"):
+            runner.segment_enabled[seg] = True
+            telegram.send(f"▶ <b>{seg.upper()} TRADING RESUMED</b> (manual) — evaluating new {seg} entries.")
+            return f"resume:{seg}"
+    if cmd in ("/status", "status"):
+        open_syms = list(runner.positions.keys())
+        seg_status_str = ", ".join([f"{m.capitalize()}: {'🟢' if v else '🛑 PAUSED'}" for m, v in runner.segment_enabled.items()])
+        regime_line = f"\nSegments: {seg_status_str}"
+        if runner.use_commodity_regime_filter:
+            regime_str = ", ".join([f"{s}: {'🟢' if v is not False else '🔴'}" for s, v in runner.commodity_regime_ok.items()])
+            regime_line += f"\nCommodity regimes: {regime_str or 'N/A'}"
+        if runner.use_equity_regime_filter:
+            regime_line += f"\nEquity regime: {'🟢 OK' if runner.equity_regime_ok is not False else '🔴 BLOCKED'}"
+        pos_lines = ""
+        for sym, p in runner.positions.items():
+            pos_lines += f"\n  • {sym} {p['direction'].upper()} @ ₹{p['entry_price']:.2f} | stop ₹{p['current_stop']:.2f}"
+        telegram.send(
+            f"📊 <b>DRYRUN STATUS</b>\n"
+            f"Balance: ₹{runner.capital:,.2f}\n"
+            f"Trading: {'🟢 ENABLED' if runner.trading_enabled else '🛑 HALTED'}\n"
+            f"Scan #{scan_n} @ {now.strftime('%H:%M:%S')} IST\n"
+            f"Open positions ({len(open_syms)}): {', '.join(open_syms) or 'none'}"
+            f"{pos_lines}"
+            f"{regime_line}"
+        )
+        return "status"
+    return None
+
+
 def main():
     # Wires up the rotating file handler on the ROOT logger (name="") so
     # every module's get_logger(__name__) call -- live_dryrun's own, plus
@@ -1288,6 +1337,7 @@ def main():
             wait = int((mopen - now).total_seconds())
             print(f"  {YL}Market opens {mopen.strftime('%Y-%m-%d %H:%M')} IST "
                   f"(in {wait//3600}h {(wait%3600)//60}m) — sleeping...{R}", flush=True)
+            heartbeat.beat("waiting_for_open", wait)          # a long sleep is fine: the deadline says when the next beat is due
             try:
                 time.sleep(wait)
             except KeyboardInterrupt:
@@ -1299,6 +1349,7 @@ def main():
         while datetime.now(IST) <= mclose:
             scan_n += 1
             now = datetime.now(IST)
+            heartbeat.beat("scan", 0)
             print(f"\n{GY}-- Scan #{scan_n} @ {now.strftime('%Y-%m-%d %H:%M:%S')} IST  "
                   f"| Paper Balance: {WH}₹{runner.capital:,.2f}{GY} --{R}", flush=True)
 
@@ -1314,56 +1365,7 @@ def main():
                     runner.save_telegram_offset(u["update_id"] + 1)
                     if not telegram.is_authorized_chat(u["chat_id"]):
                         continue
-                    cmd = u["text"].strip().lower()
-                    if cmd in ("/stop", "stop", "stop trading"):
-                        closed = runner.stop_trading(now)
-                        print(f"  {BOLD}{RED}!! TRADING STOPPED via Telegram -- {closed} position(s) force-closed !!{R}", flush=True)
-                        telegram.send(f"🛑 <b>TRADING STOPPED</b> (manual) — {closed} open position(s) force-closed.\n"
-                                      f"New entries halted until you send /start.")
-                    elif cmd in ("/start", "start", "start trading"):
-                        runner.start_trading()
-                        print(f"  {BOLD}{GR}TRADING STARTED via Telegram{R}", flush=True)
-                        telegram.send("🟢 <b>TRADING STARTED</b> (manual) — resuming normal entries.")
-                    elif cmd in ("/stop commodity", "/disable commodity", "stop commodity"):
-                        runner.segment_enabled["commodity"] = False
-                        telegram.send("⏸ <b>COMMODITY TRADING PAUSED</b> (manual) — new commodity entries halted.")
-                    elif cmd in ("/start commodity", "/enable commodity", "start commodity"):
-                        runner.segment_enabled["commodity"] = True
-                        telegram.send("▶ <b>COMMODITY TRADING RESUMED</b> (manual) — evaluating new commodity entries.")
-                    elif cmd in ("/stop currency", "/disable currency", "stop currency"):
-                        runner.segment_enabled["currency"] = False
-                        telegram.send("⏸ <b>CURRENCY TRADING PAUSED</b> (manual) — new currency entries halted.")
-                    elif cmd in ("/start currency", "/enable currency", "start currency"):
-                        runner.segment_enabled["currency"] = True
-                        telegram.send("▶ <b>CURRENCY TRADING RESUMED</b> (manual) — evaluating new currency entries.")
-                    elif cmd in ("/stop equity", "/disable equity", "stop equity"):
-                        runner.segment_enabled["equity"] = False
-                        telegram.send("⏸ <b>EQUITY TRADING PAUSED</b> (manual) — new equity entries halted.")
-                    elif cmd in ("/start equity", "/enable equity", "start equity"):
-                        runner.segment_enabled["equity"] = True
-                        telegram.send("▶ <b>EQUITY TRADING RESUMED</b> (manual) — evaluating new equity entries.")
-                    elif cmd in ("/status", "status"):
-                        open_syms = list(runner.positions.keys())
-                        seg_status_str = ", ".join([f"{m.capitalize()}: {'🟢' if v else '🛑 PAUSED'}" for m, v in runner.segment_enabled.items()])
-                        regime_line = f"\nSegments: {seg_status_str}"
-                        if runner.use_commodity_regime_filter:
-                            regime_str = ", ".join([f"{s}: {'🟢' if v is not False else '🔴'}" for s, v in runner.commodity_regime_ok.items()])
-                            regime_line += f"\nCommodity regimes: {regime_str or 'N/A'}"
-                        if runner.use_equity_regime_filter:
-                            regime_line += f"\nEquity regime: {'🟢 OK' if runner.equity_regime_ok is not False else '🔴 BLOCKED'}"
-                        pos_lines = ""
-                        for s, p in runner.positions.items():
-                            pnl_est = (p.get("best_price", p["entry_price"]) - p["entry_price"]) * (1 if p["direction"] == "long" else -1)
-                            pos_lines += f"\n  • {s} {p['direction'].upper()} @ ₹{p['entry_price']:.2f} | stop ₹{p['current_stop']:.2f}"
-                        telegram.send(
-                            f"📊 <b>DRYRUN STATUS</b>\n"
-                            f"Balance: ₹{runner.capital:,.2f}\n"
-                            f"Trading: {'🟢 ENABLED' if runner.trading_enabled else '🛑 HALTED'}\n"
-                            f"Scan #{scan_n} @ {now.strftime('%H:%M:%S')} IST\n"
-                            f"Open positions ({len(open_syms)}): {', '.join(open_syms) or 'none'}"
-                            f"{pos_lines}"
-                            f"{regime_line}"
-                        )
+                    handle_operator_command(runner, u["text"].strip().lower(), now, scan_n)
             except Exception as exc:
                 log.error("Telegram command poll raised: %s", exc, exc_info=True)
 
@@ -1428,6 +1430,7 @@ def main():
             sleep_until = min(nxt, mclose + timedelta(seconds=1))
             secs = max(1, (sleep_until - datetime.now(IST)).total_seconds())
             print(f"  {GY}Next scan in {secs:.0f}s...{R}", flush=True)
+            heartbeat.beat("sleep", secs)
             time.sleep(secs)
 
         # EOD summary for the day just finished
@@ -1460,6 +1463,7 @@ def main():
 
         runner.trades = []  # reset for the next trading day's CSV/summary
 
+    heartbeat.beat("stopped")
     telegram.send(f"🔴 <b>DRYRUN DAEMON STOPPED</b> — {market_mode} (manual stop)")
 
 
@@ -1474,6 +1478,7 @@ if __name__ == "__main__":
         # that produces an ugly uncaught traceback instead of a clean exit.
         # The shutdown is still correct either way; this just makes it tidy.
         print(f"\n{YL}Shutting down.{R}", flush=True)
+        heartbeat.beat("stopped")
         try:
             telegram.send("🔴 <b>DRYRUN DAEMON STOPPED</b> (shutdown signal)")
         except BaseException:
