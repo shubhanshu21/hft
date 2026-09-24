@@ -68,6 +68,13 @@ COMMODITY_SPECS = {
         "ctt_pct": 0.01,
         "margin_approx": 5000.0,
     },
+    "GOLDTEN": {
+        "name": "Gold Ten (10g)",
+        "lot_size": 1,                     # 10 g lot, priced per 10 g: one price point = Rs1 per lot (GOLDM: 100 g lot -> 10)
+        "tick_size": 1.0,
+        "ctt_pct": 0.01,
+        "margin_approx": 14000.0,
+    },
     "SILVER": {
         "name": "Silver (30kg)",
         "lot_size": 30,
@@ -154,6 +161,7 @@ def get_contract_multiplier(symbol: str) -> int:
         "NATGASMINI": 250,
         "GOLD": 100,
         "GOLDM": 10,
+        "GOLDTEN": 1,
         "SILVER": 30,
         "SILVERM": 5,
         "SILVERMIC": 1,

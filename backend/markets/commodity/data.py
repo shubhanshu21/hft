@@ -68,6 +68,7 @@ SYMBOLS = {
     # markets/commodity/costs.py's get_contract_multiplier fallbacks; the only real
     # blocker was broker/instruments.py's hardcoded base-symbol allowlist, now fixed.
     "GOLD": "GOLDM",
+    "GOLDTEN": "GOLDTEN",        # 10 g lot: the contract actually traded at small capital (GOLDM needs Rs140k margin per lot)
     "SILVER": "SILVERMIC",
     "COPPER": "COPPER",
     # Added 2026-09-18: base metals survey (copper already covered above came

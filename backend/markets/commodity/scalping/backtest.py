@@ -237,6 +237,7 @@ def run_commodity_backtest(
         "CRUDEOILM": "CRUDEOIL",
         "NATGASMINI": "NATURALGAS",
         "GOLDM": "GOLD",
+        "GOLDTEN": "GOLD",          # same underlying and price basis as GOLDM; its own archive is short, GOLD's is the longer proxy
         "SILVERMIC": "SILVER",
         "SILVERM": "SILVER",
         "COPPER": "COPPER",
@@ -300,6 +301,7 @@ def run_commodity_backtest(
         "CRUDEOILM": 10.0,
         "NATGASMINI": 25.0 / 0.10,
         "GOLDM": 10.0,
+        "GOLDTEN": 1.0,
         "SILVERMIC": 1.0,
         "SILVERM": 5.0,
         "COPPER": 2500.0,

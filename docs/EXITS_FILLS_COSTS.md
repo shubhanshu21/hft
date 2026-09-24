@@ -69,3 +69,30 @@ help (crude second half PF 1.26 -> 1.28 / 0.88 / 0.91; gold first half 0.89 -> 0
   shrinks losses and wins alike.
 - **Fill offset vs the live price.** `engine/trade_audit.py` now reports the mean entry-fill offset in bps each night; read it after a few
   nights of clean 1-minute data.
+
+
+## 7. Small capital: trade the contracts Upstox lets Rs100k afford (2026-09-24, futures only)
+
+Real Upstox margin per lot (MIS) and what fits Rs100,000:
+
+| Contract | Lot | Margin/lot | Lots | Verdict |
+|---|---|---|---|---|
+| SILVER | 30 kg | Rs901k | 0 | cannot trade |
+| SILVERM | 5 kg | Rs151k | 0 | cannot trade |
+| **SILVERMIC** | 1 kg | Rs30.3k | 3 | **traded** |
+| GOLDM | 100 g | Rs140k | 0 | cannot trade |
+| GOLDTEN | 10 g | Rs14.0k | 7 | tested, no edge |
+| CRUDEOILM | 10 bbl | Rs27.6k | 3 | traded |
+
+SILVERMIC quotes the same price series our silver archive was built from (that archive is SILVERMIC data), so the calibrated thresholds carry
+over. Backtest, real margin and leverage (7.8x), real slippage (measured spread Rs51/kg -> Rs30.5 per leg; the cost model silently used Rs0.5
+for a new symbol name until real depth samples existed):
+
+| Period | Trades | Win | PF | Net | Max DD | Worst trade |
+|---|---|---|---|---|---|---|
+| first half | 29 | 69% | 1.45 | +Rs14.7k | 6.6% | -Rs6.3k |
+| second half | 28 | 68% | 1.88 | +Rs21.6k | 7.6% | -Rs3.9k |
+| all | 57 | 68% | 1.67 | +Rs38.4k | 6.7% | -Rs6.3k |
+
+Caveats: thresholds were tuned on this same archive earlier (positive in both halves, but not a fresh held-out window); 57 trades; micro
+contracts can be less liquid than the full contract. GOLDTEN (10 g): 58 trades, PF 0.99, fees 104% of gross -> not traded.

@@ -214,7 +214,7 @@ def _load_mcx_master() -> None:
                     # ordering rule: LEADMINI/ZINCMINI/ALUMINIUM before the shorter prefix
                     # each also starts with (LEAD/ZINC/ALUMINI respectively).
                     for base in ["CRUDEOILM", "NATGASMINI", "CRUDEOIL", "NATURALGAS",
-                                 "GOLDM", "GOLD", "SILVERMIC", "SILVERM", "SILVER", "COPPER",
+                                 "GOLDM", "GOLDTEN", "GOLDGUINEA", "GOLDPETAL", "GOLD", "SILVERMIC", "SILVERM", "SILVER", "COPPER",
                                  "ALUMINIUM", "ALUMINI", "LEADMINI", "LEAD", "ZINCMINI", "ZINC", "NICKEL"]:
                         if tsym.startswith(base):
                             if base not in candidates:

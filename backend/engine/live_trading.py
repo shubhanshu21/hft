@@ -440,7 +440,7 @@ class LiveTrader(RiskGates):
     def _refresh_commodity_regimes(self) -> None:
         from core.regime import regime_ok as _regime_ok
         yesterday = (datetime.now(IST) - timedelta(days=1)).strftime("%Y-%m-%d")
-        for sym in ["CRUDEOILM", "GOLDM", "SILVER", "NATGASMINI"]:
+        for sym in ["CRUDEOILM", "GOLDM", "GOLDTEN", "SILVER", "SILVERMIC", "NATGASMINI"]:
             ikey = self.symbol_map.get(sym)
             if not ikey:
                 continue

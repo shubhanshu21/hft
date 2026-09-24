@@ -157,3 +157,34 @@ class TestRefreshAndLotSize(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSmallCapitalContracts(unittest.TestCase):
+    """At Rs100k the full GOLDM / SILVER contracts cannot trade; the micro contracts use the same price series and fit."""
+
+    def test_the_micro_contracts_have_cost_multipliers_matching_their_lot_and_quote_basis(self):
+        from markets.commodity.costs import get_contract_multiplier
+        self.assertEqual(get_contract_multiplier("SILVERMIC"), 1)          # 1 kg lot, quoted per kg
+        self.assertEqual(get_contract_multiplier("GOLDTEN"), 1)            # 10 g lot, quoted per 10 g
+        self.assertEqual(get_contract_multiplier("GOLDM"), 10)             # 100 g lot, quoted per 10 g
+
+    def test_real_margins_decide_what_fits(self):
+        # margins measured on Upstox 2026-09-24 (MIS, per lot) and prices at that time
+        self.assertEqual(size_commodity_lots(100_000, 235_800, 800, 10.0, "SILVERMIC", leverage=7.8), 3)      # Rs30k/lot -> 3 lots
+        self.assertEqual(size_commodity_lots(100_000, 150_970, 300, 10.0, "GOLDTEN", leverage=10.8), 7)        # Rs14k/lot -> 7 lots
+        self.assertEqual(size_commodity_lots(100_000, 150_970, 300, 10.0, "GOLDM", leverage=10.8), 0)          # Rs140k/lot -> cannot trade
+        self.assertEqual(size_commodity_lots(100_000, 7_011_000 / 30, 800, 10.0, "SILVER", leverage=7.8), 0)   # Rs901k/lot -> cannot trade
+
+    def test_the_backtest_reads_the_gold_archive_for_goldten_and_the_silver_archive_for_silvermic(self):
+        import inspect
+        from markets.commodity.scalping import backtest
+        src = inspect.getsource(backtest.run_commodity_backtest)
+        self.assertIn('"GOLDTEN": "GOLD"', src)
+        self.assertIn('"SILVERMIC": "SILVER"', src)
+
+    def test_the_gold_prefix_does_not_swallow_the_smaller_gold_contracts(self):
+        from pathlib import Path
+        src = Path(__file__).resolve().parent.parent.joinpath("services", "broker", "instruments.py").read_text()
+        order = src[src.index('for base in ["CRUDEOILM"'):]
+        self.assertLess(order.index('"GOLDTEN"'), order.index('"GOLD",'))         # startswith(): the longer names must be tried first
+        self.assertLess(order.index('"GOLDPETAL"'), order.index('"GOLD",'))
