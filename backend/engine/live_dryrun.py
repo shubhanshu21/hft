@@ -1166,6 +1166,14 @@ def main():
 
     if args.report:
         db.print_dashboard(args.account)
+        try:
+            from engine.scorecard import format_scorecard
+            card = format_scorecard(todays_trades, db.get_trades(limit=1_000_000, account_id=args.account))
+            if card:
+                telegram.send(card)
+        except Exception as exc:                       # a reporting problem must never break the day rollover
+            log.warning("Scorecard failed: %s", exc)
+
         from services.utils.chart import generate_equity_curve
         chart_path = generate_equity_curve(
             db.get_snapshots(args.account), args.account,

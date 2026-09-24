@@ -1,0 +1,15 @@
+[project]
+name = "hft-paper-trading"
+version = "0.0.0"
+description = "Quantitative paper-trading framework for Indian markets (Upstox)"
+requires-python = ">=3.12"
+
+[tool.ruff]
+line-length = 160
+target-version = "py312"
+extend-exclude = [".venv", "var"]
+
+[tool.ruff.lint]
+# Deliberately narrow: only defects that are always bugs (syntax errors, undefined names, invalid comparisons/assertions).
+# Style rules (unused imports, line length, ...) would flag hundreds of existing lines; widen this list only together with a cleanup.
+select = ["E9", "F63", "F7", "F82"]

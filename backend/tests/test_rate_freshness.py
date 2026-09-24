@@ -7,7 +7,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from markets.commodity import costs as commodity_costs
 from markets.currency import costs as currency_costs
-from markets.index_futures import costs as index_futures_costs
 
 # How long a statutory-rate module can go unreviewed before this test starts
 # failing on purpose. Indian statutory rates (STT/CTT/stamp duty/exchange fees)
@@ -40,9 +39,6 @@ class TestRateFreshness(unittest.TestCase):
 
     def test_currency_costs_fresh(self):
         self._assert_fresh(currency_costs)
-
-    def test_index_futures_costs_fresh(self):
-        self._assert_fresh(index_futures_costs)
 
 
 if __name__ == "__main__":

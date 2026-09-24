@@ -1,0 +1,9 @@
+[Unit]
+Description=Hourly paper-trading DB snapshot
+
+[Timer]
+OnCalendar=hourly
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

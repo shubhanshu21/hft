@@ -27,6 +27,7 @@ STEPS = [                            # (name, argv, exit codes that count as suc
     ("currency data", [PY, "-m", "markets.currency.data", "--topup"], {0}),
     ("equity data", [PY, "-m", "markets.equity.data", "--topup"], {0}),
     ("db backup", [PY, "-m", "engine.backup_db"], {0}),
+    ("db backup verify", [PY, "-m", "engine.backup_db", "--verify"], {0}),      # open the newest backup: a backup nobody has opened is a hope
     ("trade audit", [PY, "-m", "engine.trade_audit"], {0, 1}),          # 1 = flagged trades: alerted by the audit itself
 ]
 # representative archive files whose newest candle date must not lag (market, file)

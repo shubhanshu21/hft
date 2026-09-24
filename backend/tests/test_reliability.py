@@ -166,7 +166,8 @@ class TestHeartbeatAndWatchdog(unittest.TestCase):
         self.assertEqual(self._check(self._hb("stopped", late_s=9999)), "ok")
 
     def test_no_heartbeat_file_yet_never_triggers_a_restart(self):
-        self.assertEqual(watchdog.check(self.NOW, hb=None, run=self._run(), notify=self.sent.append, state_path=self.state), "no-heartbeat")
+        with patch.object(heartbeat, "read", return_value=None):                # the real file exists whenever the daemon is running
+            self.assertEqual(watchdog.check(self.NOW, hb=None, run=self._run(), notify=self.sent.append, state_path=self.state), "no-heartbeat")
         self.assertEqual(self.calls, [])
 
     def test_restarts_are_rate_limited_so_a_boot_hang_cannot_loop(self):

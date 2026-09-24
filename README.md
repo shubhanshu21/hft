@@ -76,7 +76,6 @@ backend/
 │   │   └── experiments/              # throwaway research (EMA crossover)
 │   ├── currency/                     # NSE currency derivatives -- same shape (costs, data, scalping/, experiments/)
 │   ├── equity/                       # NSE NIFTY50 -- costs, features, universe, data, scalping/ (own entry_signal + backtest)
-│   └── index_futures/                # costs, data, backtest
 │                                     # a new strategy (e.g. swing) = a new sibling folder of scalping/
 │
 ├── core/                             # Market-agnostic logic
@@ -407,7 +406,9 @@ All unit files are checked into **`backend/deploy/systemd/`** — not hidden awa
 | Unit | Type | Purpose | Schedule |
 |---|---|---|---|
 | `hft-dryrun.service` | persistent daemon | Runs `cli.py dryrun` — the 24/7 paper-trading loop | Always on (`Restart=always`) |
-| `hft-daily-data-topup.service` + `.timer` | oneshot + timer | Runs `--topup` for every market in one job (`markets/commodity/data.py`, `markets/currency/data.py`, `markets/index_futures/data.py`, `markets/equity/data.py`, plus `engine/backup_db.py`) — one `ExecStart=` each — appending the day's real candles to `var/archive/<market>/<SYMBOL>_<timeframe>.csv`. Timeframes: **1min, 3min, 5min, 15min, 1day** for commodity/currency/index futures; **3min and 5min** for equity. A missing timeframe file is backfilled automatically on the next run | Daily, 00:30 IST |
+| `hft-daily-data-topup.service` + `.timer` | oneshot + timer | Runs `engine/nightly.py`: data top-up for commodity, currency and equity (1/3/5-min etc. into `var/archive/<market>/`), DB backup, backup verify, trade audit, archive-freshness check. **Every step runs even if an earlier one fails** (systemd would stop a oneshot at the first failing `ExecStart`); failures and stale archives go to Telegram. Runs twice because Upstox sometimes has the previous day's candles final only after 00:30 | Daily, 00:30 and 06:30 IST |
+| `hft-watchdog.service` + `.timer` | oneshot + timer | `engine/watchdog.py`: restarts `hft-dryrun.service` when it is running but has stopped scanning (missed heartbeat in `var/db/heartbeat.json`), and alerts on Telegram. Never touches a service that was stopped on purpose; at most one restart per 15 min; `WATCHDOG_AUTORESTART=false` = alert only | Every 2 min |
+| `hft-db-backup.service` + `.timer` | oneshot + timer | `engine.backup_db --hourly`: snapshot of the paper-trading DB (keeps 48; daily snapshots keep 14). Restore with `python3 cli.py restore-db [FILE|latest]` (stop the daemon first); `reset-db` saves the old DB first | Hourly |
 
 ### First-time setup on a new machine
 
@@ -426,7 +427,7 @@ loginctl enable-linger "$USER"
 # 3. Load the units and start everything
 systemctl --user daemon-reload
 systemctl --user enable --now hft-dryrun.service
-systemctl --user enable --now hft-daily-data-topup.timer
+systemctl --user enable --now hft-daily-data-topup.timer hft-watchdog.timer hft-db-backup.timer
 
 # 4. Confirm
 systemctl --user status hft-dryrun.service --no-pager

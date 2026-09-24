@@ -1,0 +1,7 @@
+[Unit]
+Description=Hourly snapshot of the paper-trading DB (keeps 48)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/var/www/html/hft/backend
+ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m engine.backup_db --hourly
