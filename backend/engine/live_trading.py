@@ -535,6 +535,16 @@ class LiveTrader(RiskGates):
         """Place the real entry order. Returns True only if a position is now open."""
         sym = signal.symbol
         quantity = signal.qty * signal.lot_size            # the broker's unit: shares, or lots * lot size
+        # Upstox's order quantity must be a multiple of the lot size IT lists. The cost model's multiplier is a different unit for some
+        # contracts (GOLDM: 10 vs Upstox 100 g; GOLDTEN: 1 vs 10 g), so a mismatch here would send an order Upstox rejects or mis-sizes.
+        from engine import margin_rates
+        master_lot = margin_rates.master_lot_size(self.broker, signal.instrument_key)
+        if master_lot and quantity % master_lot != 0:
+            msg = (f"{sym}: order quantity {quantity} is not a multiple of Upstox's lot size {master_lot} "
+                   f"(cost-model multiplier {signal.lot_size}); refusing to place it")
+            log.error("live entry refused -- %s", msg)
+            telegram.send(f"🔴 <b>LIVE ENTRY REFUSED</b> — {msg}")
+            return False
         transaction_type = "BUY" if signal.direction == "long" else "SELL"
         ts_tag = now.strftime("%Y%m%d_%H%M%S")
         tag = f"LIVE_E_{sym}"[:16]

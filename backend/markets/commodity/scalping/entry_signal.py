@@ -17,6 +17,8 @@ HOW that decision gets acted on (simulated fill vs real order).
 """
 from __future__ import annotations
 
+from core import sessions
+
 import os
 
 import pandas as pd
@@ -78,7 +80,7 @@ def compute_entry_signal(
         # NSE currency derivatives trade 09:00-17:00 IST -- no MCX-style
         # evening/US-overlap session. 15-min open buffer + 16:50 square-off,
         # matching markets/currency/scalping/backtest.py exactly.
-        if mins < 15 or mins > 460:
+        if mins < 15 or mins > sessions.CURRENCY_LAST_ENTRY_MIN:
             return None
     else:
         # Full session (10:00-22:30 IST) vs US/Evening-overlap-only

@@ -27,6 +27,8 @@ Usage:
 """
 from __future__ import annotations
 
+from core import sessions
+
 from core.exits import lock_stop
 from core.paths import ARCHIVE_ROOT, BACKEND_ROOT
 import argparse
@@ -208,7 +210,7 @@ def run_currency_backtest(
                     exit_p = pos["current_stop"]; reason = "be_stop" if pos["armed_be"] else "initial_stop"
                 elif (i - pos["entry_idx"]) >= HOLD_BARS:
                     exit_p = c_price; reason = "timeout_exit"
-                elif m_open >= 470:  # 16:50 IST square-off, ahead of the 17:00 NSE currency close
+                elif m_open >= sessions.CURRENCY_SQUAREOFF_MIN:  # square-off, ahead of Upstox's 16:30 auto square-off and the 17:00 close
                     exit_p = c_price; reason = "eod_squareoff"
 
                 if exit_p is not None:
@@ -239,7 +241,7 @@ def run_currency_backtest(
                 continue
 
             # Full session only -- no MCX-style evening-window gate for currency
-            if m_open < 15 or m_open > 460:
+            if m_open < 15 or m_open > sessions.CURRENCY_LAST_ENTRY_MIN:
                 continue
 
             adx = adxs[i]

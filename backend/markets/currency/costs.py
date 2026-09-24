@@ -38,8 +38,10 @@ NCD_EXCHANGE_TXN_PCT = 0.00090   # NSE currency segment turnover fee
 NCD_SEBI_PCT         = 0.00010   # ₹10 per crore
 NCD_STAMP_DUTY_PCT   = 0.00010   # ₹10 per crore on buy-side turnover (reduced from ₹200/crore for currency & IRD)
 GST_RATE             = 0.18      # 18% GST
-UPSTOX_BROKERAGE_CAP = 20.0      # ₹20 flat cap per executed order
-UPSTOX_BROKERAGE_PCT = 0.05      # 0.05% turnover
+# Upstox's own brokerage calculator (ChargeApi.get_brokerage), checked 2026-09-24 for equity MIS, MCX and NCD: min(0.06% of turnover, Rs30) per order.
+# The model here used min(0.05%, Rs20) and understated every round trip by ~Rs23.6 (+GST) -- see tests/test_costs_vs_upstox.py.
+UPSTOX_BROKERAGE_CAP = 30.0      # Rs30 flat cap per executed order
+UPSTOX_BROKERAGE_PCT = 0.06      # 0.06% of turnover, whichever is lower
 
 
 def get_contract_multiplier(symbol: str) -> int:

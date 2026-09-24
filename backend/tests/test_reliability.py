@@ -288,3 +288,45 @@ class TestOperatorCommands(unittest.TestCase):
         r = self._runner()
         self.assertEqual(self._cmd(r, "hello there"), (None, []))
         self.assertEqual(r.calls, [])
+
+
+class TestLiveOrderQuantityMatchesUpstoxLotSize(unittest.TestCase):
+    """The cost model's multiplier is not always Upstox's lot size; an order that is not a multiple of Upstox's lot must never be sent."""
+
+    def _trader_and_signal(self, lot_size_multiplier, qty=2):
+        import tempfile
+        from unittest.mock import MagicMock
+        from engine import live_trading
+        from engine.database import TradingDB
+        from core.strategy import Signal
+        broker = MagicMock()
+        broker.place_order = MagicMock(return_value="OID")
+        with patch.object(live_trading, "_build_symbol_map", lambda: {}):
+            trader = live_trading.LiveTrader(broker=broker, db=TradingDB(Path(tempfile.mkdtemp()) / "t.db"), symbols=["GOLDM"], capital=100000.0,
+                                             risk_pct=4.0, leverage=5.0)
+        sig = MagicMock(spec=Signal)
+        sig.symbol, sig.qty, sig.lot_size, sig.direction, sig.instrument_key = "GOLDM", qty, lot_size_multiplier, "long", "MCX_FO|569003"
+        return trader, sig, broker
+
+    def test_a_quantity_that_is_not_a_multiple_of_the_upstox_lot_size_is_refused_before_any_order(self):
+        from engine import live_trading, margin_rates
+        trader, sig, broker = self._trader_and_signal(10, qty=2)                    # GOLDM: 2 lots * multiplier 10 = 20, Upstox lot is 100
+        with patch.object(margin_rates, "master_lot_size", return_value=100), patch.object(live_trading.telegram, "send") as tg:
+            self.assertFalse(trader._enter(MagicMockStrat(), sig, 5.0, datetime(2026, 9, 24, 12, 0, tzinfo=IST)))
+        broker.place_order.assert_not_called()
+        self.assertIn("REFUSED", tg.call_args[0][0])
+
+    def test_a_correct_multiple_is_not_blocked_by_the_guard(self):
+        from engine import live_trading, margin_rates
+        trader, sig, broker = self._trader_and_signal(10, qty=1)                    # CRUDEOILM-like: 1 lot * 10 = 10, Upstox lot 10
+        with patch.object(margin_rates, "master_lot_size", return_value=10), patch.object(live_trading.telegram, "send") as tg:
+            try:
+                trader._enter(MagicMockStrat(), sig, 5.0, datetime(2026, 9, 24, 12, 0, tzinfo=IST))
+            except Exception:
+                pass                                                                # later steps use mocks; only the guard is under test
+        for call in tg.call_args_list:
+            self.assertNotIn("REFUSED", call[0][0])
+
+
+class MagicMockStrat:
+    product, id_prefix, name, uses_leverage = "I", "X", "scalping", True

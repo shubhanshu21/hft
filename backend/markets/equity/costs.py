@@ -19,8 +19,10 @@ EQUITY_EXCHANGE_TXN_PCT    = 0.00325 # NSE turnover fee on total turnover
 EQUITY_SEBI_PCT            = 0.0001  # Rs10 per crore
 EQUITY_STAMP_DUTY_PCT      = 0.003   # 0.003% on buy-side turnover
 GST_RATE                   = 0.18
-UPSTOX_BROKERAGE_CAP       = 20.0    # flat Rs20 cap per executed order leg
-UPSTOX_BROKERAGE_PCT       = 0.05    # 0.05% turnover, whichever is lower
+# Upstox's own brokerage calculator (ChargeApi.get_brokerage), checked 2026-09-24 for equity MIS, MCX and NCD: min(0.06% of turnover, Rs30) per order.
+# The model here used min(0.05%, Rs20) and understated every round trip by ~Rs23.6 (+GST) -- see tests/test_costs_vs_upstox.py.
+UPSTOX_BROKERAGE_CAP       = 30.0    # flat Rs30 cap per executed order leg
+UPSTOX_BROKERAGE_PCT       = 0.06    # 0.06% turnover, whichever is lower
 
 
 def compute_equity_brokerage(trade_val: float) -> float:
@@ -68,7 +70,7 @@ DELIVERY_STT_PCT_BOTH_SIDES = 0.1
 DELIVERY_STAMP_DUTY_PCT_BUY = 0.015
 DELIVERY_DP_CHARGE = 18.50            # per scrip per sell day, before GST
 DELIVERY_BROKERAGE_PCT = 0.1
-DELIVERY_BROKERAGE_CAP = 20.0
+DELIVERY_BROKERAGE_CAP = 30.0             # Upstox calculator 2026-09-24: Rs30 on a Rs1.2 lakh delivery order
 
 
 def compute_nse_equity_delivery_costs(direction: str, entry: float, exit_p: float, qty: int, tick_size: float = 0.05, symbol: str = "") -> dict:
