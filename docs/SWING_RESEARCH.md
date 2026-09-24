@@ -130,3 +130,77 @@ Trend rules win only 20–30% of the time and earn through a few large winners, 
 ## The commodity swing strategy
 
 `markets/commodity/swing/strategy.py` — hold long while the 252-day return is positive, short while negative, exit on a sign flip or a 3 x ATR stop; signals use completed daily bars and act in the first hour of the next MCX session. Because Upstox has no 252-day history for the current contract, the *direction and stop distance* come from the proxy series while sizing and stops use the real MCX price. It is **off** until named in `COMMODITY_STRATEGIES`; enable it in paper trading (e.g. `COMMODITY_STRATEGIES=scalping,swing`) to collect real evidence. If the proxy download fails it opens nothing. Shares the margin pool with the scalpers, so one margin-bound scalp can leave no room for a swing entry.
+
+---
+
+# Wider search: 34 rule variants, with luck controlled (2026-09-24)
+
+The first study tested 5 rule families. It was fair to ask whether more indicators and chart formations would change the
+answer, so this widened it to **21 rule families / 34 variants** (31 where there is no volume or cross-section):
+
+| Group | Rules |
+|---|---|
+| Trend | Supertrend (2 settings), Ichimoku cloud, MACD cross, Keltner breakout, cross-sectional relative strength (top 20% by 126 / 252-day return) |
+| Breakout | Bollinger squeeze breakout, volume-confirmed breakout, pivot-high (resistance) breakout (2), flag (pole + tight consolidation) |
+| Reversal / retracement | Double bottom / double top, Fibonacci 38-62% pullback |
+| Pullback | IBS (2), Bollinger mean reversion (2) |
+| Candlesticks | Bullish/bearish engulfing, hammer / shooting star, morning / evening star, each with and without a pullback context |
+| From study 1 (re-run identically) | Donchian, EMA trend, time-series momentum, RSI(2), trend pullback |
+
+Not covered: head-and-shoulders, triangles, wedges, harmonic patterns (no objective, non-repainting definition that I could
+defend). Code: `core/swing_rules_ext.py`, `markets/swing_research_ext.py`; run `python3 -m markets.swing_research_ext`.
+
+## What makes a wide search trustworthy (and what was done)
+
+Testing 34 variants means a few will look good by luck. So: the rule list was fixed in code **before any result was seen**;
+significance is measured on **months** (49 stocks trading the same days are not independent), not raw trades; a single result
+must clear a **Bonferroni bar (t >= 3.18 for 34 variants)** to be a PASS, and t >= 2 is only "watch"; **24 random-entry rules**
+run through identical stops/exits/costs show what luck looks like in each market; and a rule has to be positive in most test years.
+Pivots are confirmed 3 bars late, the cloud is not shifted forward, and `tests/test_swing_ext.py` proves no indicator at bar i
+changes when later bars change.
+
+## Results
+
+| Market | Best variants (test) | Random-entry controls (test) | Verdict |
+|---|---|---|---|
+| Equity, real Upstox 2022-26 (49 stocks) | **All 34 negative** (avg -0.25% to -1.9% per trade, PF 0.45-0.79). 30 of the 34 were positive on train | best t +0.6, mean -0.32%/trade | Nothing works in the last 27 months, for any rule type |
+| Equity, Yahoo 2005-26 | Trend family only: time-series momentum 126 (t +3.1, +2.5%/trade), EMA 20/50 (t +3.1), relative strength 126 (t +3.0), EMA 50/200 (t +3.0), Supertrend (t +2.6-2.7) | best t +2.3, 21% reach t>=2, mean +0.31% | **watch**, none PASS (bar 3.18) |
+| Commodity (proxy) | bb_meanrev 2.0 (t +2.3, train t -0.3), tsmom 252 (t +2.0, train t +0.6) | best t **+3.3**, 17% reach t>=2 | Indistinguishable from luck |
+| Currency | Nothing above t +1.4; 7 variants at t <= -2.3 | best t +1.8 | Nothing works |
+
+**Candlestick patterns, flags, double bottoms, Fibonacci pullbacks, IBS, Bollinger squeeze / mean reversion, Ichimoku, MACD,
+Keltner, volume breakouts and pivot breakouts: none earn a credible edge in any market after costs.** On the long equity history
+they sit at t of about -3 to +1; on real 2022-26 data they are all clearly negative.
+
+## Why the trend family "watches" but is not tradeable
+
+By-year average net return per trade (Yahoo, 49 stocks; buy & hold in the last column):
+
+| Year | tsmom 126 | EMA 20/50 | Rel. strength | Supertrend | Buy & hold |
+|---|---|---|---|---|---|
+| 2016 | +4.1 | +6.6 | +7.5 | +3.8 | +11.7 |
+| 2017 | +3.9 | +9.1 | +7.5 | +3.5 | +38.3 |
+| 2018 | -1.2 | -0.4 | -1.3 | 0.0 | +6.2 |
+| 2019 | -0.7 | -1.0 | -1.6 | +0.4 | +13.3 |
+| 2020 | +13.4 | +31.5 | +25.7 | +18.8 | +23.5 |
+| 2021 | +2.7 | +3.3 | +2.0 | +4.0 | +39.0 |
+| 2022 | +0.9 | +0.2 | +1.4 | 0.0 | +8.9 |
+| 2023 | +4.5 | +13.6 | +10.0 | +5.5 | +29.5 |
+| 2024 | -0.7 | -0.3 | -3.5 | -0.3 | +11.2 |
+| 2025 | +0.2 | +0.7 | +0.8 | +0.5 | +15.6 |
+| 2026 | -0.7 | -0.9 | -1.3 | -1.5 | -3.5 |
+
+1. **The edge lives in a few years** (2016-17, 2020-21, 2023). Outside them it is about zero or negative, including 2024 and 2026,
+   which is exactly the real-data window.
+2. **Survivorship bias.** The universe is today's NIFTY 50, i.e. companies that survived and grew. Trend-following on hindsight
+   winners flatters every number above; there is no delisted-stock data to correct it.
+3. **The real 2022-26 Upstox test is negative for all of them,** and even the random controls lose there.
+4. **The Bonferroni bar was not cleared** (best t +3.1 vs 3.18).
+
+## Conclusion
+
+More indicators and formations did not produce a profitable swing strategy; the extra search only produced more variants that
+failed out of sample. The one persistent pattern is that long-only trend-following makes money in strong bull years and
+nothing otherwise, which is a market-beta effect, not an edge that can be traded on demand. **Nothing is enabled.** The next
+evidence that would change this: a longer *real* (not proxy) history including delisted stocks, or paper results over a full
+market cycle for the commodity time-series-momentum candidate.

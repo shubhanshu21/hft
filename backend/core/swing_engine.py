@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
+from core import swing_rules_ext as _ext
+
 WARMUP = 210            # bars needed before the first signal (200-day averages)
 
 
@@ -34,7 +36,7 @@ class Trade:
         return self.net_ret / self.stop_pct if self.stop_pct else 0.0
 
 
-def with_indicators(df: pd.DataFrame, market_ok: pd.Series | None = None) -> pd.DataFrame:
+def with_indicators(df: pd.DataFrame, market_ok: pd.Series | None = None, extended: bool = False) -> pd.DataFrame:
     """Adds every indicator any rule uses. All are backward-looking (value at row i uses rows <= i).
     market_ok: optional boolean series (e.g. NIFTY50 above its 200-day average) for rules with params["regime"]."""
     d = df.copy()
@@ -59,6 +61,9 @@ def with_indicators(df: pd.DataFrame, market_ok: pd.Series | None = None) -> pd.
         d[f"ll{n}"] = l.rolling(n).min().shift(1)
     for n in (126, 252):
         d[f"ret{n}"] = c / c.shift(n) - 1
+    if extended:                               # research-only rules (core/swing_rules_ext.py); the live strategy never pays for these
+        from core.swing_rules_ext import extend_indicators
+        d = extend_indicators(d)
     return d
 
 
@@ -76,6 +81,8 @@ def entry_signal(rule: Rule, r, allow_short: bool) -> int:
     p, n = rule.params, rule.name
     if p.get("regime") and not r["mkt_ok"]:
         return 0                          # market filter: no new positions while the broad index is in a downtrend
+    if n in _ext.EXT_RULES:
+        return _ext.entry(n, p, r, allow_short)
     if n == "donchian":
         N = p["n"]
         if r["close"] > r[f"hh{N}"]:
@@ -110,6 +117,8 @@ def entry_signal(rule: Rule, r, allow_short: bool) -> int:
 def exit_signal(rule: Rule, r, direction: int) -> bool:
     """True = close the position at the next open."""
     p, n = rule.params, rule.name
+    if n in _ext.EXT_RULES:
+        return _ext.exit_(n, p, r, direction)
     if n == "donchian":
         M = p["exit_n"]
         return r["close"] < r[f"ll{M}"] if direction > 0 else r["close"] > r[f"hh{M}"]
@@ -186,8 +195,10 @@ def summarize(trades: list[Trade]) -> dict:
     wins, losses = r[r > 0], r[r <= 0]
     pf = wins.sum() / -losses.sum() if losses.sum() < 0 else float("inf")
     sd = r.std(ddof=1) if len(r) > 1 else float("nan")
+    months = pd.Series(r).groupby([t.entry_date.to_period("M") for t in trades]).mean()     # trades on the same days are correlated: judge the MONTHS
+    t_cl = float(months.mean() / (months.std(ddof=1) / np.sqrt(len(months)))) if len(months) > 2 and months.std(ddof=1) > 0 else 0.0
     return {
-        "n": len(r), "win": float((r > 0).mean() * 100), "avg_pct": float(r.mean() * 100), "pf": float(pf),
+        "t_cl": t_cl, "months": int(len(months)), "n": len(r), "win": float((r > 0).mean() * 100), "avg_pct": float(r.mean() * 100), "pf": float(pf),
         "t": float(r.mean() / sd * np.sqrt(len(r))) if sd and sd > 0 else 0.0,
         "avg_R": float(np.mean([t.r_multiple for t in trades])), "hold": float(np.median([t.bars for t in trades])),
         "best_pct": float(r.max() * 100), "worst_pct": float(r.min() * 100),
