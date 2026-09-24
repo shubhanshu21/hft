@@ -109,5 +109,5 @@ def size_equity_shares(capital: float, entry_price: float, stop_distance: float,
     risk_rupees = capital * (risk_pct / 100.0)
     shares_risk = max(1, math.floor(risk_rupees / stop_distance))
     margin_per_share = entry_price / max(leverage, 1.0)
-    shares_margin = max(1, math.floor(capital / margin_per_share)) if margin_per_share > 0 else 1
-    return max(1, min(shares_risk, shares_margin))
+    shares_margin = math.floor(capital / margin_per_share) if margin_per_share > 0 else 1     # 0 when one share does not fit the account
+    return min(shares_risk, shares_margin)

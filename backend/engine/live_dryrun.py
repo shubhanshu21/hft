@@ -128,7 +128,7 @@ from services.utils.market_holidays import get_trading_holidays
 
 log = get_logger("live_dryrun")
 
-from engine import heartbeat
+from engine import heartbeat, margin_rates
 IST = ZoneInfo("Asia/Kolkata")
 DEFAULT_SCAN_INTERVAL_SECONDS = 60  # 1-minute scan for fast SL/TP trailing & new bar detection
 DEFAULT_RISK_PCT = 5.0
@@ -499,6 +499,7 @@ class DryRunner(RiskGates):
         # Per-symbol values: an env var <SYMBOL>_RISK_PCT / <SYMBOL>_LEVERAGE wins, else the coded override above, else the segment value.
         r = float(os.environ.get(f"{sym.upper()}_RISK_PCT", _SYMBOL_RISK_PCT_OVERRIDE.get(sym.upper(), r)))
         l = float(os.environ.get(f"{sym.upper()}_LEVERAGE", _SYMBOL_LEVERAGE_OVERRIDE.get(sym.upper(), l)))
+        l = margin_rates.cap_leverage(sym, l)          # never more than Upstox really gives for this symbol (engine/margin_rates.py)
         return r, l
 
     # ---- Money management (see __init__'s comment) -----------------------
@@ -801,6 +802,15 @@ class DryRunner(RiskGates):
             log.info("%s: %s entry skipped -- %s.", sym, market, rejection)
             return False
 
+        # Ask Upstox what THIS exact order would block, right now (margins and lot sizes change at the broker's discretion).
+        fit = margin_rates.confirm_order(self.broker, sym, SYMBOL_MAP.get(sym), sig_result.qty,
+                                         "BUY" if sig_result.direction == "long" else "SELL", sizing_capital, now=None)
+        if fit["qty"] < 1:
+            log.info("%s: %s entry skipped -- %s.", sym, market, fit["note"] or "margin check")
+            return False
+        if fit["note"]:
+            log.info("%s: %s", sym, fit["note"])
+        sig_result.qty = fit["qty"]
         entry, sl, qty = sig_result.entry_price, sig_result.stop_loss, sig_result.qty
         trade_val = qty * sig_result.lot_size * entry
 
@@ -826,7 +836,7 @@ class DryRunner(RiskGates):
             # net_pnl), never on entry, so the "Balance" in the entry alert is realized equity, not
             # "cash left after this trade's margin". Shows the margin this trade blocks so that
             # distinction is visible instead of implying it's already netted out of Balance.
-            "margin_used": round(trade_val / leverage, 2), "leverage": leverage,
+            "margin_used": round(fit["margin"] if fit["margin"] else trade_val / leverage, 2), "leverage": leverage,
             "stop_dist": round(sig_result.stop_dist, 4),
             "rsi": round(diag.get("rsi", 0.0), 1), "vwap_dist_pct": round(diag.get("vwap_dist_pct", 0.0), 4),
             "ema_slope_pct": round(diag.get("ema_slope_pct", 0.0), 4),
@@ -1084,6 +1094,41 @@ def _print_sig(sig: dict, cap: float):
     telegram.alert_entry(sig, cap)
 
 
+def refresh_margin_rates(broker, runner) -> None:
+    """Fetch Upstox's real margin for one lot / share of every traded symbol, then say plainly which ones this capital cannot afford.
+    Called at start and at each trading-day rollover. A failure keeps the last known rates (engine/margin_rates.py)."""
+    try:
+        def notional(sym, price):
+            market = _get_market(sym)
+            if market == "equity":
+                return price
+            from markets.currency.costs import get_contract_multiplier as cur_mult
+            from markets.commodity.costs import get_contract_multiplier as com_mult
+            return price * (cur_mult(sym) if market == "currency" else com_mult(sym))
+        keys = {s: SYMBOL_MAP[s] for s in runner.symbols if SYMBOL_MAP.get(s)}
+        changed = []
+        rates = margin_rates.refresh(broker, keys, notional,
+                                     equity_syms=frozenset(s for s in keys if _is_equity(s)), mismatches=changed)
+        if changed:
+            msg = ", ".join(f"{s}: Upstox lot size was {a}, now {b}" for s, a, b in changed)
+            log.error("LOT SIZE CHANGED by the broker: %s", msg)
+            telegram.send(f"🔴 <b>LOT SIZE CHANGED</b> — {msg}. Costs / P&L for these still use the old size until the cost model is updated: "
+                          f"markets/*/costs.py *_SPECS. Consider pausing them (/stop commodity, /stop currency).")
+        log.info("Upstox margin rates: %s", {s: f"{r['leverage']:.1f}x (Rs{r['margin']:,.0f}/unit)" for s, r in rates.items() if s in keys and not _is_equity(s)})
+        blocked = margin_rates.unaffordable(runner.capital, [s for s in runner.symbols])
+        names = tuple(sorted(s for s, _ in blocked))
+        if blocked:
+            msg = ", ".join(f"{s} (1 lot needs Rs{m:,.0f})" for s, m in blocked)
+            log.warning("Cannot trade with capital Rs%s: %s", f"{runner.capital:,.0f}", msg)
+            if names != margin_rates.last_alerted:                     # tell the operator once per change, not every refresh
+                telegram.send(f"ℹ️ <b>NOT TRADABLE at Rs{runner.capital:,.0f}</b> (Upstox margin for ONE lot exceeds capital): {msg}")
+        elif margin_rates.last_alerted:
+            telegram.send("✅ All configured symbols are affordable again at the current capital / Upstox margin.")
+        margin_rates.last_alerted = names
+    except Exception as exc:                            # margin info is a safety net; it must never stop the daemon
+        log.warning("Margin refresh failed: %s", exc)
+
+
 def handle_operator_command(runner, cmd: str, now: datetime, scan_n: int) -> str | None:
     """Apply one operator command from the Telegram chat. Returns the action taken ('stop', 'start', 'pause:<segment>',
     'resume:<segment>', 'status') or None for an unknown command. Separate from main() so it can be tested without a live loop."""
@@ -1167,14 +1212,6 @@ def main():
 
     if args.report:
         db.print_dashboard(args.account)
-        try:
-            from engine.scorecard import format_scorecard
-            card = format_scorecard(todays_trades, db.get_trades(limit=1_000_000, account_id=args.account))
-            if card:
-                telegram.send(card)
-        except Exception as exc:                       # a reporting problem must never break the day rollover
-            log.warning("Scorecard failed: %s", exc)
-
         from services.utils.chart import generate_equity_curve
         chart_path = generate_equity_curve(
             db.get_snapshots(args.account), args.account,
@@ -1238,6 +1275,7 @@ def main():
     direction_mode = "long" if args.long_only else args.direction
     runner = DryRunner(broker, db, symbols, args.capital, args.risk_pct, args.leverage,
                        account_id=args.account, direction_filter=direction_mode)
+    refresh_margin_rates(broker, runner)
 
 
     print(f"\n{BOLD}{CY}{'='*75}{R}")
@@ -1264,6 +1302,8 @@ def main():
     from engine.config import UpstoxConfig
     token_check_interval_sec = int(os.environ.get("TOKEN_CHECK_INTERVAL_MIN", "15")) * 60
     last_token_check = time.monotonic()
+    margin_refresh_sec = int(os.environ.get("MARGIN_REFRESH_MIN", "60")) * 60
+    last_margin_refresh = time.monotonic()          # the start-up refresh above just ran
 
     # Treat SIGTERM (systemctl stop / systemd restart) the same as Ctrl-C: a
     # clean, alerted shutdown -- instead of an unhandled-exception crash that
@@ -1327,6 +1367,7 @@ def main():
                               f"{', '.join(changed.keys())}")
             SYMBOL_MAP.clear()
             SYMBOL_MAP.update(fresh_map)
+            refresh_margin_rates(broker, runner)
 
             # Pre-rollover contract expiry alert (MCX contracts expire ~20th of month)
             day_of_month = mopen.day
@@ -1377,6 +1418,11 @@ def main():
                     handle_operator_command(runner, u["text"].strip().lower(), now, scan_n)
             except Exception as exc:
                 log.error("Telegram command poll raised: %s", exc, exc_info=True)
+
+            # Margins and lot sizes are the broker's to change at any time: re-read them regularly, not just once a day.
+            if (time.monotonic() - last_margin_refresh) >= margin_refresh_sec:
+                last_margin_refresh = time.monotonic()
+                refresh_margin_rates(broker, runner)
 
             # Token refresh: proactively every TOKEN_CHECK_INTERVAL_MIN, or
             # immediately if the broker's 401 circuit breaker trips. A 24/7
@@ -1461,6 +1507,14 @@ def main():
             f"Trades today: {len(todays_trades)}  Total PnL: ₹{total_pnl:+,.2f}\n"
             f"Balance: ₹{runner.capital:,.2f}"
         )
+
+        try:
+            from engine.scorecard import format_scorecard
+            card = format_scorecard(todays_trades, db.get_trades(limit=1_000_000, account_id=args.account))
+            if card:
+                telegram.send(card)
+        except Exception as exc:                       # a reporting problem must never break the day rollover
+            log.warning("Scorecard failed: %s", exc)
 
         from services.utils.chart import generate_equity_curve
         chart_path = generate_equity_curve(

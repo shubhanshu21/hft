@@ -108,7 +108,7 @@ class TestSummaryAndFilters(unittest.TestCase):
 
 
 class TestCommoditySwingStrategy(unittest.TestCase):
-    def _ctx(self, sym="GOLDM", now=None, price=150000.0, cash=100000.0):
+    def _ctx(self, sym="GOLDM", now=None, price=150000.0, cash=2_000_000.0):        # one GOLDM lot needs ~Rs140k of Upstox margin: Rs100k cannot trade it
         from core.strategy import EntryContext
         bar = {"timestamp": "2026-09-24T09:10:00+05:30", "open": price, "high": price, "low": price, "close": price, "volume": 1}
         return EntryContext(symbol=sym, candles=[bar], now=now or datetime(2026, 9, 24, 9, 10, tzinfo=IST), instrument_key="K",

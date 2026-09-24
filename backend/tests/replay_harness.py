@@ -53,6 +53,7 @@ ENV = {
     "MAX_PORTFOLIO_HEAT_PCT": "12.0", "MAX_DAILY_LOSS_PCT": "5.0",
     "MAX_MARKET_DAILY_LOSS_PCT": "3.0", "MARKET_COOLDOWN_MINUTES": "60", "MAX_MARGIN_UTILIZATION_PCT": "1000.0",
     "MAX_MARKET_MARGIN_UTILIZATION_PCT": "1000.0", "MAX_POSITIONS_PER_SECTOR": "1",
+    "MARGIN_VERIFY": "off",           # the golden must not depend on live Upstox margins or on the operator's cached margin_rates.json
 }
 
 

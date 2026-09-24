@@ -83,7 +83,9 @@ class TestPerSymbolRiskOverrides(unittest.TestCase):
         import os
         from types import SimpleNamespace
         from unittest.mock import patch
-        from engine import live_dryrun
+        from engine import live_dryrun, margin_rates
+        patch.object(margin_rates, "_rates", {}).start()                       # no cached Upstox rates: this test is about the env-var precedence
+        self.addCleanup(patch.stopall)
         stub = SimpleNamespace(risk_pct=4.0, leverage=5.0)
         with patch.dict(os.environ, {"COMMODITY_RISK_PCT": "10", "COMMODITY_LEVERAGE": "10", **(env or {})}, clear=False):
             for k in ("CRUDEOILM_RISK_PCT", "SILVER_RISK_PCT", "CRUDEOILM_LEVERAGE"):
@@ -99,3 +101,14 @@ class TestPerSymbolRiskOverrides(unittest.TestCase):
     def test_a_symbol_env_var_beats_the_coded_override(self):
         self.assertEqual(self._get("CRUDEOILM", {"CRUDEOILM_RISK_PCT": "10"}), (10.0, 10.0))
         self.assertEqual(self._get("CRUDEOILM", {"CRUDEOILM_LEVERAGE": "7"}), (3.0, 7.0))
+
+
+class TestScorecardIsWiredIntoTheEndOfDay(unittest.TestCase):
+    def test_the_scorecard_call_sits_after_todays_trades_are_loaded_in_the_session_complete_path(self):
+        import re
+        from pathlib import Path
+        src = Path(__file__).resolve().parent.parent.joinpath("engine", "live_dryrun.py").read_text()
+        loaded = src.index("todays_trades = db.get_trades_for_date(")
+        card = src.index("format_scorecard(todays_trades")
+        self.assertLess(loaded, card)                                                   # it was once placed before the variable existed
+        self.assertEqual(len(re.findall(r"format_scorecard\(", src)), 1)

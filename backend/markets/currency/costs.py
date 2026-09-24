@@ -136,6 +136,6 @@ def size_currency_lots(
     margin_per_lot = (entry_price * mult) / max(leverage, 1.0)
     if margin_per_lot <= 0:
         return lots_risk
-    lots_margin = max(1, math.floor(capital / margin_per_lot))
+    lots_margin = math.floor(capital / margin_per_lot)            # 0 when one lot does not fit the account: see size_commodity_lots
 
-    return max(1, min(lots_risk, lots_margin))
+    return min(lots_risk, lots_margin)

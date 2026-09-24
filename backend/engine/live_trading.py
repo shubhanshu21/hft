@@ -418,6 +418,8 @@ class LiveTrader(RiskGates):
         # Per-symbol values: an env var <SYMBOL>_RISK_PCT / <SYMBOL>_LEVERAGE wins, else the coded override above, else the segment value.
         r = float(os.environ.get(f"{sym.upper()}_RISK_PCT", _SYMBOL_RISK_PCT_OVERRIDE.get(sym.upper(), r)))
         l = float(os.environ.get(f"{sym.upper()}_LEVERAGE", _SYMBOL_LEVERAGE_OVERRIDE.get(sym.upper(), l)))
+        from engine import margin_rates
+        l = margin_rates.cap_leverage(sym, l)          # never more than Upstox really gives for this symbol
         return r, l
 
     def _send_midday_summary(self, now: datetime) -> None:

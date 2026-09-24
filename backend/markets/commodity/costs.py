@@ -257,4 +257,7 @@ def size_commodity_lots(
     margin_required_per_lot = contract_notional_per_lot / effective_leverage
     lots_margin = math.floor(capital / margin_required_per_lot) if margin_required_per_lot > 0 else 1
 
-    return max(1, min(lots_risk, max(1, lots_margin)))
+    # Margin is a hard limit, not a preference: if ONE lot needs more margin than the account has, Upstox rejects the order, so the
+    # answer is 0 lots (the callers skip the trade). This used to be max(1, ...), which let GOLDM (Rs140k/lot) and SILVER (Rs901k/lot)
+    # "trade" on Rs100k and produced backtest profits Upstox would never have allowed.
+    return min(lots_risk, lots_margin)
