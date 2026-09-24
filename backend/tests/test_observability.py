@@ -74,3 +74,28 @@ class TestStatusRender(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPerSymbolRiskOverrides(unittest.TestCase):
+    """Coded per-symbol risk (CRUDEOILM 3%, SILVER 5%) used to beat .env silently; an env var per symbol now wins."""
+
+    def _get(self, sym, env=None):
+        import os
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from engine import live_dryrun
+        stub = SimpleNamespace(risk_pct=4.0, leverage=5.0)
+        with patch.dict(os.environ, {"COMMODITY_RISK_PCT": "10", "COMMODITY_LEVERAGE": "10", **(env or {})}, clear=False):
+            for k in ("CRUDEOILM_RISK_PCT", "SILVER_RISK_PCT", "CRUDEOILM_LEVERAGE"):
+                if not env or k not in env:
+                    os.environ.pop(k, None)
+            return live_dryrun.DryRunner._get_segment_risk_and_leverage(stub, sym)
+
+    def test_without_a_symbol_env_var_the_coded_override_still_applies(self):
+        self.assertEqual(self._get("CRUDEOILM"), (3.0, 10.0))
+        self.assertEqual(self._get("SILVER"), (5.0, 10.0))
+        self.assertEqual(self._get("GOLDM"), (10.0, 10.0))                       # no override: the segment value
+
+    def test_a_symbol_env_var_beats_the_coded_override(self):
+        self.assertEqual(self._get("CRUDEOILM", {"CRUDEOILM_RISK_PCT": "10"}), (10.0, 10.0))
+        self.assertEqual(self._get("CRUDEOILM", {"CRUDEOILM_LEVERAGE": "7"}), (3.0, 7.0))

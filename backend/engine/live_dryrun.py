@@ -496,8 +496,9 @@ class DryRunner(RiskGates):
             r = float(os.environ.get("EQUITY_RISK_PCT", self.risk_pct))
             l = float(os.environ.get("EQUITY_LEVERAGE", self.leverage))
 
-        r = _SYMBOL_RISK_PCT_OVERRIDE.get(sym.upper(), r)
-        l = _SYMBOL_LEVERAGE_OVERRIDE.get(sym.upper(), l)
+        # Per-symbol values: an env var <SYMBOL>_RISK_PCT / <SYMBOL>_LEVERAGE wins, else the coded override above, else the segment value.
+        r = float(os.environ.get(f"{sym.upper()}_RISK_PCT", _SYMBOL_RISK_PCT_OVERRIDE.get(sym.upper(), r)))
+        l = float(os.environ.get(f"{sym.upper()}_LEVERAGE", _SYMBOL_LEVERAGE_OVERRIDE.get(sym.upper(), l)))
         return r, l
 
     # ---- Money management (see __init__'s comment) -----------------------
