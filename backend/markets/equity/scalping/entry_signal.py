@@ -26,6 +26,7 @@ import os
 import numpy as np
 import pandas as pd
 
+from core import sessions
 from markets.equity.costs import size_equity_shares
 from markets.equity.features import compute_equity_features
 from markets.equity.universe import NIFTY50_SYMBOLS
@@ -74,7 +75,7 @@ _ADX_SCALE_REF = 25.0
 _ADX_SCALE_MIN = 0.7
 _ADX_SCALE_MAX = 1.8
 _ENTRY_GATE_MIN = 15
-_SQUAREOFF_MIN = 360  # 15:15 IST, ahead of the 15:30 close
+_SQUAREOFF_MIN = sessions.EQUITY_SQUAREOFF_SINCE_OPEN      # static default only, for the historical backtest; live reads Upstox (core/sessions.py)
 
 MAX_CONCURRENT_EQUITY_POSITIONS = 3  # portfolio-concentration cap -- see markets/equity/scalping/backtest.py's finding on correlated same-day losses
 
@@ -109,7 +110,7 @@ def compute_equity_entry_signal(
     t = len(feat_df) - 1
     row = feat_df.iloc[t]
     mins = int(row.get("minutes_since_open", 0))
-    if mins < _ENTRY_GATE_MIN or mins > _SQUAREOFF_MIN:
+    if mins < _ENTRY_GATE_MIN or mins > sessions.last_entry_since_open("equity"):      # Upstox's session hours minus the entry policy (core/sessions.py)
         return None
 
     adx = float(row.get("adx", 25.0))

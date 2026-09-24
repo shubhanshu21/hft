@@ -1,8 +1,6 @@
 """NSE currency scalping -- the same trend-breakout scalper as commodity (entry_signal handles both
-by symbol), with the currency session close (16:50 IST) and the NCD cost model."""
+by symbol), with the currency session hours (read from Upstox, core/sessions.py) and the NCD cost model."""
 from __future__ import annotations
-
-from core import sessions
 
 from markets.commodity.scalping.strategy import McxScalping
 from markets.currency.costs import CURRENCY_SPECS, compute_ncd_currency_costs
@@ -10,10 +8,10 @@ from markets.currency.costs import CURRENCY_SPECS, compute_ncd_currency_costs
 
 class NcdScalping(McxScalping):
     market = "currency"
-    close_at = (9 + sessions.CURRENCY_SQUAREOFF_MIN // 60, sessions.CURRENCY_SQUAREOFF_MIN % 60)      # 16:50 by default; NSE currency closes 17:00 IST
 
     def lot_size(self, sym: str) -> int:
-        return CURRENCY_SPECS.get(sym.upper(), {}).get("lot_size", 1000)
+        from markets.currency.costs import get_contract_multiplier
+        return get_contract_multiplier(sym)
 
     def costs(self, symbol: str, direction: str, entry: float, exit_price: float, qty: int) -> dict:
         return compute_ncd_currency_costs(symbol, direction, entry, exit_price, qty)

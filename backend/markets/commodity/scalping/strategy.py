@@ -5,6 +5,8 @@ take-profit + breakeven-lock + trail manager from core/exits.py.
 """
 from __future__ import annotations
 
+from core import sessions
+
 from core.exits import fixed_tp_breakeven_trail
 from core.strategy import EntryContext, ExitContext, ExitDecision, Signal, Strategy
 from markets.commodity.costs import COMMODITY_SPECS, compute_mcx_commodity_costs
@@ -33,10 +35,13 @@ class McxScalping(Strategy):
     timeframe = ("minutes", 5)
     default_enabled = True
     id_prefix = "MCX"
-    close_at = (22, 45)         # square off 5 min before Upstox's 22:50 MCX RMS auto-squareoff
+    @property
+    def close_at(self) -> tuple[int, int]:
+        return sessions.squareoff_clock(self.market)      # the day's real close (from Upstox) minus the exit policy: core/sessions.py
 
     def lot_size(self, sym: str) -> int:
-        return COMMODITY_SPECS.get(sym, {}).get("lot_size", 1)
+        from markets.commodity.costs import get_contract_multiplier
+        return get_contract_multiplier(sym)          # the table value scaled by any lot-size revision seen in Upstox's master
 
     def entry(self, ctx: EntryContext) -> Signal | None:
         r = compute_entry_signal(

@@ -188,3 +188,53 @@ class TestSmallCapitalContracts(unittest.TestCase):
         order = src[src.index('for base in ["CRUDEOILM"'):]
         self.assertLess(order.index('"GOLDTEN"'), order.index('"GOLD",'))         # startswith(): the longer names must be tried first
         self.assertLess(order.index('"GOLDPETAL"'), order.index('"GOLD",'))
+
+
+class TestLotAndTickChangesFlowIntoSizingAndCosts(unittest.TestCase):
+    """Lot size and tick size are Upstox's to change: a revision in the instrument master must scale multipliers, sizing and costs by itself."""
+
+    def setUp(self):
+        self.path = Path(tempfile.mkdtemp()) / "rates.json"
+        p = patch.object(mr, "RATES_PATH", self.path)
+        p.start()
+        self.addCleanup(p.stop)
+        mr._rates = {}
+        self.addCleanup(lambda: setattr(mr, "_rates", None))
+
+    def _refresh(self, lot, tick=1.0):
+        class B(FakeBroker):
+            def __init__(s):
+                super().__init__(lot_size=lot)
+                s._cache = SimpleNamespace(get_or_refresh=lambda: pd.DataFrame({"instrument_key": ["MCX_FO|1"], "lot_size": [lot], "tick_size": [tick]}))
+        mr.refresh(B(), {"CRUDEOILM": "MCX_FO|1"}, lambda s, p: p * 10, path=self.path, sleep_s=0, mismatches=[])
+
+    def test_the_first_lot_size_seen_is_the_baseline_and_scale_is_one(self):
+        self._refresh(10)
+        self.assertEqual(mr.lot_scale("CRUDEOILM"), 1.0)
+
+    def test_a_revised_lot_size_scales_the_multiplier_used_for_pnl_and_sizing(self):
+        from markets.commodity.costs import get_contract_multiplier
+        self._refresh(10)
+        self.assertEqual(get_contract_multiplier("CRUDEOILM"), 10)
+        self._refresh(20)                                              # Upstox doubles the lot
+        self.assertEqual(mr.lot_scale("CRUDEOILM"), 2.0)
+        self.assertEqual(get_contract_multiplier("CRUDEOILM"), 20)
+        # a lot now costs twice the margin and risks twice the money per point: fewer lots fit the same capital
+        self.assertLess(size_commodity_lots(100_000, 9_142, 60, 10.0, "CRUDEOILM", leverage=3.3), 3)
+
+    def test_a_symbol_never_seen_by_the_master_is_unscaled(self):
+        from markets.commodity.costs import get_contract_multiplier
+        self.assertEqual(get_contract_multiplier("SILVERMIC"), 1)
+        self.assertEqual(mr.lot_scale("SILVERMIC"), 1.0)
+
+    def test_the_tick_size_comes_from_the_master_and_drives_the_slippage_fallback(self):
+        self._refresh(10, tick=0.5)
+        self.assertEqual(mr.tick_size("CRUDEOILM"), 0.5)
+        import core.slippage as sl
+        from markets.commodity.costs import compute_mcx_commodity_costs
+        with patch.object(sl, "_cache", {}), patch.object(sl, "_cache_loaded_at", 1e18):
+            wide = compute_mcx_commodity_costs("CRUDEOILM", "long", 9000.0, 9010.0, 1)["slippage"]
+        self._refresh(10, tick=0.05)
+        with patch.object(sl, "_cache", {}), patch.object(sl, "_cache_loaded_at", 1e18):
+            narrow = compute_mcx_commodity_costs("CRUDEOILM", "long", 9000.0, 9010.0, 1)["slippage"]
+        self.assertGreater(wide, narrow)

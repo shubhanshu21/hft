@@ -45,11 +45,12 @@ UPSTOX_BROKERAGE_PCT = 0.06      # 0.06% of turnover, whichever is lower
 
 
 def get_contract_multiplier(symbol: str) -> int:
-    """Returns the lot size / multiplier (in units of the base currency) for a currency pair."""
+    """Lot size / multiplier (in units of the base currency) for a currency pair, scaled by any lot-size revision Upstox has made since the
+    table was built (engine/margin_rates.lot_scale; 1.0 when unchanged)."""
+    from engine import margin_rates
     sym_clean = symbol.upper().split("|")[-1].split("2")[0]  # strip exchange prefix or expiry, matches commodity_costs.py's convention
-    if sym_clean in CURRENCY_SPECS:
-        return CURRENCY_SPECS[sym_clean]["lot_size"]
-    return 1000  # sensible default: 3 of the 4 tracked pairs use 1000
+    base = CURRENCY_SPECS[sym_clean]["lot_size"] if sym_clean in CURRENCY_SPECS else 1000     # 3 of the 4 tracked pairs use 1000
+    return max(1, round(base * margin_rates.lot_scale(symbol)))
 
 
 def compute_currency_brokerage(trade_val: float) -> float:
@@ -86,7 +87,8 @@ def compute_ncd_currency_costs(
     gst_charges = (exch + sebi) * GST_RATE
 
     # Currency slippage: empirical median half-spread when available; fall back to ½ tick.
-    tick = CURRENCY_SPECS.get(symbol.upper(), {}).get("tick_size", 0.0025)
+    from engine import margin_rates
+    tick = margin_rates.tick_size(symbol) or CURRENCY_SPECS.get(symbol.upper(), {}).get("tick_size", 0.0025)      # Upstox's own tick when known
     slip_per_leg = adaptive_slippage_per_leg(symbol, 0.5 * tick)
     slip = slip_per_leg * qty * 2  # entry leg + exit leg
 

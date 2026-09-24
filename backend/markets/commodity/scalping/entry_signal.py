@@ -80,14 +80,14 @@ def compute_entry_signal(
         # NSE currency derivatives trade 09:00-17:00 IST -- no MCX-style
         # evening/US-overlap session. 15-min open buffer + 16:50 square-off,
         # matching markets/currency/scalping/backtest.py exactly.
-        if mins < 15 or mins > sessions.CURRENCY_LAST_ENTRY_MIN:
+        if mins < 15 or mins > sessions.last_entry_since_open("currency"):          # from Upstox's session hours (core/sessions.py)
             return None
     else:
         # Full session (10:00-22:30 IST) vs US/Evening-overlap-only
         # (18:30-22:00 IST) -- matches markets/commodity/scalping/backtest.py's
         # us_session_only flag exactly.
         if full_session:
-            if mins < 60 or mins > 810:
+            if mins < 60 or mins > sessions.last_entry_since_open("commodity"):
                 return None
         else:
             if mins < 570 or mins > 780:

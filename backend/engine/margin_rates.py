@@ -73,6 +73,31 @@ def master_lot_size(broker, instrument_key: str) -> int | None:
         return None
 
 
+def master_tick_size(broker, instrument_key: str) -> float | None:
+    try:
+        df = broker._cache.get_or_refresh()
+        row = df[df["instrument_key"] == instrument_key]
+        v = float(row["tick_size"].iloc[0]) if len(row) else 0.0
+        return v if v > 0 else None
+    except Exception:
+        return None
+
+
+def lot_scale(symbol: str) -> float:
+    """live master lot size / the master lot size the cost model was built against. 1.0 unless Upstox has REVISED the contract since the
+    baseline was recorded, in which case every per-lot quantity (P&L per point, notional, fees) must scale by it."""
+    r = _load().get(symbol.upper())
+    if not r:
+        return 1.0
+    base, live = r.get("base_lot_size"), r.get("lot_size")
+    return float(live) / float(base) if base and live else 1.0
+
+
+def tick_size(symbol: str) -> float | None:
+    r = _load().get(symbol.upper())
+    return float(r["tick_size"]) if r and r.get("tick_size") else None
+
+
 def _age_hours(rate: dict, now: datetime | None = None) -> float:
     try:
         return ((now or datetime.now()) - datetime.fromisoformat(rate["asof"])).total_seconds() / 3600
@@ -150,8 +175,12 @@ def refresh(broker, keys: dict[str, str], notional_per_unit, path=None, sleep_s:
             prev_lot = (rates.get(sym.upper()) or {}).get("lot_size")
             if live_lot and prev_lot and live_lot != prev_lot:
                 mismatches.append((sym, prev_lot, live_lot))
+            prev = rates.get(sym.upper()) or {}
             rates[sym.upper()] = {"margin": float(margin), "price": float(price), "notional": notional,
-                                  "leverage": round(lev, 3), "asof": now, "lot_size": live_lot or prev_lot}
+                                  "leverage": round(lev, 3), "asof": now, "lot_size": live_lot or prev_lot,
+                                  # the first lot size ever recorded is the baseline the cost model's multipliers were built against
+                                  "base_lot_size": prev.get("base_lot_size") or live_lot,
+                                  "tick_size": (master_tick_size(broker, key) if sym.upper() not in equity_syms else None) or prev.get("tick_size")}
         except Exception as exc:                                     # one symbol failing must not lose the others
             log.warning("margin refresh failed for %s: %s", sym, exc)
         time.sleep(sleep_s)

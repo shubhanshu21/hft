@@ -49,6 +49,8 @@ Usage:
 """
 from __future__ import annotations
 
+from core import sessions
+
 from core.exits import lock_stop
 from core.paths import ARCHIVE_ROOT, BACKEND_ROOT
 import argparse
@@ -117,7 +119,8 @@ ENTRY_THRESHOLDS = {
 }
 
 _ENTRY_GATE_MIN = 15    # skip first 15 min (09:15-09:30) -- opening volatility, thin ORB sample
-_SQUAREOFF_MIN = 360    # 15:15 IST square-off (minutes_since_open from 09:15), ahead of 15:30 close
+_LAST_ENTRY_MIN = sessions.EQUITY_LAST_ENTRY_SINCE_OPEN   # 14:45: no new entry in the last 10 minutes before the forced exit
+_SQUAREOFF_MIN = sessions.EQUITY_SQUAREOFF_SINCE_OPEN    # 14:55 IST (minutes since 09:15), inside Upstox's announced 15:00-15:15 auto square-off
 _MAX_CONCURRENT_POSITIONS = 3  # portfolio-concentration cap -- a real account wouldn't fire all 49 names' signals at once uncapped
 
 
@@ -210,7 +213,7 @@ def _simulate_symbol_candidates(sym: str, from_date: str | None, to_date: str | 
                     pos["current_stop"] = (max(pos["current_stop"], trail) if d == 1 else min(pos["current_stop"], trail))
             continue
 
-        if m_open < _ENTRY_GATE_MIN or m_open > _SQUAREOFF_MIN:
+        if m_open < _ENTRY_GATE_MIN or m_open > _LAST_ENTRY_MIN:
             continue
 
         adx, dmp, dmn = adxs[i], dmps[i], dmns[i]

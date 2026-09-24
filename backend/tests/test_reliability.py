@@ -330,3 +330,32 @@ class TestLiveOrderQuantityMatchesUpstoxLotSize(unittest.TestCase):
 
 class MagicMockStrat:
     product, id_prefix, name, uses_leverage = "I", "X", "scalping", True
+
+
+class TestStaleFeedGuard(unittest.TestCase):
+    NOW = datetime(2026, 9, 24, 12, 0, tzinfo=IST)
+
+    def _runner(self):
+        from types import SimpleNamespace
+        from engine.live_dryrun import DryRunner
+        return SimpleNamespace(_stale_logged={}, fresh=DryRunner._candles_fresh)
+
+    def _fresh(self, minutes_old, timeframe=("minutes", 5)):
+        r = self._runner()
+        strat = SimpleNamespace(timeframe=timeframe)
+        ts = (self.NOW - timedelta(minutes=minutes_old)).isoformat()
+        return r.fresh(r, "CRUDEOILM", [{"timestamp": ts}], self.NOW, strat)
+
+    def test_a_current_or_forming_bar_is_fresh(self):
+        self.assertTrue(self._fresh(0))
+        self.assertTrue(self._fresh(4))
+        self.assertTrue(self._fresh(12))                   # limit is two bars + 3 minutes
+
+    def test_a_feed_that_stopped_updating_blocks_entries(self):
+        self.assertFalse(self._fresh(14))
+        self.assertFalse(self._fresh(45))
+
+    def test_daily_bar_strategies_and_empty_lists_are_exempt(self):
+        self.assertTrue(self._fresh(60 * 24 * 3, timeframe=("days", 1)))
+        r = self._runner()
+        self.assertTrue(r.fresh(r, "X", [], self.NOW, SimpleNamespace(timeframe=("minutes", 5))))

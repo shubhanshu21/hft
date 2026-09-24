@@ -52,12 +52,7 @@
   },
   {
    "exit": "SBIN",
-   "net": -226.87,
-   "reason": "eod_squareoff"
-  },
-  {
-   "exit": "JSWSTEEL",
-   "net": 501.7,
+   "net": -666.11,
    "reason": "eod_squareoff"
   },
   {
@@ -67,12 +62,12 @@
   },
   {
    "exit": "CRUDEOILM",
-   "net": 498.45,
+   "net": 356.14,
    "reason": "be_stop"
   },
   {
    "exit": "CRUDEOILM",
-   "net": 602.15,
+   "net": 433.92,
    "reason": "be_stop"
   },
   {
@@ -117,7 +112,7 @@
   },
   {
    "exit": "TATASTEEL",
-   "net": 1875.16,
+   "net": 1851.86,
    "reason": "trail_stop"
   },
   {
@@ -132,12 +127,12 @@
   },
   {
    "exit": "TATASTEEL",
-   "net": 672.78,
+   "net": 664.08,
    "reason": "trail_stop"
   },
   {
    "exit": "JSWSTEEL",
-   "net": 859.17,
+   "net": 847.97,
    "reason": "trail_stop"
   },
   {
@@ -177,13 +172,18 @@
   },
   {
    "exit": "TATASTEEL",
-   "net": -1259.56,
+   "net": -1245.33,
    "reason": "timeout_exit"
   },
   {
    "exit": "USDINR",
    "net": 54.95,
    "reason": "be_stop"
+  },
+  {
+   "exit": "JSWSTEEL",
+   "net": -937.84,
+   "reason": "eod_squareoff"
   },
   {
    "exit": "CRUDEOILM",
@@ -194,11 +194,6 @@
    "exit": "USDINR",
    "net": 54.95,
    "reason": "be_stop"
-  },
-  {
-   "exit": "JSWSTEEL",
-   "net": -697.88,
-   "reason": "eod_squareoff"
   },
   {
    "exit": "CRUDEOILM",
@@ -547,39 +542,15 @@
    "tag": "DRY_RUN_MCX_ENTRY"
   },
   {
-   "direction": "SELL",
-   "fill_price": 1311.2,
-   "intent": "ENTRY",
-   "order_id": "ORD_E_EQ_20260901_145510_JSWSTEEL",
-   "order_type": "MARKET",
-   "quantity": 387,
-   "requested_price": 1311.2,
-   "status": "FILLED",
-   "symbol": "JSWSTEEL",
-   "tag": "DRY_RUN_EQ_ENTRY"
-  },
-  {
    "direction": "BUY",
-   "fill_price": 1029.9,
+   "fill_price": 1030.8,
    "intent": "EOD_SQUAREOFF",
-   "order_id": "ORD_X_20260901_151510_SBIN",
+   "order_id": "ORD_X_20260901_145510_SBIN",
    "order_type": "MARKET",
    "quantity": 488,
-   "requested_price": 1029.9,
+   "requested_price": 1030.8,
    "status": "FILLED",
    "symbol": "SBIN",
-   "tag": "DRY_RUN_EXIT_EOD_SQUAREOFF"
-  },
-  {
-   "direction": "BUY",
-   "fill_price": 1309.2,
-   "intent": "EOD_SQUAREOFF",
-   "order_id": "ORD_X_20260901_151510_JSWSTEEL",
-   "order_type": "MARKET",
-   "quantity": 387,
-   "requested_price": 1309.2,
-   "status": "FILLED",
-   "symbol": "JSWSTEEL",
    "tag": "DRY_RUN_EXIT_EOD_SQUAREOFF"
   },
   {
@@ -600,7 +571,7 @@
    "intent": "ENTRY",
    "order_id": "ORD_E_MCX_20260901_161510_CRUDEOILM",
    "order_type": "MARKET",
-   "quantity": 4,
+   "quantity": 3,
    "requested_price": 8333.0,
    "status": "FILLED",
    "symbol": "CRUDEOILM",
@@ -612,7 +583,7 @@
    "intent": "BE_STOP",
    "order_id": "ORD_X_20260901_164510_CRUDEOILM",
    "order_type": "MARKET",
-   "quantity": 4,
+   "quantity": 3,
    "requested_price": 8349.666,
    "status": "FILLED",
    "symbol": "CRUDEOILM",
@@ -624,7 +595,7 @@
    "intent": "ENTRY",
    "order_id": "ORD_E_MCX_20260901_172010_CRUDEOILM",
    "order_type": "MARKET",
-   "quantity": 4,
+   "quantity": 3,
    "requested_price": 8326.0,
    "status": "FILLED",
    "symbol": "CRUDEOILM",
@@ -636,7 +607,7 @@
    "intent": "BE_STOP",
    "order_id": "ORD_X_20260901_174010_CRUDEOILM",
    "order_type": "MARKET",
-   "quantity": 4,
+   "quantity": 3,
    "requested_price": 8345.2577,
    "status": "FILLED",
    "symbol": "CRUDEOILM",
@@ -852,7 +823,7 @@
    "intent": "ENTRY",
    "order_id": "ORD_E_EQ_20260910_112010_TATASTEEL",
    "order_type": "MARKET",
-   "quantity": 2839,
+   "quantity": 2805,
    "requested_price": 187.06,
    "status": "FILLED",
    "symbol": "TATASTEEL",
@@ -864,7 +835,7 @@
    "intent": "TRAIL_STOP",
    "order_id": "ORD_X_20260910_113010_TATASTEEL",
    "order_type": "MARKET",
-   "quantity": 2839,
+   "quantity": 2805,
    "requested_price": 186.2574507270481,
    "status": "FILLED",
    "symbol": "TATASTEEL",
@@ -900,7 +871,7 @@
    "intent": "ENTRY",
    "order_id": "ORD_E_EQ_20260910_121010_TATASTEEL",
    "order_type": "MARKET",
-   "quantity": 2903,
+   "quantity": 2869,
    "requested_price": 186.55,
    "status": "FILLED",
    "symbol": "TATASTEEL",
@@ -924,7 +895,7 @@
    "intent": "TRAIL_STOP",
    "order_id": "ORD_X_20260910_125510_TATASTEEL",
    "order_type": "MARKET",
-   "quantity": 2903,
+   "quantity": 2869,
    "requested_price": 186.17690000000002,
    "status": "FILLED",
    "symbol": "TATASTEEL",
@@ -936,7 +907,7 @@
    "intent": "ENTRY",
    "order_id": "ORD_E_EQ_20260910_125510_JSWSTEEL",
    "order_type": "MARKET",
-   "quantity": 415,
+   "quantity": 410,
    "requested_price": 1299.1,
    "status": "FILLED",
    "symbol": "JSWSTEEL",
@@ -972,7 +943,7 @@
    "intent": "TRAIL_STOP",
    "order_id": "ORD_X_20260910_131510_JSWSTEEL",
    "order_type": "MARKET",
-   "quantity": 415,
+   "quantity": 410,
    "requested_price": 1296.342839423926,
    "status": "FILLED",
    "symbol": "JSWSTEEL",
@@ -996,7 +967,7 @@
    "intent": "ENTRY",
    "order_id": "ORD_E_EQ_20260910_132010_TATASTEEL",
    "order_type": "MARKET",
-   "quantity": 2924,
+   "quantity": 2889,
    "requested_price": 185.3,
    "status": "FILLED",
    "symbol": "TATASTEEL",
@@ -1152,7 +1123,7 @@
    "intent": "TIMEOUT_EXIT",
    "order_id": "ORD_X_20260910_144010_TATASTEEL",
    "order_type": "MARKET",
-   "quantity": 2924,
+   "quantity": 2889,
    "requested_price": 185.59,
    "status": "FILLED",
    "symbol": "TATASTEEL",
@@ -1164,7 +1135,7 @@
    "intent": "ENTRY",
    "order_id": "ORD_E_EQ_20260910_144010_JSWSTEEL",
    "order_type": "MARKET",
-   "quantity": 414,
+   "quantity": 410,
    "requested_price": 1294.0,
    "status": "FILLED",
    "symbol": "JSWSTEEL",
@@ -1193,6 +1164,18 @@
    "status": "FILLED",
    "symbol": "USDINR",
    "tag": "DRY_RUN_EXIT_BE_STOP"
+  },
+  {
+   "direction": "BUY",
+   "fill_price": 1295.6,
+   "intent": "EOD_SQUAREOFF",
+   "order_id": "ORD_X_20260910_145510_JSWSTEEL",
+   "order_type": "MARKET",
+   "quantity": 410,
+   "requested_price": 1295.6,
+   "status": "FILLED",
+   "symbol": "JSWSTEEL",
+   "tag": "DRY_RUN_EXIT_EOD_SQUAREOFF"
   },
   {
    "direction": "BUY",
@@ -1241,18 +1224,6 @@
    "status": "FILLED",
    "symbol": "USDINR",
    "tag": "DRY_RUN_EXIT_BE_STOP"
-  },
-  {
-   "direction": "BUY",
-   "fill_price": 1295.0,
-   "intent": "EOD_SQUAREOFF",
-   "order_id": "ORD_X_20260910_151510_JSWSTEEL",
-   "order_type": "MARKET",
-   "quantity": 414,
-   "requested_price": 1295.0,
-   "status": "FILLED",
-   "symbol": "JSWSTEEL",
-   "tag": "DRY_RUN_EXIT_EOD_SQUAREOFF"
   },
   {
    "direction": "BUY",
@@ -1790,39 +1761,23 @@
   },
   {
    "adx": 50.6,
-   "capital_after": 101414.42,
+   "capital_after": 100975.18,
    "direction": "short",
    "entry_dt": "2026-09-01T14:15:10+05:30",
    "entry_price": 1030.0,
-   "exit_dt": "2026-09-01T15:15:10+05:30",
-   "exit_price": 1029.9,
+   "exit_dt": "2026-09-01T14:55:10+05:30",
+   "exit_price": 1030.8,
    "exit_reason": "eod_squareoff",
-   "gross_pnl": 48.8,
-   "net_pnl": -226.87,
+   "gross_pnl": -390.4,
+   "net_pnl": -666.11,
    "qty": 488,
    "rsi": 25.0,
    "symbol": "SBIN",
-   "total_friction": 275.67
-  },
-  {
-   "adx": 30.0,
-   "capital_after": 101916.12,
-   "direction": "short",
-   "entry_dt": "2026-09-01T14:55:10+05:30",
-   "entry_price": 1311.2,
-   "exit_dt": "2026-09-01T15:15:10+05:30",
-   "exit_price": 1309.2,
-   "exit_reason": "eod_squareoff",
-   "gross_pnl": 774.0,
-   "net_pnl": 501.7,
-   "qty": 387,
-   "rsi": 34.6,
-   "symbol": "JSWSTEEL",
-   "total_friction": 272.3
+   "total_friction": 275.71
   },
   {
    "adx": 40.4,
-   "capital_after": 100948.01,
+   "capital_after": 100007.06999999999,
    "direction": "long",
    "entry_dt": "2026-09-01T14:40:10+05:30",
    "entry_price": 8348.0,
@@ -1838,39 +1793,39 @@
   },
   {
    "adx": 27.4,
-   "capital_after": 101446.45999999999,
+   "capital_after": 100363.20999999999,
    "direction": "long",
    "entry_dt": "2026-09-01T16:15:10+05:30",
    "entry_price": 8333.0,
    "exit_dt": "2026-09-01T16:45:10+05:30",
    "exit_price": 8349.666,
    "exit_reason": "be_stop",
-   "gross_pnl": 666.64,
-   "net_pnl": 498.45,
-   "qty": 4,
+   "gross_pnl": 499.98,
+   "net_pnl": 356.14,
+   "qty": 3,
    "rsi": 51.0,
    "symbol": "CRUDEOILM",
-   "total_friction": 168.19
+   "total_friction": 143.84
   },
   {
    "adx": 20.3,
-   "capital_after": 102048.60999999999,
+   "capital_after": 100797.12999999999,
    "direction": "long",
    "entry_dt": "2026-09-01T17:20:10+05:30",
    "entry_price": 8326.0,
    "exit_dt": "2026-09-01T17:40:10+05:30",
    "exit_price": 8345.2577,
    "exit_reason": "be_stop",
-   "gross_pnl": 770.31,
-   "net_pnl": 602.15,
-   "qty": 4,
+   "gross_pnl": 577.73,
+   "net_pnl": 433.92,
+   "qty": 3,
    "rsi": 52.2,
    "symbol": "CRUDEOILM",
-   "total_friction": 168.15
+   "total_friction": 143.81
   },
   {
    "adx": 18.2,
-   "capital_after": 102610.03999999998,
+   "capital_after": 101358.55999999998,
    "direction": "long",
    "entry_dt": "2026-09-01T17:55:10+05:30",
    "entry_price": 8341.0,
@@ -1886,7 +1841,7 @@
   },
   {
    "adx": 16.9,
-   "capital_after": 103330.80999999998,
+   "capital_after": 102079.32999999999,
    "direction": "long",
    "entry_dt": "2026-09-01T18:20:10+05:30",
    "entry_price": 8354.0,
@@ -1902,7 +1857,7 @@
   },
   {
    "adx": 19.2,
-   "capital_after": 103831.74999999999,
+   "capital_after": 102580.26999999999,
    "direction": "long",
    "entry_dt": "2026-09-01T18:50:10+05:30",
    "entry_price": 8367.0,
@@ -1918,7 +1873,7 @@
   },
   {
    "adx": 20.8,
-   "capital_after": 102490.27999999998,
+   "capital_after": 101238.79999999999,
    "direction": "long",
    "entry_dt": "2026-09-01T19:10:10+05:30",
    "entry_price": 8379.0,
@@ -1934,7 +1889,7 @@
   },
   {
    "adx": 18.8,
-   "capital_after": 103250.99999999999,
+   "capital_after": 101999.51999999999,
    "direction": "long",
    "entry_dt": "2026-09-01T20:40:10+05:30",
    "entry_price": 8355.0,
@@ -1950,7 +1905,7 @@
   },
   {
    "adx": 16.6,
-   "capital_after": 105207.13999999998,
+   "capital_after": 103955.65999999999,
    "direction": "long",
    "entry_dt": "2026-09-01T21:45:10+05:30",
    "entry_price": 8433.0,
@@ -1966,7 +1921,7 @@
   },
   {
    "adx": 27.4,
-   "capital_after": 105718.74999999999,
+   "capital_after": 104467.26999999999,
    "direction": "long",
    "entry_dt": "2026-09-01T22:00:10+05:30",
    "entry_price": 8513.0,
@@ -1982,7 +1937,7 @@
   },
   {
    "adx": 34.4,
-   "capital_after": 106228.52999999998,
+   "capital_after": 104977.04999999999,
    "direction": "long",
    "entry_dt": "2026-09-01T22:15:10+05:30",
    "entry_price": 8488.0,
@@ -1998,23 +1953,23 @@
   },
   {
    "adx": 13.5,
-   "capital_after": 108103.68999999999,
+   "capital_after": 106828.90999999999,
    "direction": "short",
    "entry_dt": "2026-09-10T11:20:10+05:30",
    "entry_price": 187.06,
    "exit_dt": "2026-09-10T11:30:10+05:30",
    "exit_price": 186.2574507270481,
    "exit_reason": "trail_stop",
-   "gross_pnl": 2278.44,
-   "net_pnl": 1875.16,
-   "qty": 2839,
+   "gross_pnl": 2251.15,
+   "net_pnl": 1851.86,
+   "qty": 2805,
    "rsi": 36.3,
    "symbol": "TATASTEEL",
-   "total_friction": 403.28
+   "total_friction": 399.29
   },
   {
    "adx": 25.7,
-   "capital_after": 108337.36999999998,
+   "capital_after": 107062.58999999998,
    "direction": "short",
    "entry_dt": "2026-09-10T11:05:10+05:30",
    "entry_price": 9081.0,
@@ -2030,7 +1985,7 @@
   },
   {
    "adx": 37.7,
-   "capital_after": 107236.92999999998,
+   "capital_after": 105962.14999999998,
    "direction": "short",
    "entry_dt": "2026-09-10T12:00:10+05:30",
    "entry_price": 9073.0,
@@ -2046,39 +2001,39 @@
   },
   {
    "adx": 33.4,
-   "capital_after": 107909.70999999998,
+   "capital_after": 106626.22999999998,
    "direction": "short",
    "entry_dt": "2026-09-10T12:10:10+05:30",
    "entry_price": 186.55,
    "exit_dt": "2026-09-10T12:55:10+05:30",
    "exit_price": 186.17690000000002,
    "exit_reason": "trail_stop",
-   "gross_pnl": 1083.11,
-   "net_pnl": 672.78,
-   "qty": 2903,
+   "gross_pnl": 1070.42,
+   "net_pnl": 664.08,
+   "qty": 2869,
    "rsi": 33.7,
    "symbol": "TATASTEEL",
-   "total_friction": 410.33
+   "total_friction": 406.35
   },
   {
    "adx": 31.1,
-   "capital_after": 108768.87999999998,
+   "capital_after": 107474.19999999998,
    "direction": "short",
    "entry_dt": "2026-09-10T12:55:10+05:30",
    "entry_price": 1299.1,
    "exit_dt": "2026-09-10T13:15:10+05:30",
    "exit_price": 1296.342839423926,
    "exit_reason": "trail_stop",
-   "gross_pnl": 1144.22,
-   "net_pnl": 859.17,
-   "qty": 415,
+   "gross_pnl": 1130.44,
+   "net_pnl": 847.97,
+   "qty": 410,
    "rsi": 30.3,
    "symbol": "JSWSTEEL",
-   "total_friction": 285.05
+   "total_friction": 282.47
   },
   {
    "adx": 22.8,
-   "capital_after": 108373.84999999998,
+   "capital_after": 107079.16999999998,
    "direction": "long",
    "entry_dt": "2026-09-10T13:05:10+05:30",
    "entry_price": 95.43,
@@ -2094,7 +2049,7 @@
   },
   {
    "adx": 26.2,
-   "capital_after": 108775.33999999998,
+   "capital_after": 107480.65999999999,
    "direction": "long",
    "entry_dt": "2026-09-10T13:00:10+05:30",
    "entry_price": 9160.0,
@@ -2110,7 +2065,7 @@
   },
   {
    "adx": 21.9,
-   "capital_after": 108830.29999999999,
+   "capital_after": 107535.62,
    "direction": "long",
    "entry_dt": "2026-09-10T13:45:10+05:30",
    "entry_price": 95.43,
@@ -2126,7 +2081,7 @@
   },
   {
    "adx": 35.2,
-   "capital_after": 109322.05999999998,
+   "capital_after": 108027.37999999999,
    "direction": "long",
    "entry_dt": "2026-09-10T13:50:10+05:30",
    "entry_price": 9203.0,
@@ -2142,7 +2097,7 @@
   },
   {
    "adx": 42.8,
-   "capital_after": 109727.70999999998,
+   "capital_after": 108433.02999999998,
    "direction": "long",
    "entry_dt": "2026-09-10T14:15:10+05:30",
    "entry_price": 9236.0,
@@ -2158,7 +2113,7 @@
   },
   {
    "adx": 23.4,
-   "capital_after": 109784.21999999997,
+   "capital_after": 108489.53999999998,
    "direction": "long",
    "entry_dt": "2026-09-10T14:15:10+05:30",
    "entry_price": 95.47,
@@ -2174,7 +2129,7 @@
   },
   {
    "adx": 48.9,
-   "capital_after": 108660.96999999997,
+   "capital_after": 107366.28999999998,
    "direction": "long",
    "entry_dt": "2026-09-10T14:30:10+05:30",
    "entry_price": 9282.0,
@@ -2190,23 +2145,23 @@
   },
   {
    "adx": 46.6,
-   "capital_after": 107401.40999999997,
+   "capital_after": 106120.95999999998,
    "direction": "short",
    "entry_dt": "2026-09-10T13:20:10+05:30",
    "entry_price": 185.3,
    "exit_dt": "2026-09-10T14:40:10+05:30",
    "exit_price": 185.59,
    "exit_reason": "timeout_exit",
-   "gross_pnl": -847.96,
-   "net_pnl": -1259.56,
-   "qty": 2924,
+   "gross_pnl": -837.81,
+   "net_pnl": -1245.33,
+   "qty": 2889,
    "rsi": 16.4,
    "symbol": "TATASTEEL",
-   "total_friction": 411.6
+   "total_friction": 407.52
   },
   {
    "adx": 27.6,
-   "capital_after": 107456.35999999997,
+   "capital_after": 106175.90999999997,
    "direction": "long",
    "entry_dt": "2026-09-10T14:30:10+05:30",
    "entry_price": 95.48,
@@ -2221,8 +2176,24 @@
    "total_friction": 95.05
   },
   {
+   "adx": 50.0,
+   "capital_after": 105238.06999999998,
+   "direction": "short",
+   "entry_dt": "2026-09-10T14:40:10+05:30",
+   "entry_price": 1294.0,
+   "exit_dt": "2026-09-10T14:55:10+05:30",
+   "exit_price": 1295.6,
+   "exit_reason": "eod_squareoff",
+   "gross_pnl": -656.0,
+   "net_pnl": -937.84,
+   "qty": 410,
+   "rsi": 27.4,
+   "symbol": "JSWSTEEL",
+   "total_friction": 281.84
+  },
+  {
    "adx": 49.9,
-   "capital_after": 108605.72999999997,
+   "capital_after": 106387.43999999997,
    "direction": "long",
    "entry_dt": "2026-09-10T14:50:10+05:30",
    "entry_price": 9266.0,
@@ -2238,7 +2209,7 @@
   },
   {
    "adx": 29.9,
-   "capital_after": 108660.67999999996,
+   "capital_after": 106442.38999999997,
    "direction": "long",
    "entry_dt": "2026-09-10T15:00:10+05:30",
    "entry_price": 95.5,
@@ -2253,24 +2224,8 @@
    "total_friction": 95.05
   },
   {
-   "adx": 50.0,
-   "capital_after": 107962.79999999996,
-   "direction": "short",
-   "entry_dt": "2026-09-10T14:40:10+05:30",
-   "entry_price": 1294.0,
-   "exit_dt": "2026-09-10T15:15:10+05:30",
-   "exit_price": 1295.0,
-   "exit_reason": "eod_squareoff",
-   "gross_pnl": -414.0,
-   "net_pnl": -697.88,
-   "qty": 414,
-   "rsi": 27.4,
-   "symbol": "JSWSTEEL",
-   "total_friction": 283.88
-  },
-  {
    "adx": 51.9,
-   "capital_after": 106837.65999999996,
+   "capital_after": 105317.24999999997,
    "direction": "long",
    "entry_dt": "2026-09-10T15:15:10+05:30",
    "entry_price": 9300.0,
@@ -2286,7 +2241,7 @@
   },
   {
    "adx": 30.0,
-   "capital_after": 106742.60999999996,
+   "capital_after": 105222.19999999997,
    "direction": "long",
    "entry_dt": "2026-09-10T15:25:10+05:30",
    "entry_price": 95.52,
@@ -2302,7 +2257,7 @@
   },
   {
    "adx": 31.2,
-   "capital_after": 105620.92999999996,
+   "capital_after": 104100.51999999997,
    "direction": "long",
    "entry_dt": "2026-09-10T16:25:10+05:30",
    "entry_price": 9269.0,
@@ -2318,7 +2273,7 @@
   },
   {
    "adx": 28.1,
-   "capital_after": 106029.43999999996,
+   "capital_after": 104509.02999999997,
    "direction": "long",
    "entry_dt": "2026-09-10T16:35:10+05:30",
    "entry_price": 9288.0,
@@ -2334,7 +2289,7 @@
   },
   {
    "adx": 18.6,
-   "capital_after": 107635.52999999996,
+   "capital_after": 106115.11999999997,
    "direction": "long",
    "entry_dt": "2026-09-10T17:15:10+05:30",
    "entry_price": 9286.0,
@@ -2350,7 +2305,7 @@
   },
   {
    "adx": 21.3,
-   "capital_after": 108443.92999999995,
+   "capital_after": 106923.51999999996,
    "direction": "long",
    "entry_dt": "2026-09-10T17:35:10+05:30",
    "entry_price": 9414.0,
@@ -2366,7 +2321,7 @@
   },
   {
    "adx": 28.4,
-   "capital_after": 110621.58999999995,
+   "capital_after": 109101.17999999996,
    "direction": "long",
    "entry_dt": "2026-09-10T17:50:10+05:30",
    "entry_price": 9432.0,
@@ -2382,7 +2337,7 @@
   },
   {
    "adx": 35.3,
-   "capital_after": 111195.00999999995,
+   "capital_after": 109674.59999999996,
    "direction": "long",
    "entry_dt": "2026-09-10T18:05:10+05:30",
    "entry_price": 9575.0,
@@ -2398,7 +2353,7 @@
   },
   {
    "adx": 41.6,
-   "capital_after": 109312.65999999995,
+   "capital_after": 107792.24999999996,
    "direction": "long",
    "entry_dt": "2026-09-10T18:25:10+05:30",
    "entry_price": 9552.0,
@@ -2414,7 +2369,7 @@
   },
   {
    "adx": 39.6,
-   "capital_after": 107416.84999999995,
+   "capital_after": 105896.43999999996,
    "direction": "long",
    "entry_dt": "2026-09-10T18:40:10+05:30",
    "entry_price": 9545.0,
@@ -2430,7 +2385,7 @@
   },
   {
    "adx": 22.2,
-   "capital_after": 105828.42999999995,
+   "capital_after": 104308.01999999996,
    "direction": "long",
    "entry_dt": "2026-09-10T19:40:10+05:30",
    "entry_price": 9500.0,
@@ -2446,7 +2401,7 @@
   },
   {
    "adx": 18.1,
-   "capital_after": 106270.92999999995,
+   "capital_after": 104750.51999999996,
    "direction": "long",
    "entry_dt": "2026-09-10T20:15:10+05:30",
    "entry_price": 9514.0,
@@ -2462,7 +2417,7 @@
   },
   {
    "adx": 16.4,
-   "capital_after": 106694.34999999995,
+   "capital_after": 105173.93999999996,
    "direction": "long",
    "entry_dt": "2026-09-10T20:40:10+05:30",
    "entry_price": 9560.0,
@@ -2478,7 +2433,7 @@
   },
   {
    "adx": 19.7,
-   "capital_after": 108955.68999999994,
+   "capital_after": 107435.27999999996,
    "direction": "long",
    "entry_dt": "2026-09-10T21:10:10+05:30",
    "entry_price": 9609.0,
@@ -2494,7 +2449,7 @@
   },
   {
    "adx": 31.6,
-   "capital_after": 109387.52999999994,
+   "capital_after": 107867.11999999995,
    "direction": "long",
    "entry_dt": "2026-09-10T21:40:10+05:30",
    "entry_price": 9697.0,
@@ -2510,7 +2465,7 @@
   },
   {
    "adx": 38.2,
-   "capital_after": 110938.19999999994,
+   "capital_after": 109417.78999999995,
    "direction": "long",
    "entry_dt": "2026-09-10T21:55:10+05:30",
    "entry_price": 9710.0,

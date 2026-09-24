@@ -5,6 +5,8 @@ the current bar's ATR every scan (core/exits.activation_trail).
 """
 from __future__ import annotations
 
+from core import sessions
+
 import pandas as pd
 
 from core.exits import activation_trail
@@ -27,7 +29,9 @@ class EquityScalping(Strategy):
     id_prefix = "EQ"
     max_positions = MAX_CONCURRENT_EQUITY_POSITIONS
     sector_cap = True
-    close_at = (15, 15)         # ahead of the 15:30 close
+    @property
+    def close_at(self) -> tuple[int, int]:
+        return sessions.squareoff_clock(self.market)      # the day's real close (from Upstox) minus the exit policy: core/sessions.py
     price_decimals = 4
 
     def blocked(self, flags: dict) -> bool:

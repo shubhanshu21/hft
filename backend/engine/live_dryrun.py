@@ -470,6 +470,7 @@ class DryRunner(RiskGates):
         # this daemon runs, no separate job needed.
         self.spread_sample_interval_min = float(os.environ.get("SPREAD_SAMPLE_INTERVAL_MIN", "5"))
         self._last_spread_sample: dict[str, datetime] = {}
+        self._stale_logged: dict[str, datetime] = {}      # newest candle time already reported as stale, per symbol
         self.spread_log_path = LOG_DIR / "spread_samples.csv"
 
         # Midday summary flag -- initialized here so scan() can read it without
@@ -756,6 +757,27 @@ class DryRunner(RiskGates):
             return _fetch_candles(self.broker, sym, self.today)
         return _fetch_intraday(self.broker, sym, unit, interval, self.today)
 
+    def _candles_fresh(self, sym: str, candles: list[dict], now: datetime, strat) -> bool:
+        """Never trade on stale data: an intraday symbol whose newest candle is older than two bars + 3 min while its market is open is skipped
+        (feed lag, an instrument key that stopped updating, a halted symbol). Daily-bar strategies are exempt."""
+        unit, interval = strat.timeframe
+        if unit != "minutes" or not candles:
+            return True
+        try:
+            last = datetime.fromisoformat(str(candles[-1]["timestamp"]))
+            if last.tzinfo is None:
+                last = last.replace(tzinfo=IST)
+            age_min = (now - last).total_seconds() / 60
+        except (KeyError, ValueError, TypeError):
+            return True
+        limit = 2 * interval + 3
+        if age_min > limit:
+            if self._stale_logged.get(sym) != last:
+                self._stale_logged[sym] = last
+                log.warning("%s: newest %d-min candle is %.0f min old (limit %d) -- skipping entries until the feed catches up", sym, interval, age_min, limit)
+            return False
+        return True
+
     def _try_enter(self, strat, sym: str, now: datetime, signals: list[dict]) -> bool:
         """Evaluate `strat` for `sym`; open a (paper) position if it signals and every gate passes."""
         market = _get_market(sym)
@@ -784,6 +806,8 @@ class DryRunner(RiskGates):
         if sizing_capital <= 0:
             return False                      # no margin left in the pool -- nothing to size an entry against
         candles = self._candles(sym, strat)
+        if not self._candles_fresh(sym, candles, now, strat):
+            return False
         sig_result = strat.entry(EntryContext(
             symbol=sym, candles=candles, now=now, instrument_key=SYMBOL_MAP.get(sym), capital=sizing_capital,
             risk_pct=base_risk_pct * self._drawdown_risk_scale(), leverage=leverage,
@@ -1094,6 +1118,36 @@ def _print_sig(sig: dict, cap: float):
     telegram.alert_entry(sig, cap)
 
 
+def refresh_market_hours(broker, day=None) -> None:
+    """Read today's (or `day`'s) real exchange hours from Upstox and tell the operator if they differ from what was in use
+    (a special or shortened session, MCX's daylight-saving shift). A failure keeps the last known hours."""
+    try:
+        for line in sessions.refresh(broker._api_client, day):
+            log.warning("EXCHANGE HOURS CHANGED: %s", line)
+            telegram.send(f"🕒 <b>EXCHANGE HOURS CHANGED</b> (from Upstox) — {line}")
+    except Exception as exc:
+        log.warning("Exchange-hours refresh failed: %s", exc)
+
+
+def check_cost_drift(broker, runner) -> None:
+    """At start: compare our cost model with Upstox's brokerage calculator for the symbols being traded (engine/cost_drift.py)."""
+    try:
+        from engine import cost_drift
+        keys = {s: SYMBOL_MAP[s] for s in runner.symbols if SYMBOL_MAP.get(s)}
+        sample = {}
+        for market in ("commodity", "currency", "equity"):                       # one representative symbol per market keeps this to a few calls
+            pick = next((s for s in keys if _get_market(s) == market), None)
+            if pick:
+                sample[pick] = keys[pick]
+        rows = cost_drift.check(broker, sample, _get_market)
+        log.info("Cost model vs Upstox calculator: %s", {r["symbol"]: r.get("ratio", r["status"]) for r in rows})
+        bad = [r for r in rows if r["status"] in ("UNDERSTATES", "overstates")]
+        if bad:
+            telegram.send("💸 <b>COST MODEL DRIFT</b> — our charges differ from Upstox's calculator:\n" + cost_drift.format_rows(bad))
+    except Exception as exc:
+        log.warning("Cost-drift check failed: %s", exc)
+
+
 def refresh_margin_rates(broker, runner) -> None:
     """Fetch Upstox's real margin for one lot / share of every traded symbol, then say plainly which ones this capital cannot afford.
     Called at start and at each trading-day rollover. A failure keeps the last known rates (engine/margin_rates.py)."""
@@ -1275,7 +1329,9 @@ def main():
     direction_mode = "long" if args.long_only else args.direction
     runner = DryRunner(broker, db, symbols, args.capital, args.risk_pct, args.leverage,
                        account_id=args.account, direction_filter=direction_mode)
+    refresh_market_hours(broker)
     refresh_margin_rates(broker, runner)
+    check_cost_drift(broker, runner)
 
 
     print(f"\n{BOLD}{CY}{'='*75}{R}")
@@ -1336,8 +1392,10 @@ def main():
         now = datetime.now(IST)
         # Widest window across both MCX (till 23:30) and currency (till 17:00)
         # -- per-symbol precision is handled inside scan()/_maybe_exit().
-        mopen  = now.replace(hour=9,  minute=0,  second=0, microsecond=0)
-        mclose = now.replace(hour=23, minute=30, second=0, microsecond=0)
+        _wins = [sessions.window(m) for m in ("commodity", "currency", "equity")]          # Upstox's hours (core/sessions.py)
+        _lo, _hi = min(w[0] for w in _wins), max(w[1] for w in _wins)
+        mopen  = now.replace(hour=_lo // 60, minute=_lo % 60, second=0, microsecond=0)
+        mclose = now.replace(hour=_hi // 60, minute=_hi % 60, second=0, microsecond=0)
 
         if now > mclose:
             # Today's session is already over -- roll to the next trading day.
@@ -1354,6 +1412,7 @@ def main():
                 next_day += timedelta(days=1)
             mopen  = mopen.replace(year=next_day.year, month=next_day.month, day=next_day.day)
             mclose = mclose.replace(year=next_day.year, month=next_day.month, day=next_day.day)
+            refresh_market_hours(broker, next_day.date())       # a special session or an hours change on that day is picked up before it opens
 
             # Refresh instrument_key resolution once per trading-day rollover --
             # not just at process startup -- so a monthly contract expiry is
@@ -1422,6 +1481,7 @@ def main():
             # Margins and lot sizes are the broker's to change at any time: re-read them regularly, not just once a day.
             if (time.monotonic() - last_margin_refresh) >= margin_refresh_sec:
                 last_margin_refresh = time.monotonic()
+                refresh_market_hours(broker)
                 refresh_margin_rates(broker, runner)
 
             # Token refresh: proactively every TOKEN_CHECK_INTERVAL_MIN, or

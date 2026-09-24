@@ -152,7 +152,14 @@ UPSTOX_BROKERAGE_PCT  = 0.06         # 0.06% of turnover, whichever is lower
 
 
 def get_contract_multiplier(symbol: str) -> int:
-    """Returns the lot size / multiplier for a given commodity symbol."""
+    """Lot size / P&L multiplier for a commodity symbol, scaled by any lot-size revision Upstox has made since the table below was built
+    (engine/margin_rates.lot_scale reads Upstox's instrument master; 1.0 when unchanged)."""
+    from engine import margin_rates
+    return max(1, round(_static_contract_multiplier(symbol) * margin_rates.lot_scale(symbol)))
+
+
+def _static_contract_multiplier(symbol: str) -> int:
+    """The table value; see get_contract_multiplier for the live scaling."""
     sym_clean = symbol.upper().split("|")[-1].split("2")[0]  # Strip exchange prefix or expiry
     if sym_clean in COMMODITY_SPECS:
         return COMMODITY_SPECS[sym_clean]["lot_size"]
@@ -210,7 +217,8 @@ def compute_mcx_commodity_costs(
 
     # Commodity slippage: use empirical median half-spread from spread_samples.csv
     # when >= 20 real observations exist for this symbol; fall back to ½ tick otherwise.
-    tick = COMMODITY_SPECS.get(symbol, {}).get("tick_size", 1.0)
+    from engine import margin_rates
+    tick = margin_rates.tick_size(symbol) or COMMODITY_SPECS.get(symbol, {}).get("tick_size", 1.0)      # Upstox's own tick when known
     fallback_half_tick = 0.5 * tick
     slip_per_leg = adaptive_slippage_per_leg(symbol, fallback_half_tick)
     slip = slip_per_leg * qty * 2  # entry leg + exit leg

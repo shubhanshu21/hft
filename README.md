@@ -255,6 +255,7 @@ NSE currency and equity are backtested standalone (`python3 -m markets.currency.
 | `MAX_MARGIN_UTILIZATION_PCT` | `100.0` | Total margin the open positions may commit, % of capital — margin is one shared pool. A new entry is **sized to the margin still free**, not rejected. Sizing is margin-bound (one trade routinely uses 80–100% of capital), so values well below 100 shrink every position; 90 (with a 50 per-market cap) once blocked essentially every entry. |
 | `MAX_MARKET_MARGIN_UTILIZATION_PCT` | `100.0` | Same, per market, so one market can't crowd out the others. Override per market with `COMMODITY_MAX_MARGIN_PCT` / `CURRENCY_MAX_MARGIN_PCT` / `EQUITY_MAX_MARGIN_PCT`. |
 | `MARGIN_REFRESH_MIN` / `MARGIN_MAX_AGE_HOURS` / `MARGIN_VERIFY` | `60` / `6` / `strict` | **Real Upstox margin.** The `*_LEVERAGE` values are only an upper bound: the daemon reads Upstox's margin calculator at start, every `MARGIN_REFRESH_MIN` minutes and before every entry (`engine/margin_rates.py`), never uses more leverage than Upstox gives that symbol (2026-09-24: CRUDEOILM 3.3x, GOLDM 10.7x, SILVER 7.7x, USDINR 42x, NIFTY50 5.0x), cuts an order the account cannot carry, and skips any symbol whose ONE lot needs more margin than the capital (at Rs100k: GOLDM needs Rs140k, SILVER Rs901k). A cached rate older than `MARGIN_MAX_AGE_HOURS` is not trusted (`strict` skips the entry instead). Telegram alerts once when a symbol becomes untradable and when the broker changes a lot size. |
+| `<MARKET>_SQUAREOFF_BEFORE_CLOSE_MIN` / `<MARKET>_LAST_ENTRY_BEFORE_CLOSE_MIN` | commodity `45`/`60`, currency `35`/`50`, equity `35`/`45` | Forced exit and last entry, in minutes **before the day's real close**, which the daemon reads from Upstox every day (`core/sessions.py`, `get_exchange_timings`) - so special or shortened sessions and MCX's daylight-saving shift need no config. Upstox does not publish its auto square-off time through any API (only announced: currency 16:30, MCX 22:50, equity 15:00-15:15), so these two values are the one static policy; the defaults leave the account flat before those times, and `tests/test_sessions.py` fails if they ever do not. |
 | `MAX_POSITIONS_PER_SECTOR` | `1` | Max concurrent open equity positions in one sector (`core/sector_correlation.py`). |
 | `TOKEN_CHECK_INTERVAL_MIN` | `15` | How often the daemon re-validates its Upstox token; also re-checked immediately on a broker 401. |
 | `SPREAD_SAMPLE_INTERVAL_MIN` | `5` | How often live bid/ask is sampled per symbol **while its market is open**, feeding the adaptive slippage model (`var/logs/spread_samples.csv`). |
@@ -635,3 +636,17 @@ RUN_REPLAY=1 .venv/bin/python3 -m unittest tests.test_strategy_parity   # + the 
 ```
 
 `tests/test_strategy_parity.py` locks the trading behaviour: golden files record what the scalpers did (orders, trades, real-order broker calls) and the code must reproduce them exactly. If you change behaviour **on purpose**, regenerate the golden that moved (commands are in that file's docstring).
+
+
+## What is read from Upstox at runtime (and what is not)
+
+| Item | Source | Refresh |
+|---|---|---|
+| Margin per lot / leverage per symbol | `ChargeApi.post_margin` (margin calculator) | start, hourly, and the exact order before every entry (`engine/margin_rates.py`) |
+| Lot size, tick size | Instrument master (`lot_size`, `tick_size`) by exact instrument key | hourly; a revised lot size scales multipliers, sizing and costs automatically and alerts |
+| Session hours (open / close) | `MarketHolidaysAndTimingsApi.get_exchange_timings` | start, hourly, and the next trading day at rollover (`core/sessions.py`) |
+| Trading holidays | Upstox holiday API (`services/utils/market_holidays.py`) | daily |
+| Contract / expiry (instrument keys) | Instrument master, nearest expiry | daily rollover |
+| Charges (brokerage, taxes) | Modelled in `markets/*/costs.py`, **checked against `ChargeApi.get_brokerage`** | start and nightly (`engine/cost_drift.py`); alerts on drift |
+| Auto square-off time | **Not available from any Upstox API** | policy minutes-before-close (see env table); pinned by tests |
+| NIFTY50 universe | **Not available** (no index-constituent API); fixed and performance-blind by design | manual |
