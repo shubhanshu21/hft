@@ -241,6 +241,12 @@ def route(path: str, query: dict, db_path: Path = DB_PATH) -> tuple[int, object]
     return 404, {"error": "not found"}
 
 
+def clean_token(raw: str | None) -> str | None:
+    """An empty token means 'no token'. python-dotenv reads `KEY=   # comment` as a value equal to the comment text, so anything starting with '#' is treated as unset."""
+    raw = (raw or "").strip()
+    return None if not raw or raw.startswith("#") else raw
+
+
 def safe_static_path(root: Path, url_path: str) -> Path | None:
     """The file under `root` for a URL path, or None if it would escape `root` (directory traversal) or is not a file."""
     rel = url_path.lstrip("/") or "index.html"
@@ -313,7 +319,7 @@ def main(argv=None) -> int:
     ap.add_argument("--host", default=os.environ.get("DASHBOARD_HOST", "127.0.0.1"))
     ap.add_argument("--port", type=int, default=int(os.environ.get("DASHBOARD_PORT", "5000")))
     args = ap.parse_args(argv)
-    token = os.environ.get("DASHBOARD_TOKEN") or None
+    token = clean_token(os.environ.get("DASHBOARD_TOKEN"))
     server = make_server(args.host, args.port, token)
     exposed = args.host not in ("127.0.0.1", "localhost", "::1")
     print(f"dashboard on http://{args.host}:{args.port}  (read-only, token {'required' if token else 'NOT set'}){'  WARNING: reachable from the network' if exposed else ''}",

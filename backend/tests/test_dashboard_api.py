@@ -150,6 +150,12 @@ class TestServerSecurity(unittest.TestCase):
         for m in ("POST", "PUT", "DELETE", "PATCH"):
             self.assertEqual(self._get("/api/overview", {"Authorization": "Bearer s3cret"}, method=m)[0], 405, m)
 
+    def test_a_comment_parsed_as_a_value_is_not_a_token(self):
+        """python-dotenv turns `DASHBOARD_TOKEN=   # optional ...` into the string '# optional ...'; that must not lock everyone out."""
+        for raw in (None, "", "   ", "# optional; when set every /api call needs it"):
+            self.assertIsNone(api.clean_token(raw), raw)
+        self.assertEqual(api.clean_token("  abc123 "), "abc123")
+
     def test_no_token_configured_means_open_api(self):
         self.assertTrue(api.authorized({}, {}, None))
         self.assertFalse(api.authorized({}, {}, "x"))
