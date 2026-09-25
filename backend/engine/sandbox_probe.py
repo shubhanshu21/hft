@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from datetime import datetime
 
 from core.paths import LOG_DIR
@@ -32,7 +33,10 @@ def _keys() -> dict[str, str]:
     return SYMBOL_MAP
 
 
-def run(place=sandbox_client.place, keys: dict[str, str] | None = None, matrix=MATRIX) -> list[dict]:
+RATE_LIMITED = "UDAPI10005"     # 'Too Many Request Sent': not a verdict on the order, so wait and resend
+
+
+def run(place=sandbox_client.place, keys: dict[str, str] | None = None, matrix=MATRIX, pause: float = 0.0) -> list[dict]:
     keys = _keys() if keys is None else keys
     rows = []
     for label, sym, quantities, meaning in matrix:
@@ -42,7 +46,12 @@ def run(place=sandbox_client.place, keys: dict[str, str] | None = None, matrix=M
             continue
         for q in quantities:
             for order_type, price in (("MARKET", 0.0), ("LIMIT", 1.0)):
-                r = place(key, q, "BUY", "I", order_type, price, tag="PROBE")
+                for _ in range(4):
+                    r = place(key, q, "BUY", "I", order_type, price, tag="PROBE")
+                    time.sleep(pause)
+                    if r["error_code"] != RATE_LIMITED:
+                        break
+                    time.sleep(pause * 4)
                 rows.append({"label": label, "symbol": sym, "key": key, "quantity": q, "order_type": order_type, "ok": r["ok"],
                              "http_status": r["http_status"], "error_code": r["error_code"], "message": r["message"], "meaning": meaning})
     return rows
@@ -73,7 +82,7 @@ def main(argv=None) -> int:
     if not sandbox_client.token():
         print("UPSTOX_SANDBOX_TOKEN is empty. Upstox Developer Apps -> your sandbox app -> Access Token -> Generate, paste it into backend/.env, run again.")
         return 2
-    rows = run()
+    rows = run(pause=1.0)
     print(format_rows(rows))
     with open(args.json, "w") as fh:
         json.dump({"ran_at": datetime.now().isoformat(timespec="seconds"), "rows": rows}, fh, indent=1)

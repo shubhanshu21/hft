@@ -35,6 +35,13 @@ raw value through with no conversion, which neither confirms nor refutes. **Unve
 - 2026-04-10: a **Kill Switch API** lets an app enable/disable trading segments programmatically. A candidate extra safety layer; not used yet.
 - 2026-08-01: F&O closing moved to 15:40 (closing auction session); exchange hours are read from Upstox at runtime (`core/sessions.py`), so this needs no change.
 
+## 4b. Sandbox probe (2026-09-25)
+
+`python3 -m engine.sandbox_probe` (sandbox host `api-sandbox.upstox.com`, order APIs only, no fills) accepted every quantity tried, MARKET and LIMIT, product `I`:
+RELIANCE 1/100; USDINR 1/1000/4000; CRUDEOILM 1/10/100; SILVERMIC 1/3; GOLDM 1/10/100. The sandbox does not enforce lot or unit rules, so it does **not** settle
+sections 2-3; it only confirms instrument keys and the request format are valid. While `UPSTOX_SANDBOX_TOKEN` is set, each paper entry/exit is also rehearsed there
+(`engine/sandbox_rehearsal.py`). Sandbox rate limit: sending faster than ~1 order/s returned UDAPI10005, so the probe paces itself.
+
 ## 5. Checklist before arming live trading
 
 1. MCX API trading enabled by Upstox (blocker 1), or restrict live to equity/currency.
