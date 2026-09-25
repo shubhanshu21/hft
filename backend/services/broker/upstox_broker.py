@@ -22,6 +22,7 @@ Error handling strategy:
   - Missing data → logged + returns None (callers must validate)
 """
 
+import collections
 import os
 import threading
 import time
@@ -117,10 +118,27 @@ def _trip_circuit() -> None:
 REQUEST_TIMEOUT_S = (float(os.environ.get("UPSTOX_CONNECT_TIMEOUT_SEC", "5")), float(os.environ.get("UPSTOX_READ_TIMEOUT_SEC", "20")))
 
 
+_call_times: "collections.deque[float]" = collections.deque()
+_call_lock = threading.Lock()
+_CALL_WINDOW_S = 1800                     # Upstox's longest documented limit window (30 minutes)
+
+
+def api_calls_in_window(seconds: float = 1800.0) -> int:
+    """How many Upstox SDK calls this process made in the last `seconds` (all API groups counted: the conservative reading of the documented limits)."""
+    cutoff = time.monotonic() - seconds
+    with _call_lock:
+        return sum(1 for t in reversed(_call_times) if t >= cutoff)
+
+
 class TimeoutApiClient(upstox_client.ApiClient):
     def call_api(self, *args, **kwargs):
         if kwargs.get("_request_timeout") is None:
             kwargs["_request_timeout"] = REQUEST_TIMEOUT_S
+        now = time.monotonic()
+        with _call_lock:                                               # every Upstox request goes through here: one place to meter the rate limits
+            _call_times.append(now)
+            while _call_times and _call_times[0] < now - _CALL_WINDOW_S:
+                _call_times.popleft()
         return super().call_api(*args, **kwargs)
 
 

@@ -37,6 +37,9 @@ export interface SystemInfo {
   generated_at: string;
   heartbeat: { phase: string; ts: string; problem: string | null } | null;
   token_hours_left: number | null; last_backup: string | null; trading_enabled: boolean;
+  sandbox: { enabled: boolean; total: number; accepted: number; rejected: number; by_reason: { reason: string; n: number }[];
+    recent: { ts: string; kind: string; symbol: string; side: string; quantity: number; ok: boolean; error_code: string | null; message: string | null; latency_ms: number | null }[] } | null;
+  api_usage: { used_30min: number; limit_30min: number; used_1min: number; limit_1min: number; throttled_last_scan: number; ts: string } | null;
   upstox_limits: { symbol: string; margin_per_lot: number; upstox_leverage: number; lot_size: number | null; tick_size: number | null; as_of: string }[];
   sessions: { market: string; open: string; close: string; last_entry: string; forced_exit: string }[];
 }

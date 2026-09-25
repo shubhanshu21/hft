@@ -188,8 +188,32 @@
           <div class="card kpi"><span class="lab">Daemon</span><span class="val" [class]="health().cls">{{ health().label }}</span><span class="hint">{{ s.heartbeat ? 'last beat ' + shortTime(s.heartbeat.ts) : 'no heartbeat file' }}</span></div>
           <div class="card kpi"><span class="lab">Upstox token</span><span class="val" [class]="(s.token_hours_left ?? 0) > 1 ? 'pos' : 'neg'">{{ hours(s.token_hours_left) }}</span><span class="hint">left before it expires</span></div>
           <div class="card kpi"><span class="lab">Last DB backup</span><span class="val">{{ shortTime(s.last_backup) }}</span><span class="hint">hourly snapshots, 48 kept</span></div>
+          <div class="card kpi"><span class="lab">Upstox API calls (30 min)</span>
+            <span class="val" [class]="!s.api_usage ? 'flat' : s.api_usage.used_30min > 1600 ? 'warn' : 'pos'">{{ s.api_usage ? s.api_usage.used_30min : '–' }} / {{ s.api_usage?.limit_30min ?? 2000 }}</span>
+            <span class="hint">{{ s.api_usage ? (s.api_usage.throttled_last_scan ? s.api_usage.throttled_last_scan + ' equity scans deferred' : 'inside Upstox\'s limit') : 'waiting for the daemon' }}</span></div>
           <div class="card kpi"><span class="lab">Trading</span><span class="val" [class]="s.trading_enabled ? 'pos' : 'warn'">{{ s.trading_enabled ? 'Enabled' : 'Halted' }}</span><span class="hint">Telegram /stop and /start</span></div>
         </section>
+        <section class="card">
+          <div class="card-head"><h3>Upstox sandbox rehearsal</h3>
+            <span class="chip" [class]="s.sandbox?.enabled ? 'pos' : ''">{{ s.sandbox?.enabled ? 'on' : 'off: no token' }}</span></div>
+          @if (s.sandbox?.enabled && s.sandbox!.total) {
+            <p class="muted small" style="margin-top:0">Every paper entry and exit is also sent to Upstox's <b>sandbox</b> to prove the real request is valid. The sandbox never fills, so this checks the
+              order format, not results.</p>
+            <div class="kpis" style="grid-template-columns: repeat(3, 1fr)">
+              <div class="card kpi"><span class="lab">Sent</span><span class="val">{{ s.sandbox!.total }}</span></div>
+              <div class="card kpi"><span class="lab">Accepted</span><span class="val pos">{{ s.sandbox!.accepted }}</span></div>
+              <div class="card kpi"><span class="lab">Rejected</span><span class="val" [class]="s.sandbox!.rejected ? 'neg' : 'flat'">{{ s.sandbox!.rejected }}</span></div>
+            </div>
+            @if (s.sandbox!.by_reason.length) { <p class="neg small">@for (r of s.sandbox!.by_reason; track r.reason) { {{ r.n }}× {{ r.reason }}<br> } </p> }
+            <table class="tbl"><thead><tr><th>When</th><th>Kind</th><th>Symbol</th><th>Side</th><th class="r">Qty sent</th><th>Verdict</th><th class="r">Latency</th></tr></thead>
+              <tbody>@for (r of s.sandbox!.recent; track r.ts + r.symbol + r.kind) {
+                <tr><td>{{ shortTime(r.ts) }}</td><td>{{ r.kind }}</td><td><b>{{ r.symbol }}</b></td><td>{{ r.side }}</td><td class="r">{{ r.quantity }}</td>
+                  <td [class]="r.ok ? 'pos' : 'neg'">{{ r.ok ? 'accepted' : (r.error_code ?? 'rejected') + ': ' + (r.message ?? '') }}</td><td class="r">{{ r.latency_ms ?? '–' }} ms</td></tr>
+              }</tbody></table>
+          } @else if (s.sandbox?.enabled) { <p class="muted">Enabled, waiting for the next paper order.</p> }
+          @else { <p class="muted">Off. Generate a sandbox token in Upstox Developer Apps and set <code>UPSTOX_SANDBOX_TOKEN</code> in <code>backend/.env</code>.</p> }
+        </section>
+
         <section class="grid2">
           <div class="card">
             <div class="card-head"><h3>Limits read from Upstox</h3></div>

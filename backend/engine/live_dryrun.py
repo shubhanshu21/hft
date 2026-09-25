@@ -128,7 +128,7 @@ from services.utils.market_holidays import get_trading_holidays
 
 log = get_logger("live_dryrun")
 
-from engine import blocked_log, heartbeat, live_prices, margin_rates
+from engine import api_budget, blocked_log, heartbeat, live_prices, margin_rates, sandbox_rehearsal
 IST = ZoneInfo("Asia/Kolkata")
 DEFAULT_SCAN_INTERVAL_SECONDS = 60  # 1-minute scan for fast SL/TP trailing & new bar detection
 DEFAULT_RISK_PCT = 5.0
@@ -471,6 +471,8 @@ class DryRunner(RiskGates):
         self.spread_sample_interval_min = float(os.environ.get("SPREAD_SAMPLE_INTERVAL_MIN", "5"))
         self._last_spread_sample: dict[str, datetime] = {}
         self._stale_logged: dict[str, datetime] = {}      # newest candle time already reported as stale, per symbol
+        self._equity_offset = 0                            # rotating start of the equity pass when the API budget binds
+        self._last_throttle_log: datetime | None = None
         self.spread_log_path = LOG_DIR / "spread_samples.csv"
 
         # Midday summary flag -- initialized here so scan() can read it without
@@ -721,10 +723,12 @@ class DryRunner(RiskGates):
             )
 
         signals = []
-        for sym in self.symbols:
-            self._maybe_sample_spread(sym, now)
+        throttled = 0
+        for sym in self._scan_order():
+            if api_budget.allow("sampling"):
+                self._maybe_sample_spread(sym, now)
             if sym in self.positions:
-                self._maybe_exit(sym, now)
+                self._maybe_exit(sym, now)              # managing an open position is always allowed
                 continue
             if self.kill_switch_active or self.symbol_kill_switch.get(sym, False) or not self.trading_enabled:
                 continue
@@ -734,11 +738,40 @@ class DryRunner(RiskGates):
                 continue
             if self._is_market_on_cooldown(market, now):
                 continue
+            # Upstox allows 2,000 standard-API calls per 30 minutes (engine/api_budget.py). Commodity and currency (a handful of symbols) are essential;
+            # the 49-name equity universe spends what is left, so it is scanned less often only when the budget binds.
+            if not api_budget.allow("essential" if market != "equity" else "entry"):
+                throttled += 1
+                continue
 
             for strat in self.strategies[market]:
                 if self._try_enter(strat, sym, now, signals):
                     break                      # one position per symbol across all strategies
+        self._note_api_usage(now, throttled)
         return signals
+
+    def _scan_order(self) -> list[str]:
+        """Symbols in scan order: commodity and currency first, then equity starting at a rotating offset, so that when the API budget stops a pass part-way
+        it is a different set of equity names each time instead of always the same tail."""
+        head = [s for s in self.symbols if _get_market(s) != "equity"]
+        eq = [s for s in self.symbols if _get_market(s) == "equity"]
+        if eq:
+            k = self._equity_offset % len(eq)
+            eq = eq[k:] + eq[:k]
+        return head + eq
+
+    def _note_api_usage(self, now: datetime, throttled: int) -> None:
+        if throttled:
+            self._equity_offset += max(1, len(self.symbols) - throttled)         # resume after the last name that was scanned
+            if self._last_throttle_log is None or (now - self._last_throttle_log).total_seconds() > 300:
+                self._last_throttle_log = now
+                log.info("API budget: %d entry scans deferred this pass (%d calls in the last 30 min, Upstox limit 2,000); they resume as the window clears.",
+                         throttled, api_budget.used())
+        snap = {**api_budget.snapshot(), "throttled_last_scan": throttled, "ts": now.isoformat(timespec="seconds")}
+        try:
+            (DB_DIR / "api_usage.json").write_text(json.dumps(snap))
+        except OSError:
+            pass
 
     # ---- strategy-driven entry / exit -------------------------------------------
     # Strategies (core/strategy.py) only decide; every gate, sizing check, DB write and alert
@@ -781,6 +814,8 @@ class DryRunner(RiskGates):
     def _try_enter(self, strat, sym: str, now: datetime, signals: list[dict]) -> bool:
         """Evaluate `strat` for `sym`; open a (paper) position if it signals and every gate passes."""
         market = _get_market(sym)
+        if not strat.in_session(now):
+            return False                     # market closed: the entry functions would reject this anyway, and every candle fetch counts against Upstox's rate limits
         if strat.blocked(self._gate_flags()):
             return False
         if strat.max_positions is not None:
@@ -888,6 +923,8 @@ class DryRunner(RiskGates):
         )
         signals.append(sig)
         self.positions[sym] = {**sig, "entry_time": now, "current_stop": sl, "best_price": entry, **sig_result.exit_state}
+        # Rehearse the same order against Upstox's sandbox (background, off unless UPSTOX_SANDBOX_TOKEN is set): paper trading is never affected.
+        sandbox_rehearsal.submit("entry", sym, market, SYMBOL_MAP.get(sym), "BUY" if direction == "long" else "SELL", qty, sig_result.lot_size, pos_id)
         return True
 
     def _maybe_exit(self, sym: str, now: datetime):
@@ -910,12 +947,15 @@ class DryRunner(RiskGates):
             )
 
     def _close_position(self, sym: str, pos: dict, exit_p: float, reason: str, now: datetime):
-        live_prices.prune([s for s in self.positions if s != sym])
         """Shared exit path for SL/TP/timeout/EOD exits AND the manual Telegram
         kill switch (force_exit_all) -- one place that writes the DB order/
         position/trade/snapshot records, updates capital, and alerts."""
+        live_prices.prune([s for s in self.positions if s != sym])
         # 1. Calculate Exact Itemized Costs (the strategy's own cost model: intraday vs delivery, per market)
         strat = self._strategy_of(pos, sym)
+        # Rehearse the closing order against Upstox's sandbox (background; off unless UPSTOX_SANDBOX_TOKEN is set): paper trading is never affected.
+        sandbox_rehearsal.submit("exit", sym, _get_market(sym), pos.get("instrument_key") or SYMBOL_MAP.get(sym), "SELL" if pos["direction"] == "long" else "BUY",
+                                 pos.get("lots", pos.get("qty", 1)), pos.get("lot_size") or strat.lot_size(sym), pos.get("position_id", ""))
         cost_info = strat.costs(sym, pos["direction"], pos["entry_price"], exit_p, pos.get("lots", pos.get("qty", 1)))
 
         net_pnl = cost_info["net"]

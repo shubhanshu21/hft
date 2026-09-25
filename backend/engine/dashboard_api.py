@@ -221,6 +221,16 @@ def system_info(now: datetime | None = None) -> dict:
     except (OSError, ValueError):
         control = {}
     out["trading_enabled"] = control.get("enabled", True)
+    try:                                                     # Upstox sandbox rehearsal of every paper order (engine/sandbox_rehearsal.py)
+        from engine import sandbox_rehearsal
+        from services.broker import sandbox_client
+        out["sandbox"] = {"enabled": sandbox_client.enabled(), **sandbox_rehearsal.summarize(sandbox_rehearsal.read(500))}
+    except Exception:
+        out["sandbox"] = None
+    try:                                                     # written by the daemon each scan (engine/api_budget.py); the dashboard itself makes no Upstox calls
+        out["api_usage"] = json.loads((DB_DIR / "api_usage.json").read_text())
+    except (OSError, ValueError):
+        out["api_usage"] = None
     # per-symbol Upstox limits from the daemon's cache (engine/margin_rates.py) and the sizing settings in force
     try:
         from engine import margin_rates
