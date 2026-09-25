@@ -290,46 +290,57 @@ class TestOperatorCommands(unittest.TestCase):
         self.assertEqual(r.calls, [])
 
 
-class TestLiveOrderQuantityMatchesUpstoxLotSize(unittest.TestCase):
-    """The cost model's multiplier is not always Upstox's lot size; an order that is not a multiple of Upstox's lot must never be sent."""
+class TestLiveOrderQuantityMatchesWhatUpstoxExpects(unittest.TestCase):
+    """Upstox V3: commodity quantity = number of LOTS; equity and other F&O = UNITS. The live path once sent lots x lot_size for every market
+    (5 lots of crude as 50)."""
 
-    def _trader_and_signal(self, lot_size_multiplier, qty=2):
+    def test_units_per_market(self):
+        import os
+        from engine.order_units import broker_quantity
+        self.assertEqual(broker_quantity("commodity", 5, 10), 5)               # CRUDEOILM: 5 lots -> 5, NOT 50
+        self.assertEqual(broker_quantity("commodity", 3, 1), 3)                # SILVERMIC
+        self.assertEqual(broker_quantity("equity", 2500, 1), 2500)             # shares
+        self.assertEqual(broker_quantity("currency", 4, 1000), 4000)           # USDINR: lots x lot size (V3 rule for non-commodity F&O)
+        with patch.dict(os.environ, {"LIVE_CURRENCY_QTY_MODE": "lots"}):
+            self.assertEqual(broker_quantity("currency", 4, 1000), 4)          # the one unverified case can be switched without a code change
+        self.assertEqual(broker_quantity("commodity", 0, 10), 0)
+
+    def _place(self, market, symbol, qty, multiplier):
         import tempfile
         from unittest.mock import MagicMock
         from engine import live_trading
         from engine.database import TradingDB
         from core.strategy import Signal
         broker = MagicMock()
-        broker.place_order = MagicMock(return_value="OID")
+        broker.get_available_funds.return_value = 10_000_000.0
+        broker.place_buy_order.return_value = "OID"
+        broker.get_order_status.return_value = "complete"
         with patch.object(live_trading, "_build_symbol_map", lambda: {}):
-            trader = live_trading.LiveTrader(broker=broker, db=TradingDB(Path(tempfile.mkdtemp()) / "t.db"), symbols=["GOLDM"], capital=100000.0,
+            trader = live_trading.LiveTrader(broker=broker, db=TradingDB(Path(tempfile.mkdtemp()) / "t.db"), symbols=[symbol], capital=100000.0,
                                              risk_pct=4.0, leverage=5.0)
         sig = MagicMock(spec=Signal)
-        sig.symbol, sig.qty, sig.lot_size, sig.direction, sig.instrument_key = "GOLDM", qty, lot_size_multiplier, "long", "MCX_FO|569003"
-        return trader, sig, broker
-
-    def test_a_quantity_that_is_not_a_multiple_of_the_upstox_lot_size_is_refused_before_any_order(self):
-        from engine import live_trading, margin_rates
-        trader, sig, broker = self._trader_and_signal(10, qty=2)                    # GOLDM: 2 lots * multiplier 10 = 20, Upstox lot is 100
-        with patch.object(margin_rates, "master_lot_size", return_value=100), patch.object(live_trading.telegram, "send") as tg:
-            self.assertFalse(trader._enter(MagicMockStrat(), sig, 5.0, datetime(2026, 9, 24, 12, 0, tzinfo=IST)))
-        broker.place_order.assert_not_called()
-        self.assertIn("REFUSED", tg.call_args[0][0])
-
-    def test_a_correct_multiple_is_not_blocked_by_the_guard(self):
-        from engine import live_trading, margin_rates
-        trader, sig, broker = self._trader_and_signal(10, qty=1)                    # CRUDEOILM-like: 1 lot * 10 = 10, Upstox lot 10
-        with patch.object(margin_rates, "master_lot_size", return_value=10), patch.object(live_trading.telegram, "send") as tg:
+        sig.symbol, sig.qty, sig.lot_size, sig.direction, sig.instrument_key, sig.entry_price = symbol, qty, multiplier, "long", "K|1", 100.0
+        strat = MagicMockStrat()
+        strat.market = market
+        with patch.object(live_trading.telegram, "send"):
             try:
-                trader._enter(MagicMockStrat(), sig, 5.0, datetime(2026, 9, 24, 12, 0, tzinfo=IST))
+                trader._enter(strat, sig, 5.0, datetime(2026, 9, 24, 12, 0, tzinfo=IST))
             except Exception:
-                pass                                                                # later steps use mocks; only the guard is under test
-        for call in tg.call_args_list:
-            self.assertNotIn("REFUSED", call[0][0])
+                pass                                                              # later steps run on mocks; only the order quantity is under test
+        return broker.place_buy_order
+
+    def test_a_real_entry_order_sends_lots_for_commodity_units_for_the_rest(self):
+        self.assertEqual(self._place("commodity", "CRUDEOILM", 5, 10).call_args[0][1], 5)
+        self.assertEqual(self._place("equity", "TATASTEEL", 2500, 1).call_args[0][1], 2500)
+        self.assertEqual(self._place("currency", "USDINR", 4, 1000).call_args[0][1], 4000)
+
+    def test_a_non_positive_quantity_is_refused_before_any_order(self):
+        place = self._place("commodity", "CRUDEOILM", 0, 10)
+        place.assert_not_called()
 
 
 class MagicMockStrat:
-    product, id_prefix, name, uses_leverage = "I", "X", "scalping", True
+    product, id_prefix, name, uses_leverage, market = "I", "X", "scalping", True, "commodity"
 
 
 class TestStaleFeedGuard(unittest.TestCase):

@@ -115,7 +115,7 @@
     {
      "ikey": "IK|CRUDEOILM",
      "product": "I",
-     "qty": 50,
+     "qty": 5,
      "side": "BUY",
      "tag": "LIVE_E_CRUDEOILM"
     }
@@ -164,7 +164,7 @@
     {
      "ikey": "IK|GOLDM",
      "product": "I",
-     "qty": 30,
+     "qty": 3,
      "side": "SELL",
      "tag": "LIVE_E_GOLDM"
     }
@@ -260,7 +260,7 @@
     {
      "ikey": "IK|CRUDEOILM",
      "product": "I",
-     "qty": 50,
+     "qty": 5,
      "side": "BUY",
      "tag": "LIVE_E_CRUDEOILM"
     }
@@ -295,7 +295,7 @@
     {
      "ikey": "IK|CRUDEOILM",
      "product": "I",
-     "qty": 50,
+     "qty": 5,
      "side": "BUY",
      "tag": "LIVE_E_CRUDEOILM"
     }
@@ -416,7 +416,7 @@
     {
      "ikey": "IK|CRUDEOILM",
      "product": "I",
-     "qty": 50,
+     "qty": 5,
      "side": "SELL",
      "tag": "LIVE_X_CRUDEOILM"
     },
@@ -437,7 +437,7 @@
     {
      "ikey": "IK|CRUDEOILM",
      "product": "I",
-     "qty": 50,
+     "qty": 5,
      "side": "SELL",
      "tag": "LIVE_X_CRUDEOILM"
     }
@@ -478,7 +478,7 @@
     {
      "ikey": "IK|CRUDEOILM",
      "product": "I",
-     "qty": 50,
+     "qty": 5,
      "side": "SELL",
      "tag": "LIVE_X_CRUDEOILM"
     }

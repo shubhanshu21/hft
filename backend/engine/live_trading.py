@@ -534,14 +534,13 @@ class LiveTrader(RiskGates):
     def _enter(self, strat, signal, leverage: float, now: datetime) -> bool:
         """Place the real entry order. Returns True only if a position is now open."""
         sym = signal.symbol
-        quantity = signal.qty * signal.lot_size            # the broker's unit: shares, or lots * lot size
-        # Upstox's order quantity must be a multiple of the lot size IT lists. The cost model's multiplier is a different unit for some
-        # contracts (GOLDM: 10 vs Upstox 100 g; GOLDTEN: 1 vs 10 g), so a mismatch here would send an order Upstox rejects or mis-sizes.
-        from engine import margin_rates
-        master_lot = margin_rates.master_lot_size(self.broker, signal.instrument_key)
-        if master_lot and quantity % master_lot != 0:
-            msg = (f"{sym}: order quantity {quantity} is not a multiple of Upstox's lot size {master_lot} "
-                   f"(cost-model multiplier {signal.lot_size}); refusing to place it")
+        # `units` = shares / contract units (notional and margin maths); `quantity` = what Upstox expects in the order (engine/order_units.py):
+        # LOTS for commodity, units for the rest. Confusing the two once would have sent a 5-lot crude order as 50 lots.
+        units = signal.qty * signal.lot_size
+        from engine.order_units import broker_quantity
+        quantity = broker_quantity(strat.market, signal.qty, signal.lot_size)
+        if quantity < 1:
+            msg = f"{sym}: computed order quantity {quantity} is not positive; refusing to place it"
             log.error("live entry refused -- %s", msg)
             telegram.send(f"🔴 <b>LIVE ENTRY REFUSED</b> — {msg}")
             return False
@@ -555,7 +554,7 @@ class LiveTrader(RiskGates):
         # outside this process, a fee the ledger doesn't model exactly -- so this is the final,
         # authoritative check against the real broker balance right before an order that risks real
         # money. Fails safe: if the funds API can't be reached, treat that as insufficient.
-        required_margin = (signal.entry_price * quantity) / max(leverage, 1.0)
+        required_margin = (signal.entry_price * units) / max(leverage, 1.0)
         available_funds = self.broker.get_available_funds()
         if available_funds is None:
             msg = f"🔴 <b>LIVE ENTRY SKIPPED</b> — {sym}: could not fetch real available funds; refusing to size an order against an unknown balance."
@@ -613,7 +612,7 @@ class LiveTrader(RiskGates):
                           f"filled ₹{fill_price:.2f} ({slippage_pct:.2f}% away). Levels re-anchored to the real fill.")
 
         pos_id = f"POS_LIVE_{strat.id_prefix}_{ts_tag}_{sym}"
-        margin_used = round(fill_price * quantity / max(leverage, 1.0), 2)
+        margin_used = round(fill_price * units / max(leverage, 1.0), 2)
         self.db.place_order(
             order_id=order_id, symbol=sym, direction=transaction_type, intent="ENTRY",
             order_type="MARKET", qty=signal.qty, requested_price=assumed,
@@ -668,7 +667,8 @@ class LiveTrader(RiskGates):
     def _exit(self, sym: str, pos: dict, decision, now: datetime) -> None:
         reason, expected_price = decision.reason, decision.price
         strat = self._strategy_of(pos, sym)
-        quantity = pos["qty"] * (pos.get("lot_size") or strat.lot_size(sym))
+        from engine.order_units import broker_quantity
+        quantity = broker_quantity(strat.market, pos["qty"], pos.get("lot_size") or strat.lot_size(sym))
         # Exit is always the opposite side of entry.
         exit_side_is_buy = pos["direction"] == "short"
         tag = f"LIVE_X_{sym}"[:16]
