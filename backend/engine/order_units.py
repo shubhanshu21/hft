@@ -13,6 +13,8 @@ Until 2026-09-25 the live path sent lots x lot_size for every market, i.e. a 5-l
 
 The margin and brokerage calculators use different units again (margin: lots; brokerage: units) -- see engine/margin_rates.py and engine/cost_drift.py.
 
+Sources, dates and the pre-live checklist (including that MCX API orders are currently disabled by Upstox and a static IP is required): docs/UPSTOX_LIVE_READINESS.md.
+
 Also UNVERIFIED: services/utils/position_reconciliation.py compares the bot's lots with `get_positions().quantity`; whether Upstox reports MCX / NCD
 positions in lots or units cannot be known without a real position. Confirm both with a single 1-lot order before arming live trading.
 """
