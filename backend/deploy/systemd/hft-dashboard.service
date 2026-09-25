@@ -1,0 +1,15 @@
+[Unit]
+Description=HFT statistics dashboard (read-only API + Angular build), http://127.0.0.1:5000
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/var/www/html/hft/backend
+ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m engine.dashboard_api
+Restart=on-failure
+RestartSec=5
+# Read-only by construction (engine/dashboard_api.py): SQLite is opened mode=ro, no write endpoints, no Upstox calls.
+# Host, port and an optional access token come from backend/.env (DASHBOARD_HOST / DASHBOARD_PORT / DASHBOARD_TOKEN).
+
+[Install]
+WantedBy=default.target

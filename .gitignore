@@ -102,3 +102,8 @@ ehthumbs.db
 Thumbs.db
 
 .ruff_cache/
+
+# Angular dashboard build artefacts
+dashboard/node_modules/
+dashboard/dist/
+dashboard/.angular/

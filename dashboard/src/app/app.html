@@ -1,0 +1,172 @@
+<div class="shell">
+  <aside class="side">
+    <div class="brand"><span class="logo">▲</span><span>HFT <b>Stats</b></span></div>
+    <nav>
+      @for (n of nav; track n.id) {
+        <button type="button" [class.active]="view() === n.id" (click)="view.set(n.id)"><span class="ico">{{ n.icon }}</span>{{ n.label }}</button>
+      }
+    </nav>
+    <div class="side-foot">
+      <div class="badge paper">PAPER TRADING</div>
+      <p>Read-only statistics. Nothing on this page can place or change an order.</p>
+    </div>
+  </aside>
+
+  <main>
+    <header class="top">
+      <h1>{{ view() === 'overview' ? 'Dashboard' : view() === 'symbols' ? 'Symbols' : view() === 'trades' ? 'Trades' : 'System' }}</h1>
+      <div class="top-right">
+        <span class="pill" [class]="health().cls"><i></i>{{ health().label }}</span>
+        <span class="updated">Updated {{ ago(api.updatedAt()) }}</span>
+        <button type="button" class="ghost" (click)="api.refresh()" aria-label="Refresh now">⟳</button>
+      </div>
+    </header>
+
+    @if (api.needsToken()) {
+      <section class="card token">
+        <h3>Access token required</h3>
+        <p>This dashboard is protected. Paste the <code>DASHBOARD_TOKEN</code> from the server's <code>.env</code>.</p>
+        <form (submit)="$event.preventDefault(); setToken(tk)"><input #tk type="password" placeholder="Token" autocomplete="off" /><button type="submit">Open</button></form>
+      </section>
+    } @else if (api.error()) {
+      <div class="banner neg">{{ api.error() }} Showing the last data received.</div>
+    }
+
+    @if (api.loading()) {
+      <div class="skeleton-grid"><div class="card sk"></div><div class="card sk"></div><div class="card sk"></div></div>
+    }
+
+    @if (o(); as ov) {
+      @if (view() === 'overview') {
+        <section class="hero card">
+          <div class="hero-item"><span class="lab">Paper account equity</span><span class="big">{{ rupees(ov.account.current) }}</span>
+            <span class="sub" [class]="tone(ov.account.net)">{{ rupees(ov.account.net, {sign: true}) }} · {{ pct(ov.account.return_pct, 2, true) }} since {{ ov.account.since }}</span></div>
+          <div class="hero-item"><span class="lab">Today</span><span class="big" [class]="tone(ov.today.net)">{{ rupees(ov.today.net, {sign: true}) }}</span>
+            <span class="sub">{{ plural(ov.today.trades, 'trade') }} · {{ plural(ov.today.wins, 'win') }}</span></div>
+          <div class="hero-item"><span class="lab">Open positions</span><span class="big">{{ ov.open_positions.length }}</span>
+            <span class="sub">{{ ov.open_positions.length ? 'managed by the daemon' : 'flat' }}</span></div>
+          <div class="hero-item"><span class="lab">All closed trades</span><span class="big" [class]="tone(ov.kpis.net)">{{ rupees(ov.kpis.net, {sign: true}) }}</span>
+            <span class="sub">after {{ rupees(ov.kpis.costs) }} of costs</span></div>
+        </section>
+
+        <section class="kpis">
+          @for (k of kpiCards(); track k.label) {
+            <div class="card kpi"><span class="lab">{{ k.label }}</span><span class="val" [class]="k.cls">{{ k.value }}</span><span class="hint">{{ k.hint }}</span></div>
+          }
+        </section>
+
+        <section class="grid2">
+          <div class="card">
+            <div class="card-head"><h3>{{ equityMode() === 'equity' ? 'Equity curve' : 'Drawdown' }}</h3>
+              <div class="seg"><button type="button" [class.on]="equityMode() === 'equity'" (click)="equityMode.set('equity')">Equity</button>
+                <button type="button" [class.on]="equityMode() === 'drawdown'" (click)="equityMode.set('drawdown')">Drawdown</button></div></div>
+            <app-line-chart [points]="equityPoints()" [color]="equityMode() === 'equity' ? '#a05cff' : '#ff5d73'" [format]="equityMode() === 'equity' ? moneyPlain : pctFmt" ariaLabel="Equity curve" />
+          </div>
+          <div class="card">
+            <div class="card-head"><h3>Daily net P&amp;L</h3></div>
+            <app-bar-chart [bars]="dailyBars()" [format]="money" />
+          </div>
+        </section>
+
+        <section class="grid3">
+          <div class="card wide">
+            <div class="card-head"><h3>Performance by symbol</h3><button type="button" class="link" (click)="view.set('symbols')">More ›</button></div>
+            <table class="tbl"><thead><tr><th>Symbol</th><th class="r">Trades</th><th class="r">Win / needed</th><th class="r">PF</th><th class="r">Net</th><th>Trend</th></tr></thead>
+              <tbody>
+                @for (s of api.symbols(); track s.symbol) {
+                  <tr><td><b>{{ s.symbol }}</b></td><td class="r">{{ s.trades }}</td>
+                    <td class="r"><span [class]="s.win_pct >= s.need_pct ? 'pos' : 'neg'">{{ pct(s.win_pct, 0) }}</span> / {{ pct(s.need_pct, 0) }}</td>
+                    <td class="r">{{ num(s.profit_factor) }}</td><td class="r" [class]="tone(s.net)">{{ rupees(s.net, {sign: true}) }}</td>
+                    <td><app-sparkline [values]="s.series" /></td></tr>
+                } @empty { <tr><td colspan="6" class="empty">No trades yet</td></tr> }
+              </tbody></table>
+          </div>
+          <div class="card">
+            <div class="card-head"><h3>How trades end</h3></div>
+            <app-donut [slices]="slices()" />
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="card-head"><h3>Open positions</h3></div>
+          @if (ov.open_positions.length) {
+            <table class="tbl"><thead><tr><th>Symbol</th><th>Side</th><th class="r">Qty</th><th class="r">Entry</th><th class="r">Stop</th><th class="r">Target</th><th>Opened</th></tr></thead>
+              <tbody>@for (p of ov.open_positions; track p.symbol + p.entry_time) {
+                <tr><td><b>{{ p.symbol }}</b></td><td><span class="chip" [class]="p.direction === 'long' ? 'pos' : 'neg'">{{ p.direction }}</span></td><td class="r">{{ p.qty }}</td>
+                  <td class="r">{{ num(p.entry_price) }}</td><td class="r">{{ num(p.current_stop) }}</td><td class="r">{{ num(p.target_price) }}</td><td>{{ shortTime(p.entry_time) }}</td></tr>
+              }</tbody></table>
+          } @else { <p class="muted">No open positions. The account is flat.</p> }
+        </section>
+      }
+
+      @if (view() === 'symbols') {
+        <section class="grid-symbols">
+          @for (s of api.symbols(); track s.symbol) {
+            <div class="card sym">
+              <div class="card-head"><h3>{{ s.symbol }}</h3><span class="chip" [class]="tone(s.net)">{{ rupees(s.net, {sign: true}) }}</span></div>
+              <app-sparkline [values]="s.series" />
+              <dl>
+                <div><dt>Trades</dt><dd>{{ s.trades }} ({{ s.wins }}W / {{ s.losses }}L)</dd></div>
+                <div><dt>Win rate</dt><dd [class]="s.win_pct >= s.need_pct ? 'pos' : 'neg'">{{ pct(s.win_pct) }} <small>needs {{ pct(s.need_pct) }}</small></dd></div>
+                <div><dt>Profit factor</dt><dd>{{ num(s.profit_factor) }}</dd></div>
+                <div><dt>Avg win / loss</dt><dd>{{ rupees(s.avg_win) }} / {{ rupees(s.avg_loss) }}</dd></div>
+                <div><dt>Expectancy</dt><dd [class]="tone(s.expectancy)">{{ rupees(s.expectancy, {sign: true}) }}</dd></div>
+                <div><dt>Costs</dt><dd>{{ rupees(s.costs) }} @if (s.costs_pct_of_gross !== null) { <small>{{ pct(s.costs_pct_of_gross, 0) }} of gross</small> }</dd></div>
+                <div><dt>Best / worst</dt><dd>{{ rupees(s.best, {sign: true}) }} / {{ rupees(s.worst) }}</dd></div>
+                <div><dt>Avg hold</dt><dd>{{ num(s.avg_hold_min, 0) }} min</dd></div>
+              </dl>
+            </div>
+          } @empty { <div class="card"><p class="muted">No trades yet.</p></div> }
+        </section>
+      }
+
+      @if (view() === 'trades') {
+        <section class="card">
+          <div class="filters">
+            <label>Symbol <select #sf (change)="symbolFilter.set(sf.value)">@for (s of symbolNames(); track s) { <option [value]="s" [selected]="s === symbolFilter()">{{ s }}</option> }</select></label>
+            <label>Exit <select #rf (change)="reasonFilter.set(rf.value)">@for (r of reasonNames(); track r) { <option [value]="r" [selected]="r === reasonFilter()">{{ r === 'ALL' ? 'ALL' : reasonLabel(r) }}</option> }</select></label>
+            <span class="tot">{{ tradesTotals().n }} trades · net <b [class]="tone(tradesTotals().net)">{{ rupees(tradesTotals().net, {sign: true}) }}</b> · costs {{ rupees(tradesTotals().fees) }}</span>
+          </div>
+          <div class="scroll">
+            <table class="tbl"><thead><tr><th>Closed</th><th>Symbol</th><th>Side</th><th class="r">Qty</th><th class="r">Entry</th><th class="r">Exit</th><th>Exit reason</th><th class="r">Held</th><th class="r">Gross</th><th class="r">Costs</th><th class="r">Net</th></tr></thead>
+              <tbody>@for (t of filteredTrades(); track t.trade_id) {
+                <tr><td>{{ shortTime(t.exit_dt) }}</td><td><b>{{ t.symbol }}</b></td><td><span class="chip" [class]="t.direction === 'long' ? 'pos' : 'neg'">{{ t.direction }}</span></td>
+                  <td class="r">{{ t.qty }}</td><td class="r">{{ num(t.entry_price) }}</td><td class="r">{{ num(t.exit_price) }}</td><td>{{ reasonLabel(t.exit_reason) }}</td>
+                  <td class="r">{{ num(t.hold_minutes, 0) }}m</td><td class="r">{{ rupees(t.gross_pnl, {sign: true}) }}</td><td class="r">{{ rupees(t.total_friction) }}</td>
+                  <td class="r" [class]="tone(t.net_pnl)"><b>{{ rupees(t.net_pnl, {sign: true}) }}</b></td></tr>
+              } @empty { <tr><td colspan="11" class="empty">No trades match</td></tr> }</tbody></table>
+          </div>
+        </section>
+      }
+    }
+
+    @if (view() === 'system') {
+      @if (api.system(); as s) {
+        <section class="kpis">
+          <div class="card kpi"><span class="lab">Daemon</span><span class="val" [class]="health().cls">{{ health().label }}</span><span class="hint">{{ s.heartbeat ? 'last beat ' + shortTime(s.heartbeat.ts) : 'no heartbeat file' }}</span></div>
+          <div class="card kpi"><span class="lab">Upstox token</span><span class="val" [class]="(s.token_hours_left ?? 0) > 1 ? 'pos' : 'neg'">{{ hours(s.token_hours_left) }}</span><span class="hint">left before it expires</span></div>
+          <div class="card kpi"><span class="lab">Last DB backup</span><span class="val">{{ shortTime(s.last_backup) }}</span><span class="hint">hourly snapshots, 48 kept</span></div>
+          <div class="card kpi"><span class="lab">Trading</span><span class="val" [class]="s.trading_enabled ? 'pos' : 'warn'">{{ s.trading_enabled ? 'Enabled' : 'Halted' }}</span><span class="hint">Telegram /stop and /start</span></div>
+        </section>
+        <section class="grid2">
+          <div class="card">
+            <div class="card-head"><h3>Limits read from Upstox</h3></div>
+            <table class="tbl"><thead><tr><th>Symbol</th><th class="r">Margin / lot</th><th class="r">Leverage</th><th class="r">Lot</th><th class="r">Tick</th></tr></thead>
+              <tbody>@for (l of s.upstox_limits; track l.symbol) {
+                <tr><td><b>{{ l.symbol }}</b></td><td class="r">{{ rupees(l.margin_per_lot) }}</td><td class="r">{{ num(l.upstox_leverage, 1) }}×</td><td class="r">{{ l.lot_size ?? '–' }}</td><td class="r">{{ l.tick_size ?? '–' }}</td></tr>
+              } @empty { <tr><td colspan="5" class="empty">Not available yet</td></tr> }</tbody></table>
+            <p class="muted small">Margin and lot size come from Upstox's margin calculator and instrument master, refreshed hourly and before every entry.</p>
+          </div>
+          <div class="card">
+            <div class="card-head"><h3>Session hours</h3></div>
+            <table class="tbl"><thead><tr><th>Market</th><th>Open</th><th>Close</th><th>Last entry</th><th>Forced exit</th></tr></thead>
+              <tbody>@for (m of s.sessions; track m.market) {
+                <tr><td><b>{{ m.market }}</b></td><td>{{ m.open }}</td><td>{{ m.close }}</td><td>{{ m.last_entry }}</td><td>{{ m.forced_exit }}</td></tr>
+              }</tbody></table>
+            <p class="muted small">Hours are read from Upstox each day; the exits are set minutes before the real close so the account is flat before Upstox's auto square-off.</p>
+          </div>
+        </section>
+      }
+    }
+  </main>
+</div>

@@ -201,7 +201,7 @@ class TestLotAndTickChangesFlowIntoSizingAndCosts(unittest.TestCase):
         mr._rates = {}
         self.addCleanup(lambda: setattr(mr, "_rates", None))
 
-    def _refresh(self, lot, tick=1.0):
+    def _refresh(self, lot, tick=100.0):                       # the master quotes tick_size in PAISE: 100 = Rs1
         class B(FakeBroker):
             def __init__(s):
                 super().__init__(lot_size=lot)
@@ -228,13 +228,25 @@ class TestLotAndTickChangesFlowIntoSizingAndCosts(unittest.TestCase):
         self.assertEqual(mr.lot_scale("SILVERMIC"), 1.0)
 
     def test_the_tick_size_comes_from_the_master_and_drives_the_slippage_fallback(self):
-        self._refresh(10, tick=0.5)
+        self._refresh(10, tick=50.0)                               # 50 paise = Rs0.5
         self.assertEqual(mr.tick_size("CRUDEOILM"), 0.5)
         import core.slippage as sl
         from markets.commodity.costs import compute_mcx_commodity_costs
         with patch.object(sl, "_cache", {}), patch.object(sl, "_cache_loaded_at", 1e18):
             wide = compute_mcx_commodity_costs("CRUDEOILM", "long", 9000.0, 9010.0, 1)["slippage"]
-        self._refresh(10, tick=0.05)
+        self._refresh(10, tick=5.0)                                # 5 paise = Rs0.05
         with patch.object(sl, "_cache", {}), patch.object(sl, "_cache_loaded_at", 1e18):
             narrow = compute_mcx_commodity_costs("CRUDEOILM", "long", 9000.0, 9010.0, 1)["slippage"]
         self.assertGreater(wide, narrow)
+
+
+    def test_the_masters_paise_ticks_are_converted_to_rupees(self):
+        """CRUDEOILM/SILVERMIC list 100 (= Rs1) and USDINR 0.25 (= Rs0.0025). Read as rupees, the slippage fallback was 100x too large."""
+        self._refresh(10, tick=100.0)
+        self.assertEqual(mr.tick_size("CRUDEOILM"), 1.0)
+        self._refresh(1, tick=0.25)
+        self.assertAlmostEqual(mr.tick_size("CRUDEOILM"), 0.0025)
+
+    def test_old_cache_entries_holding_the_raw_paise_value_are_ignored(self):
+        mr._rates = {"CRUDEOILM": {"tick_size": 100.0, "margin": 1.0}}
+        self.assertIsNone(mr.tick_size("CRUDEOILM"))

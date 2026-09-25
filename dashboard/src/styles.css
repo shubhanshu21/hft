@@ -1,0 +1,14 @@
+:root {
+  --bg: #0a0e1d; --panel: rgba(255, 255, 255, 0.045); --panel-2: rgba(255, 255, 255, 0.07); --line: rgba(255, 255, 255, 0.08);
+  --text: #e6e8f0; --muted: #8a92a6; --accent: #b02bbf; --accent-2: #a05cff;
+  --pos: #29d391; --neg: #ff5d73; --warn: #f5b942; --blue: #4aa3ff;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; font-size: 14px; -webkit-font-smoothing: antialiased;
+  background: radial-gradient(1100px 520px at 78% -8%, rgba(120, 60, 200, 0.28), transparent 60%), radial-gradient(800px 500px at 0% 100%, rgba(40, 80, 200, 0.16), transparent 60%), var(--bg);
+  background-attachment: fixed;
+}
+button { font: inherit; color: inherit; cursor: pointer; }
+.pos { color: var(--pos); } .neg { color: var(--neg); } .warn { color: var(--warn); } .flat { color: var(--text); }

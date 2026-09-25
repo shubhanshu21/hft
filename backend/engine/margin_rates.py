@@ -74,10 +74,12 @@ def master_lot_size(broker, instrument_key: str) -> int | None:
 
 
 def master_tick_size(broker, instrument_key: str) -> float | None:
+    """The tick Upstox lists, in RUPEES. The instrument master quotes tick_size in PAISE (CRUDEOILM 100 = Rs1, SILVERMIC 100 = Rs1, USDINR 0.25 = Rs0.0025),
+    so it is divided by 100. Using the raw number as rupees made the slippage fallback 100x too large."""
     try:
         df = broker._cache.get_or_refresh()
         row = df[df["instrument_key"] == instrument_key]
-        v = float(row["tick_size"].iloc[0]) if len(row) else 0.0
+        v = float(row["tick_size"].iloc[0]) / 100.0 if len(row) else 0.0
         return v if v > 0 else None
     except Exception:
         return None
@@ -94,8 +96,9 @@ def lot_scale(symbol: str) -> float:
 
 
 def tick_size(symbol: str) -> float | None:
+    """Upstox's tick in rupees (stored as `tick_rs`; older cache entries stored the raw paise value as `tick_size` and are deliberately ignored)."""
     r = _load().get(symbol.upper())
-    return float(r["tick_size"]) if r and r.get("tick_size") else None
+    return float(r["tick_rs"]) if r and r.get("tick_rs") else None
 
 
 def _age_hours(rate: dict, now: datetime | None = None) -> float:
@@ -180,7 +183,7 @@ def refresh(broker, keys: dict[str, str], notional_per_unit, path=None, sleep_s:
                                   "leverage": round(lev, 3), "asof": now, "lot_size": live_lot or prev_lot,
                                   # the first lot size ever recorded is the baseline the cost model's multipliers were built against
                                   "base_lot_size": prev.get("base_lot_size") or live_lot,
-                                  "tick_size": (master_tick_size(broker, key) if sym.upper() not in equity_syms else None) or prev.get("tick_size")}
+                                  "tick_rs": (master_tick_size(broker, key) if sym.upper() not in equity_syms else None) or prev.get("tick_rs")}
         except Exception as exc:                                     # one symbol failing must not lose the others
             log.warning("margin refresh failed for %s: %s", sym, exc)
         time.sleep(sleep_s)

@@ -650,3 +650,19 @@ RUN_REPLAY=1 .venv/bin/python3 -m unittest tests.test_strategy_parity   # + the 
 | Charges (brokerage, taxes) | Modelled in `markets/*/costs.py`, **checked against `ChargeApi.get_brokerage`** | start and nightly (`engine/cost_drift.py`); alerts on drift |
 | Auto square-off time | **Not available from any Upstox API** | policy minutes-before-close (see env table); pinned by tests |
 | NIFTY50 universe | **Not available** (no index-constituent API); fixed and performance-blind by design | manual |
+
+
+## Statistics dashboard (Angular, read-only)
+
+`dashboard/` is an Angular app (dark UI: equity curve, daily P&L, per-symbol performance with sparklines, exit-reason breakdown, open positions, full
+trade table with filters, and a System page showing the Upstox-derived limits and session hours). It refreshes itself every 20 seconds.
+
+- **Data:** `engine/dashboard_api.py` (stdlib only, no new Python dependencies) serves `/api/*` as JSON *and* the built app on one port. It is **read-only by
+  construction**: SQLite is opened `mode=ro`, only GET is accepted, it never calls Upstox (so it cannot disturb the daemon's single active token), and file
+  serving is confined to the build directory.
+- **Build once, after changing the front end:** `cd dashboard && npm ci && npx ng build` (output goes to `dashboard/dist/`, git-ignored).
+- **Run:** `systemctl --user enable --now hft-dashboard.service` (unit in `backend/deploy/systemd/`), then open <http://127.0.0.1:5000>. Views are bookmarkable
+  (`/#symbols`, `/#trades`, `/#system`).
+- **Access:** binds to `127.0.0.1` by default (`DASHBOARD_HOST`/`DASHBOARD_PORT` in `.env`), i.e. reach it through an SSH tunnel or your editor's port
+  forwarding. Binding to a network address exposes account P&L, so set `DASHBOARD_TOKEN` when you do; the page then asks for it once.
+- **Develop:** `cd dashboard && npx ng serve` (proxying `/api` to the running API is not configured; use the built version for real data).
