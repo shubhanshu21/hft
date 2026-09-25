@@ -58,11 +58,39 @@ class TestClient(unittest.TestCase):
         with patch.dict(os.environ, {"UPSTOX_SANDBOX_TOKEN": "tok", "SANDBOX_REHEARSAL": "false"}):
             self.assertFalse(sandbox_client.enabled())
 
-    def test_the_sandbox_configuration_points_at_the_sandbox_host_not_the_live_one(self):
+    def _restore_default(self):
         import upstox_client
-        cfg = upstox_client.Configuration(sandbox=True)
+        saved = upstox_client.Configuration._default
+        self.addCleanup(lambda: setattr(upstox_client.Configuration, "_default", saved))
+        return upstox_client
+
+    def test_the_sandbox_config_points_at_the_sandbox_host_even_after_the_live_config_exists(self):
+        """The SDK caches the first Configuration and ignores later arguments: a naive Configuration(sandbox=True) returned the LIVE host in the daemon."""
+        sdk = self._restore_default()
+        sdk.Configuration._default = None
+        live = sdk.Configuration()                                            # what UpstoxBroker does first: becomes the SDK's cached default
+        self.assertNotIn("sandbox", live.host)
+        naive = sdk.Configuration(sandbox=True)                               # the trap: constructor arguments are ignored
+        self.assertNotIn("sandbox", naive.host)
+        cfg = sandbox_client._config("tok")                                   # ours: genuinely sandbox
         self.assertIn("sandbox", cfg.host)
         self.assertIn("sandbox", cfg.order_host)
+        self.assertEqual(cfg.access_token, "tok")
+
+    def test_building_a_sandbox_config_never_turns_later_live_configs_into_sandbox_ones(self):
+        sdk = self._restore_default()
+        sdk.Configuration._default = None
+        sandbox_client._config("tok")                                         # sandbox built FIRST
+        later_live = sdk.Configuration()
+        self.assertNotIn("sandbox", later_live.host)                          # a naive Configuration(sandbox=True) here would have poisoned this one
+        self.assertNotEqual(later_live.access_token, "tok")
+
+    def test_the_live_token_is_not_sent_to_the_sandbox(self):
+        sdk = self._restore_default()
+        sdk.Configuration._default = None
+        live = sdk.Configuration()
+        live.access_token = "LIVE-TOKEN"
+        self.assertEqual(sandbox_client._config("SANDBOX-TOKEN").access_token, "SANDBOX-TOKEN")
 
 
 class TestRehearsal(unittest.TestCase):

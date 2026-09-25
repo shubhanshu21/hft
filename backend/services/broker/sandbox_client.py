@@ -37,10 +37,20 @@ def enabled() -> bool:
     return bool(token()) and os.environ.get("SANDBOX_REHEARSAL", "true").strip().lower() not in ("0", "false", "no", "off")
 
 
-def _api(tok: str | None = None) -> upstox_client.OrderApiV3:
-    cfg = upstox_client.Configuration(sandbox=True)
+def _config(tok: str | None = None) -> upstox_client.Configuration:
+    """A SANDBOX configuration, whatever else has happened in this process.
+
+    The SDK's Configuration uses a metaclass (TypeWithDefault) that caches the FIRST instance ever created and returns copies of it, IGNORING later constructor
+    arguments. In the daemon the live broker's Configuration() is created first, so `Configuration(sandbox=True)` silently returned a copy pointing at the LIVE host;
+    and if a sandbox one were ever created first, every later live Configuration() would point at the sandbox. `type.__call__` builds a genuine, independent instance
+    and never touches that shared default."""
+    cfg = type.__call__(upstox_client.Configuration, sandbox=True)
     cfg.access_token = tok or token()
-    return upstox_client.OrderApiV3(_TimeoutClient(cfg))
+    return cfg
+
+
+def _api(tok: str | None = None) -> upstox_client.OrderApiV3:
+    return upstox_client.OrderApiV3(_TimeoutClient(_config(tok)))
 
 
 def _error_from(exc: ApiException) -> tuple[str | None, str]:
