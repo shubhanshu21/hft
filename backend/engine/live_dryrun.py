@@ -128,7 +128,7 @@ from services.utils.market_holidays import get_trading_holidays
 
 log = get_logger("live_dryrun")
 
-from engine import heartbeat, margin_rates
+from engine import blocked_log, heartbeat, live_prices, margin_rates
 IST = ZoneInfo("Asia/Kolkata")
 DEFAULT_SCAN_INTERVAL_SECONDS = 60  # 1-minute scan for fast SL/TP trailing & new bar detection
 DEFAULT_RISK_PCT = 5.0
@@ -761,7 +761,7 @@ class DryRunner(RiskGates):
         """Never trade on stale data: an intraday symbol whose newest candle is older than two bars + 3 min while its market is open is skipped
         (feed lag, an instrument key that stopped updating, a halted symbol). Daily-bar strategies are exempt."""
         unit, interval = strat.timeframe
-        if unit != "minutes" or not candles:
+        if unit != "minutes" or not candles or not _is_market_session_open(sym, now):        # after the close the newest candle is old by definition
             return True
         try:
             last = datetime.fromisoformat(str(candles[-1]["timestamp"]))
@@ -803,18 +803,24 @@ class DryRunner(RiskGates):
         leverage = sym_leverage if strat.uses_leverage else 1.0
         regime_ok = self.commodity_regime_ok.get(sym.upper(), None) if self.use_commodity_regime_filter else True
         sizing_capital = self._sizing_capital(market)
-        if sizing_capital <= 0:
-            return False                      # no margin left in the pool -- nothing to size an entry against
         candles = self._candles(sym, strat)
         if not self._candles_fresh(sym, candles, now, strat):
             return False
-        sig_result = strat.entry(EntryContext(
-            symbol=sym, candles=candles, now=now, instrument_key=SYMBOL_MAP.get(sym), capital=sizing_capital,
-            risk_pct=base_risk_pct * self._drawdown_risk_scale(), leverage=leverage,
-            direction_filter=self.direction_filter, full_session=self.full_session,
-            regime_ok=regime_ok, equity_regime_ok=self._gate_flags()["equity_regime_ok"],
-        ))
+        ctx = dict(symbol=sym, candles=candles, now=now, instrument_key=SYMBOL_MAP.get(sym),
+                   risk_pct=base_risk_pct * self._drawdown_risk_scale(), leverage=leverage, direction_filter=self.direction_filter,
+                   full_session=self.full_session, regime_ok=regime_ok, equity_regime_ok=self._gate_flags()["equity_regime_ok"])
+        sig_result = strat.entry(EntryContext(capital=sizing_capital, **ctx)) if sizing_capital > 0 else None
         if not sig_result:
+            # Margin is one pool. If part of it is held by open positions, a signal that could not be sized to the FREE margin leaves no trace
+            # (zero lots -> no signal). Re-ask with the whole account: a signal there was blocked by margin, not absent (engine/blocked_log.py).
+            if self.positions and sizing_capital < self.capital * 0.95:
+                shadow = strat.entry(EntryContext(capital=self.capital, **ctx))
+                if shadow:
+                    blocked_log.record(sym, market, "margin_pool", f"free margin Rs{max(sizing_capital, 0):,.0f} of Rs{self.capital:,.0f}; a {shadow.direction} "
+                                       f"signal for {shadow.qty} lot(s) could not be sized", list(self.positions.values()),
+                                       bar_ts=str(candles[-1]["timestamp"]) if candles else None, direction=shadow.direction, wanted_qty=shadow.qty, got_qty=0)
+                    log.info("%s: %s signal blocked by margin held by %s (free Rs%s of Rs%s).", sym, shadow.direction, ", ".join(self.positions),
+                             f"{max(sizing_capital, 0):,.0f}", f"{self.capital:,.0f}")
             return False
         if sig_result.direction == "short" and not strat.allow_short:
             return False
@@ -829,6 +835,10 @@ class DryRunner(RiskGates):
         # Ask Upstox what THIS exact order would block, right now (margins and lot sizes change at the broker's discretion).
         fit = margin_rates.confirm_order(self.broker, sym, SYMBOL_MAP.get(sym), sig_result.qty,
                                          "BUY" if sig_result.direction == "long" else "SELL", sizing_capital, now=None)
+        if fit["qty"] < 1 or fit["note"]:
+            blocked_log.record(sym, market, "margin_check" if fit["qty"] < 1 else "margin_cut", fit["note"] or "margin could not be verified with Upstox",
+                               list(self.positions.values()), bar_ts=str(candles[-1]["timestamp"]) if candles else None, direction=sig_result.direction,
+                               wanted_qty=sig_result.qty, got_qty=fit["qty"])
         if fit["qty"] < 1:
             log.info("%s: %s entry skipped -- %s.", sym, market, fit["note"] or "margin check")
             return False
@@ -886,6 +896,7 @@ class DryRunner(RiskGates):
         candles = self._candles(sym, strat)
         if not candles:
             return
+        live_prices.update(sym, candles[-1]["close"], now)               # for the dashboard's unrealised P&L (it never calls Upstox itself)
         armed_key = "armed_be" if "armed_be" in pos else "armed_trail"
         before = (pos["current_stop"], pos.get(armed_key))
         decision = strat.manage(pos, ExitContext(symbol=sym, candles=candles, now=now))
@@ -899,6 +910,7 @@ class DryRunner(RiskGates):
             )
 
     def _close_position(self, sym: str, pos: dict, exit_p: float, reason: str, now: datetime):
+        live_prices.prune([s for s in self.positions if s != sym])
         """Shared exit path for SL/TP/timeout/EOD exits AND the manual Telegram
         kill switch (force_exit_all) -- one place that writes the DB order/
         position/trade/snapshot records, updates capital, and alerts."""

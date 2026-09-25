@@ -29,6 +29,8 @@ from pathlib import Path as _Path
 from engine import margin_rates as _margin_rates
 _margin_rates.RATES_PATH = _Path(_tempfile.mkdtemp()) / "margin_rates.json"
 _margin_rates._rates = {}
+from engine import blocked_log as _blocked_log
+_blocked_log.PATH = _Path(_tempfile.mkdtemp()) / "blocked_entries.jsonl"
 
 
 IST = timezone(timedelta(hours=5, minutes=30))

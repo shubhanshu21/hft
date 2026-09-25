@@ -3,6 +3,7 @@ import json
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
@@ -163,3 +164,70 @@ class TestServerSecurity(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestUnrealisedPnl(unittest.TestCase):
+    NOW = datetime(2026, 9, 25, 12, 0, tzinfo=IST)
+
+    def setUp(self):
+        self.path = Path(tempfile.mkdtemp()) / "t.db"
+        self.db = TradingDB(self.path)
+        self.db.init_account("DRYRUN_ACCOUNT", capital=100000.0, leverage=5.0, risk_pct=4.0)
+        self.tmp = Path(tempfile.mkdtemp())
+
+    def _open(self, pid, sym, direction, qty, entry, lot_size):
+        self.db.open_position(position_id=pid, symbol=sym, direction=direction, qty=qty, entry_price=entry, current_stop=entry - 40, target_price=entry + 60,
+                              breakeven_price=entry + 20, account_id="DRYRUN_ACCOUNT", instrument_key="K", entry_order_id="O" + pid,
+                              strategy="scalping", state=json.dumps({"lot_size": lot_size}))
+
+    def _positions(self, prices):
+        con = api.connect(self.path)
+        try:
+            return {p["symbol"]: p for p in api.open_positions(con, prices=prices, now=self.NOW)}
+        finally:
+            con.close()
+
+    def test_unrealised_uses_lots_times_the_contract_multiplier_and_the_side(self):
+        self._open("P1", "CRUDEOILM", "long", 3, 8900.0, 10)                  # 3 lots x 10 bbl
+        self._open("P2", "TATASTEEL", "short", 2500, 190.0, 1)                # 2,500 shares, short
+        ts = self.NOW.isoformat()
+        p = self._positions({"CRUDEOILM": {"price": 8950.0, "ts": ts}, "TATASTEEL": {"price": 189.0, "ts": ts}})
+        self.assertEqual(p["CRUDEOILM"]["unrealised"], (8950 - 8900) * 3 * 10)          # +1,500
+        self.assertEqual(p["TATASTEEL"]["unrealised"], (190 - 189) * 2500)               # short gains as the price falls: +2,500
+        self.assertFalse(p["CRUDEOILM"]["price_stale"])
+
+    def test_a_missing_price_is_none_not_zero_and_an_old_one_is_flagged(self):
+        self._open("P1", "CRUDEOILM", "long", 3, 8900.0, 10)
+        self._open("P2", "USDINR", "long", 4, 95.0, 1000)
+        old = (self.NOW - timedelta(minutes=30)).isoformat()
+        p = self._positions({"USDINR": {"price": 95.1, "ts": old}})
+        self.assertIsNone(p["CRUDEOILM"]["unrealised"])                                  # no price yet: unknown, never shown as 0
+        self.assertTrue(p["USDINR"]["price_stale"])
+        self.assertAlmostEqual(p["USDINR"]["unrealised"], 0.1 * 4 * 1000, places=6)
+
+    def test_overview_sums_only_known_unrealised_pnl(self):
+        self._open("P1", "CRUDEOILM", "long", 3, 8900.0, 10)
+        con = api.connect(self.path)
+        try:
+            with patch.object(api, "_live_prices", return_value={"CRUDEOILM": {"price": 8930.0, "ts": self.NOW.isoformat()}}):
+                o = api.overview(con, now=self.NOW)
+        finally:
+            con.close()
+        self.assertEqual(o["open_pnl"], 900.0)
+        with patch.object(api, "_live_prices", return_value={}):
+            con = api.connect(self.path)
+            try:
+                self.assertIsNone(api.overview(con, now=self.NOW)["open_pnl"])
+            finally:
+                con.close()
+
+    def test_the_live_price_file_is_atomic_pruned_and_never_raises(self):
+        from engine import live_prices
+        f = self.tmp / "p.json"
+        live_prices.update("CRUDEOILM", 8950.5, self.NOW, path=f)
+        live_prices.update("USDINR", 95.1, self.NOW, path=f)
+        self.assertEqual(live_prices.read(f)["CRUDEOILM"]["price"], 8950.5)
+        live_prices.prune(["USDINR"], path=f)
+        self.assertEqual(list(live_prices.read(f)), ["USDINR"])
+        live_prices.update("X", 1.0, path=Path("/no/such/dir/p.json"))               # must not raise
+        self.assertEqual(live_prices.read(Path("/no/such/file")), {})

@@ -6,7 +6,7 @@ Everything is READ-ONLY: the SQLite database is opened with mode=ro, there is no
 here talks to Upstox (so it can never invalidate the daemon's single active token). It binds to 127.0.0.1 by default -- account P&L should not be on the
 public internet -- and DASHBOARD_TOKEN, if set, is required on every /api call (Authorization: Bearer <token> or ?token=).
 
-Endpoints (JSON):  /api/overview  /api/equity  /api/daily  /api/symbols  /api/exits  /api/trades?limit=  /api/system
+Endpoints (JSON):  /api/overview  /api/equity  /api/daily  /api/symbols  /api/exits  /api/blocked  /api/trades?limit=  /api/system
 """
 from __future__ import annotations
 
@@ -123,11 +123,44 @@ def by_exit_reason(trades: list[dict]) -> list[dict]:
                   key=lambda r: -r["trades"])
 
 
-def open_positions(con, account: str = ACCOUNT) -> list[dict]:
-    rows = _rows(con, "SELECT symbol, direction, qty, entry_price, current_stop, target_price, entry_time, strategy FROM positions "
+STALE_PRICE_MIN = 10          # a price older than this is shown but flagged
+
+
+def open_positions(con, account: str = ACCOUNT, prices: dict | None = None, now: datetime | None = None) -> list[dict]:
+    """Open positions with an UNREALISED P&L (gross, before costs) from the daemon's latest price (engine/live_prices.py)."""
+    prices = prices if prices is not None else _live_prices()
+    now = now or datetime.now(IST)
+    rows = _rows(con, "SELECT symbol, direction, qty, entry_price, current_stop, target_price, entry_time, strategy, state FROM positions "
                       "WHERE account_id = ? AND status = 'OPEN' ORDER BY entry_time", (account,))
-    return [{**r, "entry_price": round(r["entry_price"], 4), "current_stop": round(r["current_stop"], 4),
-             "target_price": round(r["target_price"], 4) if r["target_price"] else None} for r in rows]
+    out = []
+    for r in rows:
+        try:
+            multiplier = float(json.loads(r.pop("state") or "{}").get("lot_size") or 1)         # saved at entry: units per lot (1 for equity)
+        except (ValueError, TypeError):
+            multiplier = 1.0
+        px = prices.get(r["symbol"])
+        last = unreal = None
+        stale = False
+        if px:
+            last = float(px["price"])
+            d = 1 if r["direction"] == "long" else -1
+            unreal = round((last - r["entry_price"]) * d * r["qty"] * multiplier, 2)
+            try:
+                stale = (now - datetime.fromisoformat(px["ts"])).total_seconds() > STALE_PRICE_MIN * 60
+            except ValueError:
+                stale = True
+        out.append({**r, "entry_price": round(r["entry_price"], 4), "current_stop": round(r["current_stop"], 4),
+                    "target_price": round(r["target_price"], 4) if r["target_price"] else None,
+                    "last_price": last, "unrealised": unreal, "price_stale": stale})
+    return out
+
+
+def _live_prices() -> dict:
+    try:
+        from engine import live_prices
+        return live_prices.read()
+    except Exception:
+        return {}
 
 
 def overview(con, account: str = ACCOUNT, now: datetime | None = None) -> dict:
@@ -140,13 +173,15 @@ def overview(con, account: str = ACCOUNT, now: datetime | None = None) -> dict:
     curve = equity_curve(trades, initial)
     stats = trade_stats(trades)
     stats["max_drawdown_pct"] = max_drawdown_pct(curve)
+    open_pos = open_positions(con, account, now=now)
     return {
         "generated_at": now.isoformat(timespec="seconds"),
         "account": {"initial": round(initial, 2), "current": round(current, 2), "net": round(current - initial, 2),
                     "return_pct": round((current / initial - 1) * 100, 2) if initial else 0.0, "since": str(acct.get("created_at") or "")[:10]},
         "today": {"date": today, **{k: v for k, v in trade_stats(todays).items() if k in ("trades", "wins", "net", "win_pct")}},
         "kpis": stats,
-        "open_positions": open_positions(con, account),
+        "open_positions": open_pos,
+        "open_pnl": round(sum(p["unrealised"] for p in open_pos if p["unrealised"] is not None), 2) if any(p["unrealised"] is not None for p in open_pos) else None,
     }
 
 
@@ -232,6 +267,9 @@ def route(path: str, query: dict, db_path: Path = DB_PATH) -> tuple[int, object]
             return 200, by_symbol(load_trades(con))
         if path == "/api/exits":
             return 200, by_exit_reason(load_trades(con))
+        if path == "/api/blocked":
+            from engine import blocked_log
+            return 200, blocked_log.summarize(blocked_log.read(500))
         if path == "/api/trades":
             return 200, recent_trades(con, int((query.get("limit") or ["50"])[0]))
     except (sqlite3.Error, ValueError) as exc:

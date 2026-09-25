@@ -1,7 +1,7 @@
 import { HttpClient, HttpErrorResponse, HttpHeaders } from '@angular/common/http';
 import { Injectable, OnDestroy, inject, signal } from '@angular/core';
 import { forkJoin } from 'rxjs';
-import { DailyRow, EquityPoint, ExitRow, Overview, SymbolRow, SystemInfo, TradeRow } from './models';
+import { BlockedSummary, DailyRow, EquityPoint, ExitRow, Overview, SymbolRow, SystemInfo, TradeRow } from './models';
 
 const TOKEN_KEY = 'hft-dashboard-token';
 const REFRESH_MS = 20_000;
@@ -18,6 +18,7 @@ export class ApiService implements OnDestroy {
   readonly exits = signal<ExitRow[]>([]);
   readonly trades = signal<TradeRow[]>([]);
   readonly system = signal<SystemInfo | null>(null);
+  readonly blocked = signal<BlockedSummary | null>(null);
 
   readonly loading = signal(true);
   readonly error = signal<string | null>(null);
@@ -57,10 +58,11 @@ export class ApiService implements OnDestroy {
       exits: this.http.get<ExitRow[]>('/api/exits', h),
       trades: this.http.get<TradeRow[]>('/api/trades?limit=200', h),
       system: this.http.get<SystemInfo>('/api/system', h),
+      blocked: this.http.get<BlockedSummary>('/api/blocked', h),
     }).subscribe({
       next: r => {
         this.overview.set(r.overview); this.equity.set(r.equity); this.daily.set(r.daily); this.symbols.set(r.symbols);
-        this.exits.set(r.exits); this.trades.set(r.trades); this.system.set(r.system);
+        this.exits.set(r.exits); this.trades.set(r.trades); this.system.set(r.system); this.blocked.set(r.blocked);
         this.error.set(null); this.needsToken.set(false); this.loading.set(false); this.updatedAt.set(new Date());
       },
       error: (e: HttpErrorResponse) => {

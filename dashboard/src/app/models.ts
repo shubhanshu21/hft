@@ -7,6 +7,14 @@ export interface Kpis {
 export interface OpenPosition {
   symbol: string; direction: 'long' | 'short'; qty: number; entry_price: number; current_stop: number;
   target_price: number | null; entry_time: string; strategy: string;
+  last_price: number | null; unrealised: number | null; price_stale: boolean;
+}
+export interface BlockedRow {
+  ts: string; symbol: string; market: string; reason: string; detail: string; direction: string | null;
+  wanted_qty: number | null; got_qty: number | null; holding: { symbol: string; margin: number }[];
+}
+export interface BlockedSummary {
+  total: number; by_symbol: { symbol: string; n: number }[]; by_blocker: { blocker: string; n: number }[]; recent: BlockedRow[];
 }
 export interface Overview {
   generated_at: string;
@@ -14,6 +22,7 @@ export interface Overview {
   today: { date: string; trades: number; wins: number; net: number; win_pct: number };
   kpis: Kpis;
   open_positions: OpenPosition[];
+  open_pnl: number | null;
 }
 export interface EquityPoint { t: string | null; equity: number; drawdown_pct: number }
 export interface DailyRow { date: string; net: number; trades: number; wins: number }
