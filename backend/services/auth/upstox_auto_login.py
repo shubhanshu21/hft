@@ -45,6 +45,7 @@ import logging
 import os
 import shutil
 import sys
+import time
 import urllib.parse
 from pathlib import Path
 from typing import Callable
@@ -290,6 +291,24 @@ def _js_click(driver, element) -> None:
     driver.execute_script("arguments[0].click();", element)
 
 
+def _save_failure_artifacts(driver) -> None:
+    """Best effort: the page as Upstox rendered it when a step failed (screenshot + URL + visible text), in var/logs/login_failure_<time>.*"""
+    try:
+        from core.paths import LOG_DIR
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        driver.save_screenshot(str(LOG_DIR / f"login_failure_{stamp}.png"))
+        text = ""
+        try:
+            text = driver.find_element(By.TAG_NAME, "body").text[:2000]
+        except Exception:
+            pass
+        (LOG_DIR / f"login_failure_{stamp}.txt").write_text(f"url: {driver.current_url}\n\n{text}\n")
+        log.error("Upstox login failed at %s -- page saved to %s", driver.current_url, LOG_DIR / f"login_failure_{stamp}.png")
+    except Exception as exc:
+        log.warning("could not save login-failure artifacts: %s", exc)
+
+
 def _auto_login_get_code() -> str:
     """
     Drive Upstox's real login page headlessly; return the OAuth 'code'.
@@ -325,16 +344,21 @@ def _auto_login_get_code() -> str:
             driver.find_element(By.ID, "getOtp").click()
             log.info("Upstox auto-login: mobile number submitted.")
 
-            totp_code = pyotp.TOTP(UpstoxConfig.TOTP_SECRET).now()
-            otp_field = WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.ID, "otpNum")))
-            otp_field.clear()
-            otp_field.send_keys(totp_code)
-            continue_btn = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "continueBtn")))
-            WebDriverWait(driver, 10).until(lambda d: continue_btn.get_attribute("disabled") is None)
-            _js_click(driver, continue_btn)
-            log.info("Upstox auto-login: TOTP submitted.")
-
-            pin_field = WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.ID, "pinCode")))
+            # Upstox may ask for the TOTP OR, when it recognises this browser (a login moments ago -- e.g. the 06:30 nightly job -- leaves the profile
+            # remembered), go straight to the PIN. Waiting only for the OTP box timed out after 15 s on 2026-09-25 09:00 and left the daemon without a token.
+            second = WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.CSS_SELECTOR, "#otpNum, #pinCode")))
+            if second.get_attribute("id") == "otpNum":
+                totp_code = pyotp.TOTP(UpstoxConfig.TOTP_SECRET).now()
+                second.clear()
+                second.send_keys(totp_code)
+                continue_btn = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "continueBtn")))
+                WebDriverWait(driver, 10).until(lambda d: continue_btn.get_attribute("disabled") is None)
+                _js_click(driver, continue_btn)
+                log.info("Upstox auto-login: TOTP submitted.")
+                pin_field = WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.ID, "pinCode")))
+            else:
+                log.info("Upstox auto-login: no OTP requested (browser recognised after the mobile number) — going straight to PIN.")
+                pin_field = second
         else:
             log.info("Upstox auto-login: browser already recognized — skipping straight to PIN.")
             pin_field = first_field
@@ -350,6 +374,9 @@ def _auto_login_get_code() -> str:
         code = urllib.parse.parse_qs(urllib.parse.urlparse(driver.current_url).query)["code"][0]
         log.info("Upstox auto-login: authorization code received.")
         return code
+    except Exception:
+        _save_failure_artifacts(driver)                 # a screenshot of what Upstox actually showed: the exception text alone is often empty
+        raise
     finally:
         driver.quit()
 
@@ -401,8 +428,8 @@ def ensure_fresh_upstox_token(force: bool = False, on_token_refreshed: Callable[
         return token
     except Exception as exc:
         log.critical(
-            "Automatic Upstox login failed: %s. Falling back — run `python3 -m auth.upstox_auth` "
-            "manually before market open or entries will fail.", exc, exc_info=True,
+            "Automatic Upstox login failed: %s (%s). Falling back — run `python3 -m auth.upstox_auth` "
+            "manually before market open or entries will fail.", str(exc).strip() or "no message", type(exc).__name__, exc_info=True,
         )
         return None
 
