@@ -29,3 +29,8 @@ show no edge with these rules. The base metals only have 2-3 months of history (
 Known gap: the LIVE entry rule (`markets/commodity/scalping/entry_signal.py`) only has keys crude/natgas/gold/silver, so ALUMINI/LEADMINI/ZINCMINI/NICKEL would
 silently trade at crude's thresholds if put in DRYRUN_SYMBOLS, whereas the backtest gives them their own (uncalibrated, currently crude-equal) rows.
 Do not add them to DRYRUN_SYMBOLS until they pass this study.
+
+## Correction (2026-09-25, later the same day): GOLDTEN's cost assumption
+The GOLDTEN figures above (full period +Rs43.1k, TEST +Rs23.1k) were run before the live daemon had sampled GOLDTEN's bid/ask. The cost model (core/slippage.adaptive_slippage_per_leg) uses half a tick per leg
+until it has >= MIN_SAMPLES real spread observations, then the measured spread. After ~69 live samples (mean spread Rs30.8 on a ~Rs150,000 contract) the same backtest gives GOLDTEN n=95, net **+Rs18,766**,
+fees Rs415/trade against gross Rs612/trade (silver: fees Rs363 vs gross Rs649; crude: fees Rs169 vs gross Rs148). Use the lower number; it is still positive but the cost margin is thin.

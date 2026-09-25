@@ -188,6 +188,8 @@ def run_commodity_backtest(
     # winner (PF 1.01, +Rs16,323), and was a no-op on the TEST window (2026-08-01..2026-09-17, PF 1.09
     # either way -- gold and silver simply never disagreed there). A partial regime-defense mitigant, not a
     # strong edge on its own -- off by default, opt in explicitly.
+    confirm_bars: int = 0,  # opt-in study (docs/COMMODITY_LOSS_LESSONS.md): on a signal, wait this many bars and enter only if the breakout HELD (no bar traded back through half a stop distance, and the last close is still beyond the signal close); 0 = enter at the signal bar (live behaviour)
+    max_cost_r: float | None = None,  # opt-in study: skip an entry whose round-trip costs exceed this fraction of the risked amount (stop distance x lots x multiplier); None = no gate (live behaviour)
     use_crude_regime_filter: bool = False,  # CRUDEOILM only: see core/regime.py's docstring for the
     # full finding -- crude's intraday momentum edge is regime-dependent (0/80 combos profitable on
     # May18-Jul31 vs. strongly profitable on Aug17-Sep17, SAME thresholds). Gating entries by a rolling
@@ -325,6 +327,7 @@ def run_commodity_backtest(
         in_pos = False
         pos = {}
         cool_side, cool_until = None, -1
+        pending = None      # confirm_bars: a signal waiting to see whether the breakout holds
 
         n = len(feat_df)
         closes = feat_df["close"].values
@@ -510,6 +513,27 @@ def run_commodity_backtest(
 
 
 
+            if confirm_bars:
+                if pending is not None and i - pending["idx"] > confirm_bars:
+                    pending = None                                  # stale (session gap): treat this bar as a fresh look
+                if pending is not None:
+                    pd_, k = pending["direction"], i - pending["idx"]
+                    tol = 0.5 * pending["sdist"]
+                    broke = (c_low < pending["close"] - tol) if pd_ == "long" else (c_high > pending["close"] + tol)
+                    if broke:
+                        pending = None
+                    elif k == confirm_bars and ((c_price > pending["close"]) if pd_ == "long" else (c_price < pending["close"])):
+                        direction, sdist, pending = pd_, pending["sdist"], None
+                    else:
+                        direction = None
+                        if pending is not None and k >= confirm_bars:
+                            pending = None
+                        if direction is None:
+                            continue
+                elif direction:
+                    pending = {"direction": direction, "idx": i, "close": c_price, "sdist": sdist}
+                    continue
+
             if not direction:
                 continue
 
@@ -525,6 +549,11 @@ def run_commodity_backtest(
             )
             if lots < 1:
                 continue
+
+            if max_cost_r is not None:
+                _cost = compute_mcx_commodity_costs(sym, direction, c_price, c_price, lots)["total"]
+                if _cost / (sdist * lots * get_contract_multiplier(sym)) > max_cost_r:
+                    continue
 
             if stop_cooldown_bars and direction == cool_side and i < cool_until:
                 continue
