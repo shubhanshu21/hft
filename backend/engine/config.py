@@ -92,6 +92,11 @@ class UpstoxConfig:
         return bool(cls.USERNAME and cls.PIN and cls.TOTP_SECRET)
 
     @classmethod
+    def cached_token(cls) -> str:
+        """The token currently in var/cache/upstox_token.json (written by whichever process last logged in), or ''."""
+        return _load_access_token()
+
+    @classmethod
     def save_access_token(cls, token: str) -> None:
         """Persist a freshly-obtained access_token to var/cache/upstox_token.json (not .env — see module docstring) and update this process's in-memory copy."""
         _TOKEN_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)

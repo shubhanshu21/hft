@@ -377,6 +377,18 @@ def ensure_fresh_upstox_token(force: bool = False, on_token_refreshed: Callable[
         log.info("Existing Upstox token still valid — no refresh needed.")
         return UpstoxConfig.ACCESS_TOKEN
 
+    # Upstox allows ONE active token per app, and several processes share var/cache/upstox_token.json (the daemon, the nightly data job, CLI tools).
+    # If another process has already logged in, ADOPT its token instead of logging in again -- a second login would invalidate the first and, as on
+    # 2026-09-25 09:00 (the daemon re-logged-in after the 06:30 nightly job had, and that second headless login failed), can leave us with no token.
+    if not force:
+        cached = UpstoxConfig.cached_token()
+        if cached and cached != UpstoxConfig.ACCESS_TOKEN and _token_is_valid(cached):
+            UpstoxConfig.ACCESS_TOKEN = cached
+            if on_token_refreshed is not None:
+                on_token_refreshed(cached)
+            log.info("Adopted the Upstox token another process already saved -- no new login needed.")
+            return cached
+
     log.info("Refreshing Upstox token via headless auto-login ...")
     try:
         code = _auto_login_get_code()

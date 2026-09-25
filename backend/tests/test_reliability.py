@@ -359,3 +359,90 @@ class TestStaleFeedGuard(unittest.TestCase):
         self.assertTrue(self._fresh(60 * 24 * 3, timeframe=("days", 1)))
         r = self._runner()
         self.assertTrue(r.fresh(r, "X", [], self.NOW, SimpleNamespace(timeframe=("minutes", 5))))
+
+
+class TestTokenSharedBetweenProcesses(unittest.TestCase):
+    """Upstox allows one active token per app. A process that needs a token must adopt one another process already saved, not log in again."""
+
+    def _patches(self, m, *, current_valid, cached, cached_valid):
+        valid = lambda t: (t == "cur" and current_valid) or (t == "cached" and cached_valid)
+        return (patch.object(m.UpstoxConfig, "auto_login_configured", return_value=True), patch.object(m.UpstoxConfig, "ACCESS_TOKEN", "cur"),
+                patch.object(m.UpstoxConfig, "cached_token", return_value=cached), patch.object(m, "_token_is_valid", side_effect=valid))
+
+    def test_a_newer_valid_token_saved_by_another_process_is_adopted_without_logging_in(self):
+        from services.auth import upstox_auto_login as m
+        pushed = []
+        p1, p2, p3, p4 = self._patches(m, current_valid=False, cached="cached", cached_valid=True)
+        with p1, p2, p3, p4, patch.object(m, "_auto_login_get_code") as login:
+            self.assertEqual(m.ensure_fresh_upstox_token(on_token_refreshed=pushed.append), "cached")
+            login.assert_not_called()                          # 2026-09-25: the daemon logged in again after the 06:30 job had, and that login failed
+            self.assertEqual(pushed, ["cached"])               # the running broker is told about the new token
+            self.assertEqual(m.UpstoxConfig.ACCESS_TOKEN, "cached")
+
+    def test_a_cached_token_that_is_also_dead_leads_to_exactly_one_login(self):
+        from services.auth import upstox_auto_login as m
+        p1, p2, p3, p4 = self._patches(m, current_valid=False, cached="cached", cached_valid=False)
+        with p1, p2, p3, p4, patch.object(m, "_auto_login_get_code", return_value="code") as login, patch.object(m, "UpstoxAuthClient") as client, \
+                patch.object(m.UpstoxConfig, "save_access_token"):
+            client.return_value.exchange_code_for_token.return_value = "new"
+            self.assertEqual(m.ensure_fresh_upstox_token(), "new")
+            login.assert_called_once()
+
+    def test_a_still_valid_current_token_is_kept_and_the_cache_is_not_even_read(self):
+        from services.auth import upstox_auto_login as m
+        p1, p2, p3, p4 = self._patches(m, current_valid=True, cached="cached", cached_valid=True)
+        with p1, p2, p3 as cached_mock, p4, patch.object(m, "_auto_login_get_code") as login:
+            self.assertEqual(m.ensure_fresh_upstox_token(), "cur")
+            login.assert_not_called()
+            cached_mock.assert_not_called()
+
+    def test_force_still_logs_in_even_when_a_cached_token_is_valid(self):
+        from services.auth import upstox_auto_login as m
+        p1, p2, p3, p4 = self._patches(m, current_valid=True, cached="cached", cached_valid=True)
+        with p1, p2, p3, p4, patch.object(m, "_auto_login_get_code", return_value="code") as login, patch.object(m, "UpstoxAuthClient") as client, \
+                patch.object(m.UpstoxConfig, "save_access_token"):
+            client.return_value.exchange_code_for_token.return_value = "new"
+            m.ensure_fresh_upstox_token(force=True)
+            login.assert_called_once()
+
+
+class TestDaemonTokenCheck(unittest.TestCase):
+    def setUp(self):
+        from engine import live_dryrun
+        self.ld = live_dryrun
+        live_dryrun._token_failure_alerted = False
+        self.sent = []
+        for target, attr, val in ((live_dryrun.telegram, "send", self.sent.append), (live_dryrun.telegram, "alert_error", lambda *a: self.sent.append("err"))):
+            p = patch.object(target, attr, val)
+            p.start()
+            self.addCleanup(p.stop)
+
+    def _run(self, result, configured=True, raises=None):
+        from types import SimpleNamespace
+        from engine.config import UpstoxConfig
+        broker = SimpleNamespace(set_access_token=lambda t: None)
+
+        def fake(force=False, on_token_refreshed=None):
+            if raises:
+                raise raises
+            return result
+        with patch.object(UpstoxConfig, "auto_login_configured", return_value=configured), patch.object(UpstoxConfig, "ACCESS_TOKEN", "old"), \
+                patch("services.auth.upstox_auto_login.ensure_fresh_upstox_token", fake):
+            return self.ld.check_token(broker)
+
+    def test_statuses(self):
+        self.assertEqual(self._run("old"), "valid")
+        self.assertEqual(self._run("new"), "refreshed")
+        self.assertEqual(self._run(None), "failed")
+        self.assertEqual(self._run(None, raises=RuntimeError("selenium")), "error")
+
+    def test_a_failure_streak_alerts_once_and_recovery_is_announced(self):
+        self._run(None)
+        self._run(None)
+        self._run(None)
+        self.assertEqual(sum("TOKEN REFRESH FAILED" in m for m in self.sent), 1)         # not one Telegram per minute of retries
+        self._run("new")
+        self.assertTrue(any("TOKEN RECOVERED" in m for m in self.sent))
+
+    def test_unconfigured_auto_login_is_reported_without_trying(self):
+        self.assertEqual(self._run(None, configured=False), "unconfigured")

@@ -1118,6 +1118,45 @@ def _print_sig(sig: dict, cap: float):
     telegram.alert_entry(sig, cap)
 
 
+_token_failure_alerted = False
+
+
+def check_token(broker) -> str:
+    """Make sure the Upstox token is valid, adopting one another process already saved before logging in again. Returns 'unconfigured', 'valid',
+    'refreshed', 'failed' or 'error'. The operator is told once per failure streak and once when it recovers (not on every retry)."""
+    global _token_failure_alerted
+    from engine.config import UpstoxConfig
+    if not UpstoxConfig.auto_login_configured():
+        if not UpstoxConfig.ACCESS_TOKEN:
+            telegram.send("🔴 <b>TOKEN INVALID</b> — auto-login not configured. Run `python3 -m auth.upstox_auth` manually.")
+        return "unconfigured"
+    try:
+        from services.auth.upstox_auto_login import ensure_fresh_upstox_token
+        old = UpstoxConfig.ACCESS_TOKEN
+        new = ensure_fresh_upstox_token(on_token_refreshed=broker.set_access_token)
+    except Exception as exc:
+        log.error("Token refresh raised: %s", exc, exc_info=True)
+        if not _token_failure_alerted:
+            _token_failure_alerted = True
+            telegram.alert_error("Token refresh", exc)
+        return "error"
+    if new is None:
+        log.error("Token refresh failed — trading may be blind until fixed; retrying shortly.")
+        if not _token_failure_alerted:
+            _token_failure_alerted = True
+            telegram.send("🔴 <b>TOKEN REFRESH FAILED</b> — auto-login attempt failed; retrying every minute. "
+                          "Run `python3 -m auth.upstox_auth` manually if this persists.")
+        return "failed"
+    if _token_failure_alerted:
+        _token_failure_alerted = False
+        telegram.send("🟢 <b>TOKEN RECOVERED</b> — trading resumed.")
+    if new != old:
+        log.info("Token refreshed via scheduled check.")
+        telegram.send("🔑 <b>TOKEN REFRESHED</b> (scheduled check) — dry run continuing normally.")
+        return "refreshed"
+    return "valid"
+
+
 def refresh_market_hours(broker, day=None) -> None:
     """Read today's (or `day`'s) real exchange hours from Upstox and tell the operator if they differ from what was in use
     (a special or shortened session, MCX's daylight-saving shift). A failure keeps the last known hours."""
@@ -1358,6 +1397,10 @@ def main():
     from engine.config import UpstoxConfig
     token_check_interval_sec = int(os.environ.get("TOKEN_CHECK_INTERVAL_MIN", "15")) * 60
     last_token_check = time.monotonic()
+    token_retry_sec = int(os.environ.get("TOKEN_RETRY_SEC", "60"))
+    token_ok = True
+    token_fail_streak = 0
+    token_max_fast_retries = int(os.environ.get("TOKEN_MAX_FAST_RETRIES", "5"))
     margin_refresh_sec = int(os.environ.get("MARGIN_REFRESH_MIN", "60")) * 60
     last_margin_refresh = time.monotonic()          # the start-up refresh above just ran
 
@@ -1478,41 +1521,22 @@ def main():
             except Exception as exc:
                 log.error("Telegram command poll raised: %s", exc, exc_info=True)
 
+            # Token first (a scan or margin call on a dead token only produces a wall of 401s), then the hourly refresh of Upstox's hours / margins.
+            if token_invalid_event.is_set() or (time.monotonic() - last_token_check) >= token_check_interval_sec:
+                token_invalid_event.clear()
+                status = check_token(broker)
+                token_ok = status not in ("failed", "error")
+                token_fail_streak = 0 if token_ok else token_fail_streak + 1
+                # A failed login is retried in TOKEN_RETRY_SEC, not after a whole TOKEN_CHECK_INTERVAL_MIN of a blind session (2026-09-25: 15 minutes lost
+                # at the open). Capped at TOKEN_MAX_FAST_RETRIES so a persistent failure cannot hammer Upstox's login and get the account rate-limited.
+                fast = (not token_ok) and token_fail_streak <= token_max_fast_retries
+                last_token_check = time.monotonic() - (token_check_interval_sec - token_retry_sec if fast else 0)
+
             # Margins and lot sizes are the broker's to change at any time: re-read them regularly, not just once a day.
-            if (time.monotonic() - last_margin_refresh) >= margin_refresh_sec:
+            if (time.monotonic() - last_margin_refresh) >= margin_refresh_sec and token_ok:
                 last_margin_refresh = time.monotonic()
                 refresh_market_hours(broker)
                 refresh_margin_rates(broker, runner)
-
-            # Token refresh: proactively every TOKEN_CHECK_INTERVAL_MIN, or
-            # immediately if the broker's 401 circuit breaker trips. A 24/7
-            # process would otherwise never notice its daily token expired.
-            if token_invalid_event.is_set() or (time.monotonic() - last_token_check) >= token_check_interval_sec:
-                last_token_check = time.monotonic()
-                token_invalid_event.clear()
-                if UpstoxConfig.auto_login_configured():
-                    try:
-                        from services.auth.upstox_auto_login import ensure_fresh_upstox_token
-                        old_token = UpstoxConfig.ACCESS_TOKEN
-                        new_token = ensure_fresh_upstox_token(on_token_refreshed=broker.set_access_token)
-                        if new_token is None:
-                            log.error("Token refresh failed — trading may be blind until fixed.")
-                            telegram.send("🔴 <b>TOKEN REFRESH FAILED</b> — auto-login attempt failed. "
-                                          "Run `python3 -m auth.upstox_auth` manually or check credentials.")
-                        elif new_token != old_token:
-                            # An actual refresh happened (not just a no-op
-                            # echo of an already-valid token) -- worth a
-                            # visibility alert since this system trades real
-                            # money and a silent credential rotation is
-                            # exactly the kind of thing to have a record of.
-                            log.info("Token refreshed via scheduled check.")
-                            telegram.send("🔑 <b>TOKEN REFRESHED</b> (scheduled check) — dry run continuing normally.")
-                    except Exception as exc:
-                        log.error("Token refresh raised: %s", exc, exc_info=True)
-                        telegram.alert_error("Token refresh", exc)
-                elif not UpstoxConfig.ACCESS_TOKEN:
-                    telegram.send("🔴 <b>TOKEN INVALID</b> — auto-login not configured. "
-                                   "Run `python3 -m auth.upstox_auth` manually.")
 
             try:
                 sigs = runner.scan()
