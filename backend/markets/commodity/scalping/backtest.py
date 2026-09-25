@@ -11,6 +11,7 @@ Features:
 """
 from __future__ import annotations
 
+from core import entry_pullback
 from core.exits import lock_stop
 from core.paths import ARCHIVE_ROOT, BACKEND_ROOT
 import argparse
@@ -189,6 +190,9 @@ def run_commodity_backtest(
     # either way -- gold and silver simply never disagreed there). A partial regime-defense mitigant, not a
     # strong edge on its own -- off by default, opt in explicitly.
     confirm_bars: int = 0,  # opt-in study (docs/COMMODITY_LOSS_LESSONS.md): on a signal, wait this many bars and enter only if the breakout HELD (no bar traded back through half a stop distance, and the last close is still beyond the signal close); 0 = enter at the signal bar (live behaviour)
+    pullback_frac: float = 0.0,  # opt-in study (docs/FIVE_MINUTE_SIGNAL_SCREEN.md): on a signal, do not chase -- rest a limit this fraction of a stop distance BETTER than the signal close and enter only if it is touched within `pullback_bars` bars (skipped if the bar also trades through the stop); 0 = enter at the signal (live behaviour)
+    pullback_bars: int = 3,
+    pullback_through: float = 0.0,  # fill only if price trades THROUGH the limit by this fraction of a stop distance (queue-priority conservatism)
     max_cost_r: float | None = None,  # opt-in study: skip an entry whose round-trip costs exceed this fraction of the risked amount (stop distance x lots x multiplier); None = no gate (live behaviour)
     use_crude_regime_filter: bool = False,  # CRUDEOILM only: see core/regime.py's docstring for the
     # full finding -- crude's intraday momentum edge is regime-dependent (0/80 combos profitable on
@@ -328,6 +332,7 @@ def run_commodity_backtest(
         pos = {}
         cool_side, cool_until = None, -1
         pending = None      # confirm_bars: a signal waiting to see whether the breakout holds
+        pending_pb = None   # pullback_frac: a signal waiting for a better price
 
         n = len(feat_df)
         closes = feat_df["close"].values
@@ -512,6 +517,11 @@ def run_commodity_backtest(
                     direction = None
 
 
+
+            if pullback_frac:
+                pending_pb, direction, sdist, c_price = entry_pullback.step(pending_pb, i, direction, sdist, c_price, c_low, c_high, pullback_frac, pullback_bars, pullback_through)
+                if direction is None:
+                    continue
 
             if confirm_bars:
                 if pending is not None and i - pending["idx"] > confirm_bars:

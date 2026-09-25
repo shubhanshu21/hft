@@ -56,6 +56,7 @@ from markets.commodity.costs import COMMODITY_SPECS
 from markets.currency.costs import CURRENCY_SPECS
 from markets.commodity.scalping.entry_signal import is_currency as _is_currency
 from markets.equity.scalping.entry_signal import is_equity as _is_equity
+from core import entry_pullback
 from core import registry, sessions
 from core.risk import RiskGates
 from core.strategy import EntryContext, ExitContext
@@ -320,6 +321,7 @@ class DryRunner(RiskGates):
 
         # Restore open positions from DB if any. Each is handed back to the strategy that opened it
         # (rows saved before strategies existed read as that market's "scalping").
+        self.pending_entries = entry_pullback.PendingBook()      # resting limit entries waiting for a pullback (core/entry_pullback.py; off unless <MARKET|SYMBOL>_PULLBACK_FRAC is set)
         self.positions: dict[str, dict] = {}
         for p in self.db.get_open_positions(self.account_id):
             strat_name = p.get("strategy") or "scalping"
@@ -844,7 +846,20 @@ class DryRunner(RiskGates):
         ctx = dict(symbol=sym, candles=candles, now=now, instrument_key=SYMBOL_MAP.get(sym),
                    risk_pct=base_risk_pct * self._drawdown_risk_scale(), leverage=leverage, direction_filter=self.direction_filter,
                    full_session=self.full_session, regime_ok=regime_ok, equity_regime_ok=self._gate_flags()["equity_regime_ok"])
-        sig_result = strat.entry(EntryContext(capital=sizing_capital, **ctx)) if sizing_capital > 0 else None
+        pb = entry_pullback.config_for(sym, market)
+        from_pullback = False
+        sig_result = None
+        if pb and sym in self.pending_entries:
+            status, shifted = self.pending_entries.check(sym, candles, now)
+            if status in ("wait", "dropped"):
+                if status == "dropped":
+                    log.info("%s: pullback limit dropped (price ran through the stop before it filled).", sym)
+                return False
+            if status == "filled":
+                sig_result, from_pullback = shifted, True
+                log.info("%s: pullback limit FILLED at %s (signal was %s).", sym, shifted.entry_price, "long" if shifted.direction == "long" else "short")
+        if sig_result is None:
+            sig_result = strat.entry(EntryContext(capital=sizing_capital, **ctx)) if sizing_capital > 0 else None
         if not sig_result:
             # Margin is one pool. If part of it is held by open positions, a signal that could not be sized to the FREE margin leaves no trace
             # (zero lots -> no signal). Re-ask with the whole account: a signal there was blocked by margin, not absent (engine/blocked_log.py).
@@ -858,6 +873,11 @@ class DryRunner(RiskGates):
                              f"{max(sizing_capital, 0):,.0f}", f"{self.capital:,.0f}")
             return False
         if sig_result.direction == "short" and not strat.allow_short:
+            return False
+        if pb and not from_pullback:
+            rec = self.pending_entries.register(sym, sig_result, candles[-1]["timestamp"], pb)
+            log.info("%s: %s signal at %s -> resting limit %s (%.2f of a stop better), valid %d bars, instead of chasing.", sym, sig_result.direction,
+                     sig_result.entry_price, rec["limit"], pb[0], pb[1])
             return False
         if candles:
             sig_result.exit_state["entry_bar_ts"] = str(candles[-1]["timestamp"])   # see core/exits._side

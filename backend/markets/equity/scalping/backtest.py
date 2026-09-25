@@ -51,6 +51,7 @@ from __future__ import annotations
 
 from core import sessions
 
+from core import entry_pullback
 from core.exits import lock_stop
 from core.paths import ARCHIVE_ROOT, BACKEND_ROOT
 import argparse
@@ -124,7 +125,8 @@ _SQUAREOFF_MIN = sessions.EQUITY_SQUAREOFF_SINCE_OPEN    # 14:55 IST (minutes si
 _MAX_CONCURRENT_POSITIONS = 3  # portfolio-concentration cap -- a real account wouldn't fire all 49 names' signals at once uncapped
 
 
-def _simulate_symbol_candidates(sym: str, from_date: str | None, to_date: str | None, long_only: bool, et: dict) -> list[dict]:
+def _simulate_symbol_candidates(sym: str, from_date: str | None, to_date: str | None, long_only: bool, et: dict,
+                                pullback_frac: float = 0.0, pullback_bars: int = 3, pullback_through: float = 0.0) -> list[dict]:
     """Phase 1: walks one symbol's bars and produces fully-formed candidate
     trades (entry/exit price & time already resolved via TP/SL/timeout/EOD),
     completely independent of capital or position sizing -- share quantity
@@ -163,6 +165,7 @@ def _simulate_symbol_candidates(sym: str, from_date: str | None, to_date: str | 
     candidates = []
     in_pos = False
     pos = {}
+    pending_pb = None
 
     for i in range(25, n):
         c_price, c_high, c_low = closes[i], highs[i], lows[i]
@@ -229,6 +232,9 @@ def _simulate_symbol_candidates(sym: str, from_date: str | None, to_date: str | 
             direction = "long"
         elif not long_only and adx >= min_adx and dmn > dmp and ema_s < -min_ema_slope and orb_l_dist <= -min_orb and vwap_d <= -min_vwap and vol_s >= min_vol:
             direction = "short"
+
+        if pullback_frac:                                            # opt-in research option, see core/entry_pullback.py
+            pending_pb, direction, sdist, c_price = entry_pullback.step(pending_pb, i, direction, sdist, c_price, c_low, c_high, pullback_frac, pullback_bars, pullback_through)
 
         if not direction:
             continue

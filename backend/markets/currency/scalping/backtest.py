@@ -29,6 +29,7 @@ from __future__ import annotations
 
 from core import sessions
 
+from core import entry_pullback
 from core.exits import lock_stop
 from core.paths import ARCHIVE_ROOT, BACKEND_ROOT
 import argparse
@@ -123,6 +124,9 @@ def run_currency_backtest(
     to_date: str | None = None,
     size_mode: str = "margin",
     return_trades: bool = False,
+    pullback_frac: float = 0.0,      # opt-in research option, see core/entry_pullback.py (0 = live behaviour)
+    pullback_bars: int = 3,
+    pullback_through: float = 0.0,
 ) -> dict:
     target_symbols = symbols or ["USDINR"]
 
@@ -167,6 +171,7 @@ def run_currency_backtest(
 
         in_pos = False
         pos = {}
+        pending_pb = None
 
         n = len(feat_df)
         closes = feat_df["close"].values
@@ -272,6 +277,9 @@ def run_currency_backtest(
                 direction = "long"
             elif not long_only and adx >= min_adx and dmn > dmp and ema_s < -min_ema_slope and orb_l_dist <= -min_orb and vwap_d <= -min_vwap and vol_s >= min_vol:
                 direction = "short"
+
+            if pullback_frac:
+                pending_pb, direction, sdist, c_price = entry_pullback.step(pending_pb, i, direction, sdist, c_price, c_low, c_high, pullback_frac, pullback_bars, pullback_through)
 
             if not direction:
                 continue

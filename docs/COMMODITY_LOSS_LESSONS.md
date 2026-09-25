@@ -23,3 +23,13 @@ Reading: confirmation halves the trade count and helps in the weak periods (silv
 swaps one regime's result for another's; none beats the baseline in both real halves. The cost gate mostly just trades less: on silver it excludes almost nothing on real data (identical to baseline), and on crude it improves the first half but cuts the second.
 The closest call is silver + 1-bar confirmation (better in the first real half and in all three proxy years, worse by Rs6k in the second real half); the proxy's 2026 +414k comes from compounding inside a strongly trending year, so it is an outlier, not evidence.
 Not deployed. Next useful step is more real MCX history (the nightly job adds ~1 month/month) or forward paper results, then re-run: `python3 -m markets.commodity.experiments.loss_lessons_study`.
+
+## Earlier entry: the same rule on 3-minute and 1-minute bars (run 2026-09-25, real MCX archive, live settings, 80-minute time limit kept)
+The live scanner already evaluates every ~30 s on the forming 5-minute bar (the 2026-09-25 silver entry at 21:38:18 was inside the 21:35 candle), so "earlier" means faster bars. Net Rs, first half (05-18..07-31) / second half (08-01..09-24):
+| Symbol | 5-min (live) | 3-min | 1-min |
+|---|---|---|---|
+| CRUDEOILM | -16,539 / +16,417 (PF 0.63 / 1.20) | -6,197 / -14,615 | -35,853 / -22,768 |
+| SILVERMIC | +22,129 / +24,102 (PF 1.19 / 1.27) | +5,894 / +2,108 | +85,183 / -1,772 |
+| GOLDTEN | -425 / +18,739 | -45,956 / -7,275 | -15,032 / -5,005 |
+Faster bars trade more and earn less: worse in both halves for crude and gold at 3 and 1 minutes, and for silver at 3 minutes; silver 1-minute is +85k then -1.8k (unstable, not evidence). Caveat: thresholds
+(ADX, volume surge, EMA slope) were tuned on 5-minute bars, so this tests the rule as-is on faster bars, not a re-tuned fast strategy. Not deployed.

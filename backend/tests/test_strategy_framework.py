@@ -279,3 +279,39 @@ class TestScaffold(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPullbackEntryInDryRunner(unittest.TestCase):
+    """core/entry_pullback wired into the runner: off by default, and when on a signal rests as a limit and opens only on a pullback, at the limit price."""
+
+    def _env(self, on):
+        env = {"EQUITY_PULLBACK_FRAC": "0.25", "EQUITY_PULLBACK_THROUGH": "0", "EQUITY_PULLBACK_BARS": "3"} if on else {}
+        return patch.dict(os.environ, env)
+
+    def test_off_by_default_enters_at_the_signal(self):
+        with patch.dict(os.environ, {"EQUITY_PULLBACK_FRAC": "0"}), _dry_runner(ToySwing()) as (make, sim, bars, alerts, path):
+            bars["TATASTEEL"] = [_bar(200.0)]
+            runner = make()
+            self.assertEqual(len(runner.scan()), 1)
+            self.assertEqual(runner.positions["TATASTEEL"]["entry_price"], 200.0)
+
+    def test_signal_rests_then_fills_on_the_pullback_and_the_levels_move_with_it(self):
+        with _dry_runner(ToySwing()) as (make, sim, bars, alerts, path), self._env(True):      # the runner fixture pins pullback off; switch it on after it
+            bars["TATASTEEL"] = [_bar(200.0, "2026-09-10T10:55:00+05:30")]
+            runner = make()
+            self.assertEqual(runner.scan(), [])                                       # signal -> resting limit, no position
+            self.assertNotIn("TATASTEEL", runner.positions)
+            self.assertIn("TATASTEEL", runner.pending_entries)
+            limit = 200.0 - 0.25 * 200.0 * 0.02                                        # 0.25 of the 4.0 stop distance = 199.0
+            sim["now"] = datetime(2026, 9, 10, 11, 2, tzinfo=IST)
+            bars["TATASTEEL"] = [_bar(200.0, "2026-09-10T10:55:00+05:30"), {**_bar(200.0, "2026-09-10T11:00:00+05:30"), "low": 199.5, "high": 200.4}]
+            self.assertEqual(runner.scan(), [])                                       # not pulled back enough yet
+            sim["now"] = datetime(2026, 9, 10, 11, 7, tzinfo=IST)
+            bars["TATASTEEL"] = [_bar(200.0, "2026-09-10T10:55:00+05:30"), {**_bar(200.0, "2026-09-10T11:00:00+05:30"), "low": 199.5, "high": 200.4},
+                                 {**_bar(199.4, "2026-09-10T11:05:00+05:30"), "low": 198.9, "high": 199.8}]
+            self.assertEqual(len(runner.scan()), 1)                                    # filled
+            pos = runner.positions["TATASTEEL"]
+            self.assertAlmostEqual(pos["entry_price"], limit, places=2)
+            self.assertAlmostEqual(pos["current_stop"], limit - 4.0, places=2)         # stop distance unchanged, anchored to the fill
+            self.assertAlmostEqual(pos["target"], 204.0 - 1.0, places=2)               # the strategy's own price level moved by the same 1.0
+            self.assertNotIn("TATASTEEL", runner.pending_entries)

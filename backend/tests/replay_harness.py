@@ -65,6 +65,8 @@ ENV = {
     "MAX_MARKET_DAILY_LOSS_PCT": "3.0", "MARKET_COOLDOWN_MINUTES": "60", "MAX_MARGIN_UTILIZATION_PCT": "1000.0",
     "MAX_MARKET_MARGIN_UTILIZATION_PCT": "1000.0", "MAX_POSITIONS_PER_SECTOR": "1",
     "MARGIN_VERIFY": "off",           # the golden must not depend on live Upstox margins or on the operator's cached margin_rates.json
+    # pullback entries (core/entry_pullback.py) are an operator opt-in in .env; the goldens pin them off
+    "EQUITY_PULLBACK_FRAC": "0", "COMMODITY_PULLBACK_FRAC": "0", "CURRENCY_PULLBACK_FRAC": "0", "CRUDEOILM_PULLBACK_FRAC": "0",
 }
 
 
