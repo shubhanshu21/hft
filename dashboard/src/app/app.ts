@@ -23,6 +23,7 @@ export class App {
   readonly view = signal<View>(App.fromHash());
   readonly symbolFilter = signal<string>('ALL');
   readonly reasonFilter = signal<string>('ALL');
+  readonly statusFilter = signal<'ALL' | 'OPEN' | 'CLOSED'>('ALL');
   readonly equityMode = signal<'equity' | 'drawdown'>('equity');
 
   readonly nav: { id: View; label: string; icon: string }[] = [
@@ -47,8 +48,15 @@ export class App {
   readonly slices = computed<Slice[]>(() => this.api.exits().map(e => ({ label: reasonLabel(e.reason), value: e.trades, color: REASON_COLORS[e.reason] ?? '#6b7391' })));
   readonly symbolNames = computed(() => ['ALL', ...this.api.symbols().map(s => s.symbol)]);
   readonly reasonNames = computed(() => ['ALL', ...this.api.exits().map(e => e.reason)]);
-  readonly filteredTrades = computed(() => this.api.trades().filter(t =>
+  readonly filteredTrades = computed(() => this.statusFilter() === 'OPEN' ? [] : this.api.trades().filter(t =>
     (this.symbolFilter() === 'ALL' || t.symbol === this.symbolFilter()) && (this.reasonFilter() === 'ALL' || t.exit_reason === this.reasonFilter())));
+  /** Trades still open (the daemon manages them): shown above the closed ones unless the filter is 'Closed' or an exit reason is chosen. */
+  readonly openTrades = computed(() => this.statusFilter() === 'CLOSED' || this.reasonFilter() !== 'ALL' ? [] :
+    (this.api.overview()?.open_positions ?? []).filter(p => this.symbolFilter() === 'ALL' || p.symbol === this.symbolFilter()));
+  readonly openTotals = computed(() => {
+    const o = this.openTrades();
+    return { n: o.length, unrealised: o.some(p => p.unrealised !== null) ? o.reduce((a, p) => a + (p.unrealised ?? 0), 0) : null };
+  });
   readonly tradesTotals = computed(() => {
     const t = this.filteredTrades();
     return { n: t.length, net: t.reduce((a, r) => a + r.net_pnl, 0), fees: t.reduce((a, r) => a + r.total_friction, 0) };
@@ -83,6 +91,8 @@ export class App {
     const h = location.hash.slice(1);
     return (['overview', 'symbols', 'trades', 'system'] as const).find(v => v === h) ?? 'overview';
   }
+  /** Minutes since an ISO timestamp with offset (e.g. 2026-09-25T11:19:00+05:30), for how long an open trade has been held. */
+  heldMin(iso: string): number { const t = Date.parse(iso); return Number.isNaN(t) ? 0 : Math.max(0, Math.round((this.api.updatedAt()?.getTime() ?? Date.now()) / 60000 - t / 60000)); }
   plural(n: number, one: string, many = one + 's'): string { return `${n} ${n === 1 ? one : many}`; }
 
   setToken(el: HTMLInputElement): void { this.api.setToken(el.value); }

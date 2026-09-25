@@ -143,10 +143,32 @@
       @if (view() === 'trades') {
         <section class="card">
           <div class="filters">
+            <div class="seg" role="group" aria-label="Trade status">
+              <button type="button" [class.on]="statusFilter() === 'ALL'" (click)="statusFilter.set('ALL')">All</button>
+              <button type="button" [class.on]="statusFilter() === 'OPEN'" (click)="statusFilter.set('OPEN')">Open ({{ ov.open_positions.length }})</button>
+              <button type="button" [class.on]="statusFilter() === 'CLOSED'" (click)="statusFilter.set('CLOSED')">Closed</button>
+            </div>
             <label>Symbol <select #sf (change)="symbolFilter.set(sf.value)">@for (s of symbolNames(); track s) { <option [value]="s" [selected]="s === symbolFilter()">{{ s }}</option> }</select></label>
             <label>Exit <select #rf (change)="reasonFilter.set(rf.value)">@for (r of reasonNames(); track r) { <option [value]="r" [selected]="r === reasonFilter()">{{ r === 'ALL' ? 'ALL' : reasonLabel(r) }}</option> }</select></label>
-            <span class="tot">{{ tradesTotals().n }} trades · net <b [class]="tone(tradesTotals().net)">{{ rupees(tradesTotals().net, {sign: true}) }}</b> · costs {{ rupees(tradesTotals().fees) }}</span>
+            <span class="tot">
+              @if (openTotals().n) { {{ openTotals().n }} open @if (openTotals().unrealised !== null) { (<b [class]="tone(openTotals().unrealised)">{{ rupees(openTotals().unrealised, {sign: true}) }}</b> unrealised) } · }
+              {{ tradesTotals().n }} closed · net <b [class]="tone(tradesTotals().net)">{{ rupees(tradesTotals().net, {sign: true}) }}</b> · costs {{ rupees(tradesTotals().fees) }}</span>
           </div>
+          @if (openTrades().length) {
+            <h3 class="sub-h">Open trades <span class="chip pos">live</span></h3>
+            <div class="scroll open-block">
+              <table class="tbl"><thead><tr><th>Opened</th><th>Symbol</th><th>Side</th><th class="r">Qty</th><th class="r">Entry</th><th class="r">Last</th><th class="r">Stop</th><th class="r">Target</th>
+                  <th class="r">Held</th><th>Status</th><th class="r">Unrealised (gross)</th></tr></thead>
+                <tbody>@for (p of openTrades(); track p.symbol + p.entry_time) {
+                  <tr><td>{{ shortTime(p.entry_time) }}</td><td><b>{{ p.symbol }}</b></td><td><span class="chip" [class]="p.direction === 'long' ? 'pos' : 'neg'">{{ p.direction }}</span></td>
+                    <td class="r">{{ p.qty }}</td><td class="r">{{ num(p.entry_price) }}</td><td class="r" [class.stale]="p.price_stale">{{ p.last_price === null ? '–' : num(p.last_price) }}</td>
+                    <td class="r">{{ num(p.current_stop) }}</td><td class="r">{{ num(p.target_price) }}</td><td class="r">{{ heldMin(p.entry_time) }}m</td>
+                    <td><span class="chip open">open</span></td>
+                    <td class="r" [class]="tone(p.unrealised)"><b>{{ p.unrealised === null ? '–' : rupees(p.unrealised, {sign: true}) }}</b></td></tr>
+                }</tbody></table>
+            </div>
+          } @else if (statusFilter() === 'OPEN') { <p class="muted">No open trades. The account is flat.</p> }
+          @if (statusFilter() !== 'OPEN') { <h3 class="sub-h">Closed trades</h3> }
           <div class="scroll">
             <table class="tbl"><thead><tr><th>Closed</th><th>Symbol</th><th>Side</th><th class="r">Qty</th><th class="r">Entry</th><th class="r">Exit</th><th>Exit reason</th><th class="r">Held</th><th class="r">Gross</th><th class="r">Costs</th><th class="r">Net</th></tr></thead>
               <tbody>@for (t of filteredTrades(); track t.trade_id) {

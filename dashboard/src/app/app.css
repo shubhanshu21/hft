@@ -64,6 +64,9 @@ h3 { margin: 0; font-size: 15px; font-weight: 600; color: #d6d9e8; }
 .r { text-align: right; } .empty { text-align: center; color: var(--muted); padding: 22px; }
 .chip { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 600; text-transform: uppercase; background: rgba(255, 255, 255, 0.07); }
 .stale { opacity: 0.5; }
+.sub-h { margin: 14px 0 8px; display: flex; align-items: center; gap: 10px; }
+.open-block { margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+.chip.open { background: rgba(160, 92, 255, 0.18); color: #c9a8ff; }
 .blk { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 14px; }
 .kv { display: flex; justify-content: space-between; padding: 4px 0; font-size: 13px; border-bottom: 1px solid rgba(255,255,255,.04); }
 .chip.pos { background: rgba(41, 211, 145, 0.14); } .chip.neg { background: rgba(255, 93, 115, 0.14); }
