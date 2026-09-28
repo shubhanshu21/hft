@@ -246,6 +246,33 @@ def _load_token() -> str:
     return ""
 
 
+# The rules were validated on features computed over CONTINUOUS multi-day history (backtests), but Upstox's intraday endpoint returns only today's bars. With today alone the EMA / ADX / RSI are still warming up
+# and differ from what was tested (2026-09-28: ADANIENT 10:20 live-style ADX 74.7 vs 51.0, EMA slope -0.171 vs -0.187 -> the backtest rule fired, the live one never did). So the previous sessions are fetched ONCE per
+# symbol per day (one historical call) and put in front of today's bars. LIVE_CANDLE_HISTORY_DAYS = calendar days to look back (default 6); 0 = today's bars only (the old behaviour).
+_HISTORY_CACHE: dict[tuple[str, str], tuple[float, list[dict]]] = {}
+_HISTORY_RETRY_S = 600.0
+
+
+def _previous_sessions(broker: UpstoxBroker, symbol: str, ikey: str, today: str) -> list[dict]:
+    days = int(os.environ.get("LIVE_CANDLE_HISTORY_DAYS", "6"))
+    if days <= 0:
+        return []
+    cached = _HISTORY_CACHE.get((symbol, today))
+    if cached and (cached[1] or time.time() - cached[0] < _HISTORY_RETRY_S):
+        return cached[1]                                            # a good answer is kept all day; an empty one is retried after 10 minutes
+    d = date.fromisoformat(today)
+    try:
+        raw = broker.get_historical_candles(ikey, unit="minutes", interval=5, to_date=(d - timedelta(days=1)).isoformat(), from_date=(d - timedelta(days=days)).isoformat())
+    except Exception as exc:                                        # never let a history hiccup stop today's scan
+        log.warning("%s: previous-session candles unavailable (%s); using today's bars only.", symbol, exc)
+        raw = None
+    hist = sorted(raw, key=lambda c: str(c["timestamp"])) if raw else []
+    for k in [k for k in _HISTORY_CACHE if k[1] != today]:
+        _HISTORY_CACHE.pop(k, None)                                 # yesterday's entries
+    _HISTORY_CACHE[(symbol, today)] = (time.time(), hist)
+    return hist
+
+
 def _fetch_candles(broker: UpstoxBroker, symbol: str, today: str) -> list[dict]:
     ikey = SYMBOL_MAP.get(symbol)
     if not ikey:
@@ -256,7 +283,12 @@ def _fetch_candles(broker: UpstoxBroker, symbol: str, today: str) -> list[dict]:
     if not raw:
         return []
     # Upstox returns most-recent-first; reverse to chronological
-    return list(reversed(raw))
+    todays = list(reversed(raw))
+    hist = _previous_sessions(broker, symbol, ikey, today)
+    if not hist:
+        return todays
+    first_today = str(todays[0]["timestamp"])
+    return [c for c in hist if str(c["timestamp"]) < first_today] + todays
 
 
 def _fetch_intraday(broker: UpstoxBroker, symbol: str, unit: str, interval: int, today: str) -> list[dict]:

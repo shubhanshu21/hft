@@ -126,7 +126,8 @@ _MAX_CONCURRENT_POSITIONS = 3  # portfolio-concentration cap -- a real account w
 
 
 def _simulate_symbol_candidates(sym: str, from_date: str | None, to_date: str | None, long_only: bool, et: dict,
-                                pullback_frac: float = 0.0, pullback_bars: int = 3, pullback_through: float = 0.0) -> list[dict]:
+                                pullback_frac: float = 0.0, pullback_bars: int = 3, pullback_through: float = 0.0,
+                                adaptive_window: int = 0, hold_mode: str = "fixed", stop_floor_mode: str = "fixed") -> list[dict]:
     """Phase 1: walks one symbol's bars and produces fully-formed candidate
     trades (entry/exit price & time already resolved via TP/SL/timeout/EOD),
     completely independent of capital or position sizing -- share quantity
@@ -166,6 +167,15 @@ def _simulate_symbol_candidates(sym: str, from_date: str | None, to_date: str | 
     in_pos = False
     pos = {}
     pending_pb = None
+    # opt-in research options (docs/STATIC_VS_DYNAMIC.md), all off by default = live behaviour
+    if adaptive_window:                     # ADX / volume surge / |EMA slope| vs their own rolling quantile over the previous `adaptive_window` bars, at the quantile the fixed number represents over the sample
+        _sess = (mins_open >= _ENTRY_GATE_MIN) & (mins_open <= _LAST_ENTRY_MIN)
+        def _rolling_thr(values, static_thr, absolute=False):
+            v = np.abs(values) if absolute else values
+            q = float(np.mean(v[_sess] < static_thr))
+            return pd.Series(v).rolling(adaptive_window, min_periods=adaptive_window // 2).quantile(q).shift(1).to_numpy()
+        _adx_thr, _vol_thr, _slope_thr = _rolling_thr(adxs, min_adx), _rolling_thr(vol_surges, min_vol), _rolling_thr(ema_slopes, min_ema_slope, absolute=True)
+    atr_med5d = pd.Series(atrs).rolling(375, min_periods=100).median().shift(1).to_numpy() if stop_floor_mode == "dynamic" else None
 
     for i in range(25, n):
         c_price, c_high, c_low = closes[i], highs[i], lows[i]
@@ -187,7 +197,7 @@ def _simulate_symbol_candidates(sym: str, from_date: str | None, to_date: str | 
             exit_p = None; reason = None
             if (adv <= pos["current_stop"] if d == 1 else adv >= pos["current_stop"]):
                 exit_p = pos["current_stop"]; reason = "trail_stop" if pos["armed_trail"] else "initial_stop"
-            elif (i - pos["entry_idx"]) >= HOLD_BARS:
+            elif (i - pos["entry_idx"]) >= pos.get("hold", HOLD_BARS):
                 exit_p = c_price; reason = "timeout_exit"
             elif m_open >= _SQUAREOFF_MIN:
                 exit_p = c_price; reason = "eod_squareoff"
@@ -223,14 +233,20 @@ def _simulate_symbol_candidates(sym: str, from_date: str | None, to_date: str | 
         vol_s, vwap_d, ema_s = vol_surges[i], vwap_ds[i], ema_slopes[i]
         orb_h_dist, orb_l_dist, atr = orb_h[i], orb_l[i], atrs[i]
 
-        sdist = max(stop_mult * atr, min_stop_pct * c_price)
+        _floor = min_stop_pct * c_price
+        if stop_floor_mode == "dynamic" and atr_med5d is not None and not np.isnan(atr_med5d[i]):
+            _floor = 1.0 * atr_med5d[i]
+        sdist = max(stop_mult * atr, _floor)
         if sdist <= 0 or c_price <= 0:
             continue
 
+        _madx, _mvol, _mslope = min_adx, min_vol, min_ema_slope
+        if adaptive_window and not (np.isnan(_adx_thr[i]) or np.isnan(_vol_thr[i]) or np.isnan(_slope_thr[i])):
+            _madx, _mvol, _mslope = _adx_thr[i], _vol_thr[i], _slope_thr[i]
         direction = None
-        if adx >= min_adx and dmp > dmn and ema_s > min_ema_slope and orb_h_dist >= min_orb and vwap_d >= min_vwap and vol_s >= min_vol:
+        if adx >= _madx and dmp > dmn and ema_s > _mslope and orb_h_dist >= min_orb and vwap_d >= min_vwap and vol_s >= _mvol:
             direction = "long"
-        elif not long_only and adx >= min_adx and dmn > dmp and ema_s < -min_ema_slope and orb_l_dist <= -min_orb and vwap_d <= -min_vwap and vol_s >= min_vol:
+        elif not long_only and adx >= _madx and dmn > dmp and ema_s < -_mslope and orb_l_dist <= -min_orb and vwap_d <= -min_vwap and vol_s >= _mvol:
             direction = "short"
 
         if pullback_frac:                                            # opt-in research option, see core/entry_pullback.py
@@ -250,12 +266,13 @@ def _simulate_symbol_candidates(sym: str, from_date: str | None, to_date: str | 
         activation_mult = BE_ACTIVATION_MULT / exit_scale
         trail_mult = TRAIL_DIST_MULT * exit_scale
         activation_price = round(c_price + activation_mult * sdist * d, 4)
+        _hold = int(round(HOLD_BARS * exit_scale)) if hold_mode == "adx" else HOLD_BARS
 
         in_pos = True
         pos = {
             "direction": direction, "entry_price": c_price, "entry_idx": i, "entry_time": c_time,
             "sl": sl, "activation_price": activation_price, "current_stop": sl,
-            "best_price": c_price, "armed_trail": False, "stop_dist": sdist, "trail_mult": trail_mult,
+            "best_price": c_price, "armed_trail": False, "stop_dist": sdist, "trail_mult": trail_mult, "hold": _hold,
         }
 
     return candidates

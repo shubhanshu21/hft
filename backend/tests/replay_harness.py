@@ -67,6 +67,7 @@ ENV = {
     "MARGIN_VERIFY": "off",           # the golden must not depend on live Upstox margins or on the operator's cached margin_rates.json
     # pullback entries (core/entry_pullback.py) are an operator opt-in in .env; the goldens pin them off
     "EQUITY_PULLBACK_FRAC": "0", "COMMODITY_PULLBACK_FRAC": "0", "CURRENCY_PULLBACK_FRAC": "0", "CRUDEOILM_PULLBACK_FRAC": "0",
+    "CURRENCY_EXIT_MODE": "fixed", "USDINR_EXIT_MODE": "fixed",      # the dynamic USDINR exit is an operator opt-in in .env
 }
 
 

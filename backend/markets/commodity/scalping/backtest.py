@@ -190,6 +190,11 @@ def run_commodity_backtest(
     # either way -- gold and silver simply never disagreed there). A partial regime-defense mitigant, not a
     # strong edge on its own -- off by default, opt in explicitly.
     confirm_bars: int = 0,  # opt-in study (docs/COMMODITY_LOSS_LESSONS.md): on a signal, wait this many bars and enter only if the breakout HELD (no bar traded back through half a stop distance, and the last close is still beyond the signal close); 0 = enter at the signal bar (live behaviour)
+    exit_mode: str = "fixed",  # opt-in study (docs/STATIC_VS_DYNAMIC.md): "fixed" = live (TP 1.8R, break-even at 0.6R, trail 0.3R); "dynamic" = the equity scalper's ADX-scaled exit (activation 0.6R/scale, trail 0.3R*scale of the CURRENT ATR, no fixed TP); "tp_scaled" = fixed break-even, TP scaled by ADX
+    hold_mode: str = "fixed",  # "fixed" = the 16-bar (80 min) time limit; "adx" = 16 bars x the same ADX scale (strong trends get longer)
+    stop_floor_mode: str = "fixed",  # "fixed" = stop >= 0.35% of price (live); "dynamic" = stop >= 1.0 x the median ATR of the previous 5 trading days
+    adaptive_window: int = 0,  # opt-in study (docs/DYNAMIC_THRESHOLDS.md): replace the FIXED ADX / volume-surge / EMA-slope thresholds by the rolling quantile of that feature over the previous `adaptive_window` bars, at the
+    # quantile the fixed threshold represents over the whole sample (same selectivity, but the level follows the market); 0 = fixed thresholds (live behaviour)
     pullback_frac: float = 0.0,  # opt-in study (docs/FIVE_MINUTE_SIGNAL_SCREEN.md): on a signal, do not chase -- rest a limit this fraction of a stop distance BETTER than the signal close and enter only if it is touched within `pullback_bars` bars (skipped if the bar also trades through the stop); 0 = enter at the signal (live behaviour)
     pullback_bars: int = 3,
     pullback_through: float = 0.0,  # fill only if price trades THROUGH the limit by this fraction of a stop distance (queue-priority conservatism)
@@ -333,6 +338,7 @@ def run_commodity_backtest(
         cool_side, cool_until = None, -1
         pending = None      # confirm_bars: a signal waiting to see whether the breakout holds
         pending_pb = None   # pullback_frac: a signal waiting for a better price
+        _adaptive_ready = False   # adaptive_window: rolling thresholds are computed once, on the first bar (the per-symbol thresholds are chosen inside the loop)
 
         n = len(feat_df)
         closes = feat_df["close"].values
@@ -349,6 +355,7 @@ def run_commodity_backtest(
         dmns = feat_df["dmn"].values if "dmn" in feat_df.columns else np.full(n, 25.0)
         vol_surges = feat_df["vol_surge_ratio"].values if "vol_surge_ratio" in feat_df.columns else np.full(n, 1.0)
         atrs = feat_df["atr"].values if "atr" in feat_df.columns else (feat_df["avg_range_pct"].values / 100.0) * closes
+        atr_med5d = pd.Series(atrs).rolling(870, min_periods=200).median().shift(1).to_numpy() if stop_floor_mode == "dynamic" else None
 
         for i in range(25, n):
             c_price = closes[i]
@@ -375,7 +382,7 @@ def run_commodity_backtest(
                     exit_p = pos["tp"]; reason = "take_profit"
                 elif (adv <= pos["current_stop"] if d == 1 else adv >= pos["current_stop"]):
                     exit_p = pos["current_stop"]; reason = "be_stop" if pos["armed_be"] else "initial_stop"
-                elif (i - pos["entry_idx"]) >= HOLD_BARS:
+                elif (i - pos["entry_idx"]) >= pos.get("hold", HOLD_BARS):
                     exit_p = c_price; reason = "timeout_exit"
                 elif m_open >= 825:  # 22:45 IST square-off (ahead of Upstox 22:50 RMS cut-off)
                     exit_p = c_price; reason = "eod_squareoff"
@@ -419,7 +426,10 @@ def run_commodity_backtest(
                         pos["current_stop"] = lock_stop(pos["entry_price"], pos["be"], d)      # never above what price reached: see core/exits.lock_stop
                     if pos["armed_be"]:
                         pos["best_price"] = max(pos["best_price"], fav) if d == 1 else min(pos["best_price"], fav)
-                        trail = pos["best_price"] - TRAIL_DIST_MULT * pos["stop_dist"] * d
+                        if exit_mode == "dynamic":
+                            trail = pos["best_price"] - pos["trail_mult"] * max(atrs[i], pos["stop_dist"] * 0.1) * d          # current-bar ATR, as the equity exit
+                        else:
+                            trail = pos["best_price"] - TRAIL_DIST_MULT * pos["stop_dist"] * d
                         pos["current_stop"] = (max(pos["current_stop"], trail) if d == 1 else min(pos["current_stop"], trail))
 
                 continue
@@ -490,16 +500,34 @@ def run_commodity_backtest(
             # sweep result before trusting this for any symbol.
             max_vol = _et.get("max_vol")
 
-            sdist = max(stop_mult * atr, min_stop_pct * c_price)
+            if adaptive_window and not _adaptive_ready:
+                _adaptive_ready = True
+                _sess = (mins_open >= 60) & (mins_open <= 810)
+                def _rolling_thr(values, static_thr, absolute=False):
+                    v = np.abs(values) if absolute else values
+                    q = float(np.mean(v[_sess] < static_thr))
+                    return pd.Series(v).rolling(adaptive_window, min_periods=adaptive_window // 2).quantile(q).shift(1).to_numpy()
+                _adx_thr = _rolling_thr(adxs, min_adx)
+                _vol_thr = _rolling_thr(vol_surges, min_vol)
+                _slope_thr = _rolling_thr(ema_slopes, min_ema_slope, absolute=True)
+
+
+            _floor = min_stop_pct * c_price
+            if stop_floor_mode == "dynamic" and atr_med5d is not None and not np.isnan(atr_med5d[i]):
+                _floor = 1.0 * atr_med5d[i]
+            sdist = max(stop_mult * atr, _floor)
             if sdist <= 0 or c_price <= 0:
                 continue
 
             direction = None
-            vol_ok = vol_s >= min_vol and (max_vol is None or vol_s <= max_vol)
+            _madx, _mvol, _mslope = min_adx, min_vol, min_ema_slope
+            if adaptive_window and not (np.isnan(_adx_thr[i]) or np.isnan(_vol_thr[i]) or np.isnan(_slope_thr[i])):
+                _madx, _mvol, _mslope = _adx_thr[i], _vol_thr[i], _slope_thr[i]
+            vol_ok = vol_s >= _mvol and (max_vol is None or vol_s <= max_vol)
             # High-conviction Trend Expansion Setup
-            if adx >= min_adx and dmp > dmn and ema_s > min_ema_slope and orb_h_dist >= min_orb and vwap_d >= min_vwap and vol_ok:
+            if adx >= _madx and dmp > dmn and ema_s > _mslope and orb_h_dist >= min_orb and vwap_d >= min_vwap and vol_ok:
                 direction = "long"
-            elif not long_only and adx >= min_adx and dmn > dmp and ema_s < -min_ema_slope and orb_l_dist <= -min_orb and vwap_d <= -min_vwap and vol_ok:
+            elif not long_only and adx >= _madx and dmn > dmp and ema_s < -_mslope and orb_l_dist <= -min_orb and vwap_d <= -min_vwap and vol_ok:
                 direction = "short"
 
             if direction and is_silver and confirm_silver_with_gold:
@@ -570,8 +598,16 @@ def run_commodity_backtest(
 
             d = 1 if direction == "long" else -1
             sl = round(c_price - sdist * d, 2)
-            tp = round(c_price + tp_mult * sdist * d, 2)
-            be = round(c_price + BE_ACTIVATION_MULT * sdist * d, 2)
+            _scale = float(np.clip(adx / 25.0, 0.7, 1.8))                     # the equity scalper's ADX scale (markets/equity/scalping/backtest.py::_dynamic_exit_scale)
+            if exit_mode == "dynamic":
+                tp = round(c_price + 1e9 * d, 2)                              # no fixed take-profit: the trail manages the exit
+                be = round(c_price + (BE_ACTIVATION_MULT / _scale) * sdist * d, 2)
+            elif exit_mode == "tp_scaled":
+                tp = round(c_price + tp_mult * _scale * sdist * d, 2)
+                be = round(c_price + BE_ACTIVATION_MULT * sdist * d, 2)
+            else:
+                tp = round(c_price + tp_mult * sdist * d, 2)
+                be = round(c_price + BE_ACTIVATION_MULT * sdist * d, 2)
 
             in_pos = True
             pos = {
@@ -587,6 +623,8 @@ def run_commodity_backtest(
                 "best_price": c_price,
                 "armed_be": False,
                 "stop_dist": sdist,
+                "trail_mult": TRAIL_DIST_MULT * (_scale if exit_mode == "dynamic" else 1.0),
+                "hold": int(round(HOLD_BARS * _scale)) if hold_mode == "adx" else HOLD_BARS,
                 # Diagnostic-only, mirrors what live_dryrun.py logs to the DB
                 # per trade -- added 2026-09-17 so losing trades can be
                 # analyzed for patterns instead of only seeing aggregate

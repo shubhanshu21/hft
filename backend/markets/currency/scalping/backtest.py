@@ -124,6 +124,10 @@ def run_currency_backtest(
     to_date: str | None = None,
     size_mode: str = "margin",
     return_trades: bool = False,
+    exit_mode: str = "fixed",        # opt-in research options (docs/STATIC_VS_DYNAMIC.md), off = live behaviour: "dynamic" = ADX-scaled activation / current-ATR trail / no TP; "tp_scaled" = TP x ADX scale
+    hold_mode: str = "fixed",        # "adx" = the 16-bar limit x the ADX scale
+    stop_floor_mode: str = "fixed",  # "dynamic" = stop >= 1.0 x median ATR of the previous 5 days instead of the fixed % floor
+    adaptive_window: int = 0,        # thresholds (ADX, volume surge, |EMA slope|) = rolling quantile over the previous N bars at the quantile the fixed number represents
     pullback_frac: float = 0.0,      # opt-in research option, see core/entry_pullback.py (0 = live behaviour)
     pullback_bars: int = 3,
     pullback_through: float = 0.0,
@@ -187,6 +191,8 @@ def run_currency_backtest(
         dmns = feat_df["dmn"].values if "dmn" in feat_df.columns else np.full(n, 25.0)
         vol_surges = feat_df["vol_surge_ratio"].values if "vol_surge_ratio" in feat_df.columns else np.full(n, 1.0)
         atrs = feat_df["atr"].values if "atr" in feat_df.columns else (feat_df["avg_range_pct"].values / 100.0) * closes
+        atr_med5d = pd.Series(atrs).rolling(480, min_periods=100).median().shift(1).to_numpy() if stop_floor_mode == "dynamic" else None
+        _adaptive_ready = False
 
         _et = ENTRY_THRESHOLDS.get(sym.upper(), ENTRY_THRESHOLDS["USDINR"])
 
@@ -213,7 +219,7 @@ def run_currency_backtest(
                     exit_p = pos["tp"]; reason = "take_profit"
                 elif (adv <= pos["current_stop"] if d == 1 else adv >= pos["current_stop"]):
                     exit_p = pos["current_stop"]; reason = "be_stop" if pos["armed_be"] else "initial_stop"
-                elif (i - pos["entry_idx"]) >= HOLD_BARS:
+                elif (i - pos["entry_idx"]) >= pos.get("hold", HOLD_BARS):
                     exit_p = c_price; reason = "timeout_exit"
                 elif m_open >= sessions.CURRENCY_SQUAREOFF_MIN:  # square-off, ahead of Upstox's 16:30 auto square-off and the 17:00 close
                     exit_p = c_price; reason = "eod_squareoff"
@@ -241,7 +247,10 @@ def run_currency_backtest(
                         pos["current_stop"] = lock_stop(pos["entry_price"], pos["be"], d)      # never above what price reached: see core/exits.lock_stop
                     if pos["armed_be"]:
                         pos["best_price"] = max(pos["best_price"], fav) if d == 1 else min(pos["best_price"], fav)
-                        trail = pos["best_price"] - TRAIL_DIST_MULT * pos["stop_dist"] * d
+                        if exit_mode == "dynamic":
+                            trail = pos["best_price"] - pos["trail_mult"] * max(atrs[i], pos["stop_dist"] * 0.1) * d
+                        else:
+                            trail = pos["best_price"] - TRAIL_DIST_MULT * pos["stop_dist"] * d
                         pos["current_stop"] = (max(pos["current_stop"], trail) if d == 1 else min(pos["current_stop"], trail))
                 continue
 
@@ -268,14 +277,28 @@ def run_currency_backtest(
             tp_mult = _et.get("tp_mult", TAKE_PROFIT_MULT)
             stop_mult = _et.get("stop_mult", STOP_VOL_MULT)
 
-            sdist = max(stop_mult * atr, min_stop_pct * c_price)
+            _floor = min_stop_pct * c_price
+            if stop_floor_mode == "dynamic" and atr_med5d is not None and not np.isnan(atr_med5d[i]):
+                _floor = 1.0 * atr_med5d[i]
+            sdist = max(stop_mult * atr, _floor)
+            if adaptive_window and not _adaptive_ready:
+                _adaptive_ready = True
+                _sess = (mins_open >= 15) & (mins_open <= sessions.CURRENCY_LAST_ENTRY_MIN)
+                def _rolling_thr(values, static_thr, absolute=False):
+                    v = np.abs(values) if absolute else values
+                    q = float(np.mean(v[_sess] < static_thr))
+                    return pd.Series(v).rolling(adaptive_window, min_periods=adaptive_window // 2).quantile(q).shift(1).to_numpy()
+                _adx_thr, _vol_thr, _slope_thr = _rolling_thr(adxs, min_adx), _rolling_thr(vol_surges, min_vol), _rolling_thr(ema_slopes, min_ema_slope, absolute=True)
+            _madx, _mvol, _mslope = min_adx, min_vol, min_ema_slope
+            if adaptive_window and not (np.isnan(_adx_thr[i]) or np.isnan(_vol_thr[i]) or np.isnan(_slope_thr[i])):
+                _madx, _mvol, _mslope = _adx_thr[i], _vol_thr[i], _slope_thr[i]
             if sdist <= 0 or c_price <= 0:
                 continue
 
             direction = None
-            if adx >= min_adx and dmp > dmn and ema_s > min_ema_slope and orb_h_dist >= min_orb and vwap_d >= min_vwap and vol_s >= min_vol:
+            if adx >= _madx and dmp > dmn and ema_s > _mslope and orb_h_dist >= min_orb and vwap_d >= min_vwap and vol_s >= _mvol:
                 direction = "long"
-            elif not long_only and adx >= min_adx and dmn > dmp and ema_s < -min_ema_slope and orb_l_dist <= -min_orb and vwap_d <= -min_vwap and vol_s >= min_vol:
+            elif not long_only and adx >= _madx and dmn > dmp and ema_s < -_mslope and orb_l_dist <= -min_orb and vwap_d <= -min_vwap and vol_s >= _mvol:
                 direction = "short"
 
             if pullback_frac:
@@ -293,14 +316,23 @@ def run_currency_backtest(
 
             d = 1 if direction == "long" else -1
             sl = round(c_price - sdist * d, 4)
-            tp = round(c_price + tp_mult * sdist * d, 4)
-            be = round(c_price + BE_ACTIVATION_MULT * sdist * d, 4)
+            _scale = float(np.clip(adx / 25.0, 0.7, 1.8))
+            if exit_mode == "dynamic":
+                tp = round(c_price + 1e9 * d, 4)
+                be = round(c_price + (BE_ACTIVATION_MULT / _scale) * sdist * d, 4)
+            elif exit_mode == "tp_scaled":
+                tp = round(c_price + tp_mult * _scale * sdist * d, 4)
+                be = round(c_price + BE_ACTIVATION_MULT * sdist * d, 4)
+            else:
+                tp = round(c_price + tp_mult * sdist * d, 4)
+                be = round(c_price + BE_ACTIVATION_MULT * sdist * d, 4)
 
             in_pos = True
             pos = {
                 "direction": direction, "entry_price": c_price, "entry_idx": i, "entry_time": c_time,
                 "lots": lots, "sl": sl, "tp": tp, "be": be, "current_stop": sl,
                 "best_price": c_price, "armed_be": False, "stop_dist": sdist,
+                "trail_mult": TRAIL_DIST_MULT * (_scale if exit_mode == "dynamic" else 1.0), "hold": int(round(HOLD_BARS * _scale)) if hold_mode == "adx" else HOLD_BARS,
             }
 
     total_trades = len(all_trades)
