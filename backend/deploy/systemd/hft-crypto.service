@@ -1,0 +1,15 @@
+[Unit]
+Description=HFT crypto paper trader (BTC/ETH/SOL slow-momentum ensemble, Binance public data, PAPER ONLY)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/var/www/html/hft/backend
+ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m engine.crypto_paper
+Restart=always
+RestartSec=30
+# No API key exists anywhere in this unit or module: it reads Binance's public klines and never places an order.
+# Settings come from backend/.env (ENABLE_CRYPTO_TRADING, CRYPTO_SYMBOLS, CRYPTO_CAPITAL_USDT, CRYPTO_REBALANCE_BAND).
+
+[Install]
+WantedBy=default.target
