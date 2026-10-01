@@ -1561,30 +1561,6 @@ def main():
             mclose = mclose.replace(year=next_day.year, month=next_day.month, day=next_day.day)
             refresh_market_hours(broker, next_day.date())       # a special session or an hours change on that day is picked up before it opens
 
-            # Refresh instrument_key resolution once per trading-day rollover --
-            # not just at process startup -- so a monthly contract expiry is
-            # picked up within a day instead of depending on the weekly
-            # finetune job's incidental restart to notice it (found 2026-09-18).
-            fresh_map = _build_symbol_map()
-            changed = {k: v for k, v in fresh_map.items() if SYMBOL_MAP.get(k) != v}
-            if changed:
-                log.info("Instrument key(s) rolled over: %s", changed)
-                telegram.send(f"🔄 <b>CONTRACT ROLLOVER</b> — {len(changed)} instrument key(s) updated: "
-                              f"{', '.join(changed.keys())}")
-            SYMBOL_MAP.clear()
-            SYMBOL_MAP.update(fresh_map)
-            refresh_margin_rates(broker, runner)
-
-            # Pre-rollover contract expiry alert (MCX contracts expire ~20th of month)
-            day_of_month = mopen.day
-            if 18 <= day_of_month <= 20:
-                mcx_syms = [s for s in runner.symbols if not _is_currency(s) and not _is_equity(s)]
-                if mcx_syms:
-                    telegram.send(
-                        f"⚠️ <b>MCX CONTRACT EXPIRY WARNING</b> — Today is day {day_of_month} of month.\n"
-                        f"MCX contracts for {', '.join(mcx_syms)} expire around 20th. Verify positions & instrument keys."
-                    )
-
         runner.today = mopen.strftime("%Y-%m-%d")
         runner.log_path = LOG_DIR / f"dryrun_{runner.today}.csv"
 
@@ -1600,6 +1576,45 @@ def main():
                 print(f"\n{YL}Stopped by user (during overnight wait).{R}", flush=True)
                 stopped_by_user = True
                 continue
+
+        # Refresh instrument_key resolution once per trading day -- not just at
+        # process startup -- so a monthly contract expiry is picked up within a
+        # day instead of depending on the weekly finetune job's incidental
+        # restart to notice it (found 2026-09-18). Deliberately placed HERE
+        # (right before the day's scan loop starts), not up in the >mclose
+        # rollover branch above: that branch fires the moment the PREVIOUS
+        # day's session closes (~22:45 IST), which is BEFORE
+        # hft-daily-data-topup.timer's 00:30 IST run has re-downloaded that
+        # day's instrument master -- so a refresh done there always resolves
+        # against yesterday's file, one cycle stale. Found 2026-09-29: USDINR
+        # traded on a since-expired NCD_FO key for a full day (every candle
+        # fetch and margin call failing with Upstox's "Invalid Instrument
+        # key") because the currency contract rolled over right on that
+        # boundary. Here, after the overnight wait, we are always past 00:30
+        # IST, so ensure_master() (called inside _build_symbol_map()) sees the
+        # freshly downloaded file. Runs once per trading day (this point is
+        # reached exactly once per outer-loop pass, rollover or not -- a
+        # mid-day process start hits it immediately too, which is the correct
+        # fallback for exactly this bug).
+        fresh_map = _build_symbol_map()
+        changed = {k: v for k, v in fresh_map.items() if SYMBOL_MAP.get(k) != v}
+        if changed:
+            log.info("Instrument key(s) rolled over: %s", changed)
+            telegram.send(f"🔄 <b>CONTRACT ROLLOVER</b> — {len(changed)} instrument key(s) updated: "
+                          f"{', '.join(changed.keys())}")
+        SYMBOL_MAP.clear()
+        SYMBOL_MAP.update(fresh_map)
+        refresh_margin_rates(broker, runner)
+
+        # Contract expiry alert (MCX contracts expire ~20th of month)
+        day_of_month = mopen.day
+        if 18 <= day_of_month <= 20:
+            mcx_syms = [s for s in runner.symbols if not _is_currency(s) and not _is_equity(s)]
+            if mcx_syms:
+                telegram.send(
+                    f"⚠️ <b>MCX CONTRACT EXPIRY WARNING</b> — Today is day {day_of_month} of month.\n"
+                    f"MCX contracts for {', '.join(mcx_syms)} expire around 20th. Verify positions & instrument keys."
+                )
 
         scan_n = 0
         while datetime.now(IST) <= mclose:

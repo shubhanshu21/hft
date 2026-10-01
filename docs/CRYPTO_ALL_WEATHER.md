@@ -70,3 +70,20 @@ If ALL exposure is put on perpetuals instead (longs pay funding on the whole not
 `CRYPTO_EXECUTION=auto` uses the demo exchange when `BINANCE_DEMO_API_KEY` / `BINANCE_DEMO_API_SECRET` are set, otherwise our own simulation. The exchange is the source of truth for holdings (our quantity = its balance minus the baseline recorded at reset);
 the sizing ledger (equity at CRYPTO_CAPITAL_USDT) follows the real fills, real fees and the demo account's own funding payments. Exchange minimums (measured 2026-09-28): spot 5 USDT; futures BTC 50, ETH 20, SOL 5 USDT: orders below them are skipped and logged.
 Isolated margin, perpetual leverage setting 2x. Checks: `python3 -m engine.crypto_paper --demo-check` (read-only) and `--demo-smoke` (tiny buy/sell and short/cover on the demo exchange), then `--reset` to record the baseline and restart `hft-crypto`.
+
+## More coins? (2026-09-28) - no, the three we trade are already as good as it gets
+
+Question: would BNB, XRP, ADA, DOGE, LINK or AVAX add profit? Same live blend logic (BTC-anchored regime router 50% + trend 50%), 1.0x, equal weights, real costs (alts 0.15%/side) and perp funding, 2021-04-10 to 2026-09-28 (`markets/crypto/experiments/coin_universe_study.py`).
+
+| Portfolio | Per year | Sharpe | Train (to 2023) per year | Test (2024+) per year |
+|---|---|---|---|---|
+| BTC ETH SOL (live) | +21.0% | 0.93 | +17.5% | +24.6% |
+| + BNB | +19.9% | 0.91 | +12.4% | +27.8% |
+| + XRP | +17.6% | 0.85 | +10.0% | +25.7% |
+| + ADA | +19.4% | 0.91 | +17.4% | +21.5% |
+| + DOGE | +22.7% | 1.03 | +18.5% | +27.0% |
+| + LINK | +16.9% | 0.80 | +12.4% | +21.7% |
+| + AVAX | +21.7% | 0.99 | +22.6% | +20.9% |
+| all 9 | +17.5% | 0.89 | +12.1% | +23.1% |
+
+Only DOGE is better in both windows, by +1.7%/yr and +0.10 Sharpe - within noise, and DOGE's own history (meme coin) makes it a survivorship pick: the coins were chosen because they exist and are large today. XRP and LINK alone lose money in the train window. All 9 coins is worse than 3. Correlations between coins' blend returns are 0.4-0.7, so diversification is real but too small to pay for the weaker signals. Decision: keep BTC/ETH/SOL.

@@ -40,6 +40,9 @@ _SYMBOL_KEY_MAP: dict[str, str] = {}
 _MCX_KEY_MAP: dict[str, str] = {}
 _CURRENCY_KEY_MAP: dict[str, str] = {}
 _INDEX_FUT_KEY_MAP: dict[str, str] = {}
+# Calendar date (isoformat) this PROCESS last parsed the cache files into the maps above --
+# see ensure_master()'s docstring for why this is tracked separately from the files' own freshness.
+_last_parsed_date: Optional[str] = None
 
 
 def _cache_is_fresh(meta_file: Path, cache_file: Path) -> bool:
@@ -248,14 +251,37 @@ def ensure_master(force: bool = False) -> None:
     uptime, tracked back to build_mcx_commodity_map() falling through to its
     hardcoded stale-key fallback (also fixed below) because _MCX_KEY_MAP
     never got a chance to re-populate from the freshly-downloaded file.
-    Now each master's in-memory map is force-reloaded whenever its file was
-    ACTUALLY just (re-)downloaded, not only when the map happens to be
-    empty -- restoring the rollover-safety this function's callers already
-    assume it provides."""
+
+    Bug fixed 2026-10-01: the 2026-09-22 fix only reparses when THIS CALL is
+    the one that (re-)downloaded the file (`nse_downloaded`/`mcx_downloaded`
+    True). `hft-daily-data-topup.service` downloads these same cache files
+    every night at 00:30 IST from a SEPARATE process -- by the time the
+    live_dryrun.py daemon (which can run for days without restarting) next
+    calls ensure_master(), _cache_is_fresh() already sees today's date in
+    the meta file (someone else refreshed it hours ago) and reports
+    "already fresh", so `mcx_downloaded`/`nse_downloaded` comes back False
+    for the daemon's own call -- and since its in-memory maps are non-empty
+    (parsed on some earlier day and never cleared), neither half of the
+    `or not _X_KEY_MAP` fallback fires either. Net effect: a long-running
+    daemon's in-memory instrument maps could go stale for its entire
+    lifetime, never reparsing again after their first load, regardless of
+    how often ensure_master() is called or how fresh the on-disk file is.
+    Caught directly: GOLDTEN resolved to an MCX instrument_key that had
+    silently stopped existing in the master file, failing every candle
+    fetch and margin call for a full trading day. Fixed by tracking the
+    calendar date THIS PROCESS last parsed the files (`_last_parsed_date`)
+    independent of who downloaded them, and forcing a reparse once per
+    process per day regardless -- cheap, since the file is very likely
+    already on disk and this skips the network call, only redoing the
+    (fast) CSV parse."""
+    global _last_parsed_date
+    today_str = date.today().isoformat()
+    stale_in_process = force or _last_parsed_date != today_str
+
     nse_downloaded = force or not _cache_is_fresh(_META_FILE, _CACHE_FILE)
     if nse_downloaded:
         _download_master()
-    if nse_downloaded or not _SYMBOL_KEY_MAP:
+    if nse_downloaded or stale_in_process or not _SYMBOL_KEY_MAP:
         _load_master()
 
     mcx_downloaded = force or not _cache_is_fresh(_MCX_META_FILE, _MCX_CACHE_FILE)
@@ -265,12 +291,13 @@ def ensure_master(force: bool = False) -> None:
         except Exception as e:
             log.warning("Could not download MCX master: %s", e)
             mcx_downloaded = False  # the on-disk file wasn't actually refreshed -- don't force a reparse of it below
-    if (mcx_downloaded or not _MCX_KEY_MAP) and _MCX_CACHE_FILE.exists():
+    if (mcx_downloaded or stale_in_process or not _MCX_KEY_MAP) and _MCX_CACHE_FILE.exists():
         _load_mcx_master()
-    if (nse_downloaded or not _CURRENCY_KEY_MAP) and _CACHE_FILE.exists():
+    if (nse_downloaded or stale_in_process or not _CURRENCY_KEY_MAP) and _CACHE_FILE.exists():
         _load_currency_master()
-    if (nse_downloaded or not _INDEX_FUT_KEY_MAP) and _CACHE_FILE.exists():
+    if (nse_downloaded or stale_in_process or not _INDEX_FUT_KEY_MAP) and _CACHE_FILE.exists():
         _load_index_futures_master()
+    _last_parsed_date = today_str
 
 
 def get_instrument_key(symbol: str, auto_refresh: bool = True) -> Optional[str]:
