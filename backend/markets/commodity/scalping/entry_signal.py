@@ -19,9 +19,12 @@ from __future__ import annotations
 
 from core import sessions
 
+import logging
 import os
 
 import pandas as pd
+
+log = logging.getLogger(__name__)
 
 from markets.commodity.costs import size_commodity_lots
 from markets.currency.costs import size_currency_lots
@@ -183,6 +186,12 @@ def compute_entry_signal(
         if _chop_window > 0:
             _chop_closes = [float(c["close"]) for c in candles[-(_chop_window + 5):]]
             if _intraday_chop_ok(_chop_closes, window=_chop_window, min_autocorr=0.0) is False:
+                # The one deliberate exception to this module's "pure function, no side effects" rule (see the
+                # module docstring) -- otherwise this filter's effect is invisible, a silently absent trade
+                # indistinguishable from "no setup existed at all". A qualifying setup DID exist here (direction
+                # and setup_type are already resolved above); only the chop gate is turning it away.
+                log.info("SILVERMIC: %s trend_breakout signal at %.2f blocked by the intraday chop gate "
+                         "(window=%d bars, trailing autocorrelation < 0 -- choppy, not trending).", direction, entry, _chop_window)
                 return None
 
     if is_curr:

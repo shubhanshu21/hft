@@ -90,6 +90,54 @@ class TestBackups(unittest.TestCase):
     def test_backup_of_a_missing_db_is_a_noop(self):
         self.assertIsNone(backup_db.backup_once(self.tmp / "nope.db", self.dir))
 
+    def test_labeled_backups_for_a_second_database_dont_collide_with_or_get_pruned_by_the_first(self):
+        crypto_db = self.tmp / "crypto.db"
+        con = sqlite3.connect(str(crypto_db))
+        con.executescript("CREATE TABLE state(k TEXT); CREATE TABLE holdings(k TEXT); CREATE TABLE trades(id INTEGER); CREATE TABLE equity(id INTEGER);")
+        con.execute("INSERT INTO equity VALUES (1)")
+        con.commit()
+        con.close()
+
+        d1 = backup_db.backup_once(self.db, self.dir, "daily", datetime(2026, 9, 24), label=None)
+        d2 = backup_db.backup_once(crypto_db, self.dir, "daily", datetime(2026, 9, 24), label="crypto_paper")
+        h2 = backup_db.backup_once(crypto_db, self.dir, "hourly", datetime(2026, 9, 24, 14, 0), label="crypto_paper")
+        self.assertEqual((d1.name, d2.name, h2.name), ("paper_trading_2026-09-24.db", "crypto_paper_2026-09-24.db", "crypto_paper_hourly_2026-09-24_1400.db"))
+
+        # pruning one database's daily backups never touches the other's (daily or hourly)
+        for day in range(1, 21):
+            backup_db.backup_once(self.db, self.dir, "daily", datetime(2026, 9, day), label=None)
+            backup_db.backup_once(crypto_db, self.dir, "daily", datetime(2026, 9, day), label="crypto_paper")
+        self.assertEqual(len(list(self.dir.glob("paper_trading_*.db"))), backup_db.KEEP_DAILY)
+        self.assertEqual(len(list(self.dir.glob("crypto_paper_[0-9]*.db"))), backup_db.KEEP_DAILY)
+        self.assertTrue(h2.exists())                                                 # the earlier hourly snapshot survived the daily prune
+
+        # verify_backup against crypto's own schema (no "accounts" table -- see DATABASES)
+        counts = backup_db.verify_backup(d2, backup_db.CRYPTO_TABLES, "equity")
+        self.assertEqual(counts["equity"], 1)
+        with self.assertRaises(ValueError):
+            backup_db.verify_backup(d2)                                             # main DB's schema check correctly rejects a crypto backup
+
+    def test_restore_targets_the_given_databases_schema(self):
+        crypto_db = self.tmp / "crypto.db"
+        con = sqlite3.connect(str(crypto_db))
+        con.executescript("CREATE TABLE state(k TEXT); CREATE TABLE holdings(k TEXT); CREATE TABLE trades(id INTEGER); CREATE TABLE equity(id INTEGER);")
+        con.execute("INSERT INTO equity VALUES (1)")
+        con.commit()
+        con.close()
+        b = backup_db.backup_once(crypto_db, self.dir, "daily", label="crypto_paper")
+
+        con = sqlite3.connect(str(crypto_db))
+        con.execute("DELETE FROM equity")
+        con.commit()
+        con.close()
+
+        backup_db.restore(b, crypto_db, self.dir, backup_db.CRYPTO_TABLES, "equity")
+        con = sqlite3.connect(str(crypto_db))
+        try:
+            self.assertEqual(con.execute("SELECT COUNT(*) FROM equity").fetchone()[0], 1)
+        finally:
+            con.close()
+
 
 if __name__ == "__main__":
     unittest.main()
