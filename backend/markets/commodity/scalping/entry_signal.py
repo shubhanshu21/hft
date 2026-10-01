@@ -28,6 +28,7 @@ from markets.currency.costs import size_currency_lots
 from markets.commodity.features import compute_commodity_features, COMMODITY_FEATURE_COLUMNS
 from markets.commodity.scalping.backtest import ENTRY_THRESHOLDS as COMMODITY_ENTRY_THRESHOLDS
 from markets.currency.scalping.backtest import ENTRY_THRESHOLDS as CURRENCY_ENTRY_THRESHOLDS, _MIN_ORB as CURRENCY_MIN_ORB
+from core.regime import regime_ok as _intraday_chop_ok
 
 CURRENCY_SYMBOLS = {"USDINR", "EURINR", "GBPINR", "JPYINR"}
 
@@ -160,6 +161,29 @@ def compute_entry_signal(
         return None
     if regime_ok is False and setup_type == "trend_breakout":
         return None
+
+    # Intraday chop gate -- SILVERMIC only (2026-10-01, loss review: 4 of 5 recent
+    # SILVERMIC trades hit initial_stop, alternating long AND short within the same
+    # two days -- a whipsaw pattern, not a directional miss). Same mechanism as the
+    # daily regime_ok gate above (core/regime.py's rolling-autocorrelation test) but
+    # computed on 5-MIN BAR closes over a short trailing window instead of daily
+    # closes over 15 days -- the daily gate has one data point per day and cannot see
+    # a choppy stretch WITHIN a single session at all. Validated on the real archive
+    # (markets/commodity/scalping/backtest.py's intraday_chop_window param) with a
+    # proper train/test split: window=20 bars (~100 min) improved PF on BOTH windows
+    # independently (TRAIN 1.19->1.46, TEST 1.60->1.72) at roughly flat full-period net
+    # profit. NOT extended to CRUDEOILM/GOLDTEN -- tested there too, and no window
+    # held up on both train AND test (noise, not a real signal, consistent with crude/
+    # gold's already-known weak or absent edge -- see markets/commodity/scalping/backtest.py's
+    # ENTRY_THRESHOLDS comments). Like regime_ok, only gates trend_breakout: mean-
+    # reversion benefits from exactly the chop this is built to detect. Env-tunable;
+    # 0 = off (not SILVERMIC, or not configured).
+    if setup_type == "trend_breakout" and is_silver:
+        _chop_window = int(os.environ.get("SILVERMIC_INTRADAY_CHOP_WINDOW", "0"))
+        if _chop_window > 0:
+            _chop_closes = [float(c["close"]) for c in candles[-(_chop_window + 5):]]
+            if _intraday_chop_ok(_chop_closes, window=_chop_window, min_autocorr=0.0) is False:
+                return None
 
     if is_curr:
         lots = size_currency_lots(capital, entry, sdist, risk_pct, sym, leverage)

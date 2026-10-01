@@ -14,6 +14,7 @@ from __future__ import annotations
 from core import entry_pullback
 from core.exits import lock_stop
 from core.paths import ARCHIVE_ROOT, BACKEND_ROOT
+from core.regime import regime_ok as _regime_ok_intraday
 import argparse
 import os
 from datetime import datetime
@@ -199,6 +200,12 @@ def run_commodity_backtest(
     pullback_bars: int = 3,
     pullback_through: float = 0.0,  # fill only if price trades THROUGH the limit by this fraction of a stop distance (queue-priority conservatism)
     max_cost_r: float | None = None,  # opt-in study: skip an entry whose round-trip costs exceed this fraction of the risked amount (stop distance x lots x multiplier); None = no gate (live behaviour)
+    intraday_chop_window: int = 0,  # opt-in study (2026-10-01, SILVERMIC loss review): core.regime.regime_ok reused on 5-MIN BAR closes
+    # instead of daily closes -- a finer-grained version of the existing daily regime gate below, meant to catch a choppy multi-hour
+    # stretch WITHIN a single day that the daily gate (one data point per day) cannot see at all. Blocks entry when the trailing
+    # `intraday_chop_window`-bar return autocorrelation(1) is below `intraday_chop_min_autocorr` (default 0.0, same sign convention
+    # as the daily gate: negative = bars tend to reverse bar-to-bar, i.e. choppy/mean-reverting). 0 = off (live behaviour).
+    intraday_chop_min_autocorr: float = 0.0,
     use_crude_regime_filter: bool = False,  # CRUDEOILM only: see core/regime.py's docstring for the
     # full finding -- crude's intraday momentum edge is regime-dependent (0/80 combos profitable on
     # May18-Jul31 vs. strongly profitable on Aug17-Sep17, SAME thresholds). Gating entries by a rolling
@@ -542,6 +549,12 @@ def run_commodity_backtest(
             if direction and (use_crude_regime_filter or os.environ.get("USE_COMMODITY_REGIME_FILTER", "true").lower() in ("1", "true", "yes")):
                 _regime = _commodity_regime_by_sym_date.get((sym.upper(), pd.Timestamp(c_time).date()))
                 if _regime is False:
+                    direction = None
+
+            if direction and intraday_chop_window:
+                _lo = max(0, i - intraday_chop_window - 5)
+                _chop_ok = _regime_ok_intraday(list(closes[_lo:i + 1]), window=intraday_chop_window, min_autocorr=intraday_chop_min_autocorr)
+                if _chop_ok is False:
                     direction = None
 
 
