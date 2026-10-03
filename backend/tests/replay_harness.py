@@ -68,6 +68,9 @@ ENV = {
     # pullback entries (core/entry_pullback.py) are an operator opt-in in .env; the goldens pin them off
     "EQUITY_PULLBACK_FRAC": "0", "COMMODITY_PULLBACK_FRAC": "0", "CURRENCY_PULLBACK_FRAC": "0", "CRUDEOILM_PULLBACK_FRAC": "0",
     "CURRENCY_EXIT_MODE": "fixed", "USDINR_EXIT_MODE": "fixed",      # the dynamic USDINR exit is an operator opt-in in .env
+    # intraday chop gates (markets/commodity/scalping/entry_signal.py) are operator opt-ins in .env; the goldens pin them off --
+    # found 2026-10-03 when USDINR_INTRADAY_CHOP_WINDOW=65 going live changed which golden-fixture trades fired
+    "SILVERMIC_INTRADAY_CHOP_WINDOW": "0", "USDINR_INTRADAY_CHOP_WINDOW": "0",
 }
 
 

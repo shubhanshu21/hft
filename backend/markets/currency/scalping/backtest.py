@@ -32,6 +32,7 @@ from core import sessions
 from core import entry_pullback
 from core.exits import lock_stop
 from core.paths import ARCHIVE_ROOT, BACKEND_ROOT
+from core.regime import regime_ok as _regime_ok_intraday
 import argparse
 from pathlib import Path
 import sys
@@ -131,12 +132,36 @@ def run_currency_backtest(
     pullback_frac: float = 0.0,      # opt-in research option, see core/entry_pullback.py (0 = live behaviour)
     pullback_bars: int = 3,
     pullback_through: float = 0.0,
+    daily_regime_window: int = 0,    # opt-in research (2026-10-03, USDINR leverage review): core.regime.regime_ok on daily closes, same mechanism as
+    # CRUDEOILM's live gate (markets/commodity/scalping/backtest.py) -- but NOT assumed to have the same sign: USDINR's own train/test split showed the
+    # OPPOSITE relationship (profitable window had NEGATIVE daily autocorrelation, losing window near zero/positive), so `daily_regime_min_autocorr` and
+    # `daily_regime_invert` are exposed separately rather than hard-coding crude's convention. 0 = off (live behaviour).
+    daily_regime_min_autocorr: float = 0.0,
+    daily_regime_invert: bool = False,  # True: block when autocorr >= min_autocorr instead of when it's below (see the sign note above)
+    intraday_chop_window: int = 0,   # same idea as markets/commodity/scalping/backtest.py's param of the same name, on 5-min closes instead of daily
+    intraday_chop_min_autocorr: float = 0.0,
+    intraday_chop_invert: bool = False,
 ) -> dict:
     target_symbols = symbols or ["USDINR"]
 
     all_trades: list[dict] = []
     current_capital = capital
     equity_curve = [capital]
+
+    _daily_regime_by_sym_date: dict = {}
+    if daily_regime_window:
+        from core.regime import regime_ok as _daily_regime_ok
+        for _s in target_symbols:
+            _s_path = ARCHIVE_DIR / f"{_s.upper()}_5minute.csv"
+            if not _s_path.exists():
+                continue
+            _s_raw = pd.read_csv(_s_path)
+            _s_raw["_dt"] = pd.to_datetime(_s_raw["timestamp"])
+            _daily = _s_raw.set_index("_dt")["close"].resample("1D").last().dropna()
+            _closes, _dates = list(_daily.values), list(_daily.index.date)
+            for _i, _d in enumerate(_dates):
+                _r = _daily_regime_ok(_closes[:_i], window=daily_regime_window, min_autocorr=daily_regime_min_autocorr)
+                _daily_regime_by_sym_date[(_s.upper(), _d)] = (not _r if (daily_regime_invert and _r is not None) else _r)
 
     _archive_lo, _archive_hi = None, None
     for _sym in target_symbols:
@@ -300,6 +325,19 @@ def run_currency_backtest(
                 direction = "long"
             elif not long_only and adx >= _madx and dmn > dmp and ema_s < -_mslope and orb_l_dist <= -min_orb and vwap_d <= -min_vwap and vol_s >= _mvol:
                 direction = "short"
+
+            if direction and daily_regime_window:
+                _regime = _daily_regime_by_sym_date.get((sym.upper(), pd.Timestamp(c_time).date()))
+                if _regime is False:
+                    direction = None
+
+            if direction and intraday_chop_window:
+                _lo = max(0, i - intraday_chop_window - 5)
+                _chop_ok = _regime_ok_intraday(list(closes[_lo:i + 1]), window=intraday_chop_window, min_autocorr=intraday_chop_min_autocorr)
+                if intraday_chop_invert and _chop_ok is not None:
+                    _chop_ok = not _chop_ok
+                if _chop_ok is False:
+                    direction = None
 
             if pullback_frac:
                 pending_pb, direction, sdist, c_price = entry_pullback.step(pending_pb, i, direction, sdist, c_price, c_low, c_high, pullback_frac, pullback_bars, pullback_through)

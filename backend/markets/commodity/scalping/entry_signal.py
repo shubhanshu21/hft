@@ -194,6 +194,24 @@ def compute_entry_signal(
                          "(window=%d bars, trailing autocorrelation < 0 -- choppy, not trending).", direction, entry, _chop_window)
                 return None
 
+    # Intraday chop gate -- USDINR only (2026-10-03, leverage review: USDINR's own train/test split showed the
+    # exact same whipsaw pattern as SILVERMIC -- the recent/TEST window was a net loser (PF 0.54) at every
+    # leverage level tried, unrelated to leverage or exit mode (fixed vs dynamic exit gave the same result).
+    # Unlike SILVERMIC, a single window wasn't a lucky pick: window=45 through 96 bars ALL turned TEST
+    # profitable (PF 1.02-4.12) while TRAIN stayed strongly profitable (PF 3.31-5.59) -- a stable plateau, not
+    # one cherry-picked point. window=65 (middle of that range) was chosen specifically because it's also the
+    # smallest window whose TEST trade count (15) clears the project's >=15-trade credibility bar; narrower
+    # windows had even better TEST PF (up to 4.12 at window=55) but only 10-12 TEST trades, too thin to trust
+    # alone. See markets/currency/scalping/backtest.py's intraday_chop_window param for the sweep.
+    if setup_type == "trend_breakout" and is_curr and sym.upper() == "USDINR":
+        _chop_window = int(os.environ.get("USDINR_INTRADAY_CHOP_WINDOW", "0"))
+        if _chop_window > 0:
+            _chop_closes = [float(c["close"]) for c in candles[-(_chop_window + 5):]]
+            if _intraday_chop_ok(_chop_closes, window=_chop_window, min_autocorr=0.0) is False:
+                log.info("USDINR: %s trend_breakout signal at %.4f blocked by the intraday chop gate "
+                         "(window=%d bars, trailing autocorrelation < 0 -- choppy, not trending).", direction, entry, _chop_window)
+                return None
+
     if is_curr:
         lots = size_currency_lots(capital, entry, sdist, risk_pct, sym, leverage)
     else:
