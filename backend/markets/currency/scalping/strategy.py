@@ -12,7 +12,7 @@ from dataclasses import replace
 import numpy as np
 import pandas as pd
 
-from core.exits import activation_trail
+from core.exits import activation_trail_bars
 from core.strategy import EntryContext, ExitContext, ExitDecision, Signal
 from markets.commodity.features import compute_commodity_features
 from markets.commodity.scalping.backtest import BE_ACTIVATION_MULT, TRAIL_DIST_MULT
@@ -52,12 +52,15 @@ class NcdScalping(McxScalping):
         if not ctx.candles:
             return None
         try:
-            atr = float(compute_commodity_features(pd.DataFrame(ctx.candles), symbol=ctx.symbol)["atr"].iloc[-1])
+            feat = compute_commodity_features(pd.DataFrame(ctx.candles), symbol=ctx.symbol)
+            atr_by_ts = dict(zip(feat["timestamp"].astype(str), feat["atr"].astype(float)))
         except Exception:                                       # too few bars for the indicator: fall back to the entry's own stop distance
-            atr = float(pos["stop_dist"])
-        if not np.isfinite(atr) or atr <= 0:
-            atr = float(pos["stop_dist"])
-        return activation_trail(pos, ctx.candles[-1], atr, ctx.now, close_at=self.close_at, max_hold_s=HOLD_SECONDS)
+            atr_by_ts = {}
+
+        def atr_of(candle: dict) -> float:                      # the trail distance comes from the completed bar that moves it (as in the backtest)
+            atr = atr_by_ts.get(str(candle["timestamp"]), float(pos["stop_dist"]))
+            return atr if np.isfinite(atr) and atr > 0 else float(pos["stop_dist"])
+        return activation_trail_bars(pos, ctx.candles, atr_of, ctx.now, close_at=self.close_at, max_hold_s=HOLD_SECONDS)
 
     def costs(self, symbol: str, direction: str, entry: float, exit_price: float, qty: int) -> dict:
         return compute_ncd_currency_costs(symbol, direction, entry, exit_price, qty)

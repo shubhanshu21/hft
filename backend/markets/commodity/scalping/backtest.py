@@ -200,6 +200,7 @@ def run_commodity_backtest(
     pullback_bars: int = 3,
     pullback_through: float = 0.0,  # fill only if price trades THROUGH the limit by this fraction of a stop distance (queue-priority conservatism)
     max_cost_r: float | None = None,  # opt-in study: skip an entry whose round-trip costs exceed this fraction of the risked amount (stop distance x lots x multiplier); None = no gate (live behaviour)
+    live_short_rules: bool = False,  # research (2026-10-05): reproduce entry_signal.py's live short rules (ADX +3, slope x1.2, ORB/VWAP x1.1, volume x1.25, TP x0.8 min 1.4, breakeven 0.4R) -- never in the backtests before
     intraday_chop_window: int = 0,  # opt-in study (2026-10-01, SILVERMIC loss review): core.regime.regime_ok reused on 5-MIN BAR closes
     # instead of daily closes -- a finer-grained version of the existing daily regime gate below, meant to catch a choppy multi-hour
     # stretch WITHIN a single day that the daily gate (one data point per day) cannot see at all. Blocks entry when the trailing
@@ -417,6 +418,9 @@ def run_commodity_backtest(
                         "rsi": pos.get("diag_rsi"), "ema_slope": pos.get("diag_ema_slope"),
                         "vwap_dist": pos.get("diag_vwap_dist"), "vol_surge": pos.get("diag_vol_surge"),
                         "mins_since_open": pos.get("diag_mins_since_open"),
+                        # exit parameters as set at entry -- lets a finer-grained replay (engine/live_replay.py) re-run the exit on 1-minute data
+                        "sl": pos["sl"], "tp": pos["tp"], "be": pos["be"], "stop_dist": pos["stop_dist"],
+                        "trail_mult": pos["trail_mult"], "hold_bars": pos.get("hold", HOLD_BARS),
                         **cost_info,
                     })
 
@@ -534,7 +538,9 @@ def run_commodity_backtest(
             # High-conviction Trend Expansion Setup
             if adx >= _madx and dmp > dmn and ema_s > _mslope and orb_h_dist >= min_orb and vwap_d >= min_vwap and vol_ok:
                 direction = "long"
-            elif not long_only and adx >= _madx and dmn > dmp and ema_s < -_mslope and orb_l_dist <= -min_orb and vwap_d <= -min_vwap and vol_ok:
+            elif not long_only and not live_short_rules and adx >= _madx and dmn > dmp and ema_s < -_mslope and orb_l_dist <= -min_orb and vwap_d <= -min_vwap and vol_ok:
+                direction = "short"
+            elif not long_only and live_short_rules and adx >= _madx + 3.0 and dmn > dmp and ema_s < -_mslope * 1.2 and orb_l_dist <= -min_orb * 1.1 and vwap_d <= -min_vwap * 1.1 and vol_s >= _mvol * 1.25:
                 direction = "short"
 
             if direction and is_silver and confirm_silver_with_gold:
@@ -621,6 +627,9 @@ def run_commodity_backtest(
             else:
                 tp = round(c_price + tp_mult * sdist * d, 2)
                 be = round(c_price + BE_ACTIVATION_MULT * sdist * d, 2)
+                if live_short_rules and d == -1:                             # entry_signal.py's live short exit: TP x0.8 (min 1.4R), breakeven at 0.4R
+                    tp = round(c_price - max(1.4, tp_mult * 0.80) * sdist, 2)
+                    be = round(c_price - 0.40 * sdist, 2)
 
             in_pos = True
             pos = {

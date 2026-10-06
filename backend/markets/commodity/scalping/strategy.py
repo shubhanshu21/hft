@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from core import sessions
 
-from core.exits import fixed_tp_breakeven_trail
+from core.exits import fixed_tp_breakeven_trail_bars
 from core.strategy import EntryContext, ExitContext, ExitDecision, Signal, Strategy
 from markets.commodity.costs import COMMODITY_SPECS, compute_mcx_commodity_costs
 from markets.commodity.scalping.entry_signal import compute_entry_signal
@@ -53,7 +53,7 @@ class McxScalping(Strategy):
     def manage(self, pos: dict, ctx: ExitContext) -> ExitDecision | None:
         if not ctx.candles:
             return None
-        return fixed_tp_breakeven_trail(pos, ctx.candles[-1], ctx.now, close_at=self.close_at, max_hold_s=HOLD_SECONDS)
+        return fixed_tp_breakeven_trail_bars(pos, ctx.candles, ctx.now, close_at=self.close_at, max_hold_s=HOLD_SECONDS)
 
     def costs(self, symbol: str, direction: str, entry: float, exit_price: float, qty: int) -> dict:
         return compute_mcx_commodity_costs(symbol, direction, entry, exit_price, qty)

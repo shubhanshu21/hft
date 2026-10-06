@@ -138,6 +138,7 @@ def run_currency_backtest(
     # `daily_regime_invert` are exposed separately rather than hard-coding crude's convention. 0 = off (live behaviour).
     daily_regime_min_autocorr: float = 0.0,
     daily_regime_invert: bool = False,  # True: block when autocorr >= min_autocorr instead of when it's below (see the sign note above)
+    live_short_rules: bool = False,  # research (2026-10-05): reproduce entry_signal.py's live short rules (ADX +3, slope x1.2, ORB/VWAP x1.1, volume x1.25, TP x0.8 min 1.4, breakeven 0.4R) -- never in the backtests before
     intraday_chop_window: int = 0,   # same idea as markets/commodity/scalping/backtest.py's param of the same name, on 5-min closes instead of daily
     intraday_chop_min_autocorr: float = 0.0,
     intraday_chop_invert: bool = False,
@@ -261,6 +262,9 @@ def run_currency_backtest(
                         "entry_price": pos["entry_price"], "exit_price": exit_p,
                         "lots": pos["lots"], "gross_pnl": cost_info["gross"],
                         "total_fees": cost_info["total"], "net_pnl": net_pnl, "reason": reason,
+                        # exit parameters as set at entry -- lets a finer-grained replay (engine/live_replay.py) re-run the exit on 1-minute data
+                        "sl": pos["sl"], "tp": pos["tp"], "be": pos["be"], "stop_dist": pos["stop_dist"],
+                        "trail_mult": pos["trail_mult"], "hold_bars": pos.get("hold", HOLD_BARS),
                         **cost_info,
                     })
                     in_pos = False
@@ -323,7 +327,9 @@ def run_currency_backtest(
             direction = None
             if adx >= _madx and dmp > dmn and ema_s > _mslope and orb_h_dist >= min_orb and vwap_d >= min_vwap and vol_s >= _mvol:
                 direction = "long"
-            elif not long_only and adx >= _madx and dmn > dmp and ema_s < -_mslope and orb_l_dist <= -min_orb and vwap_d <= -min_vwap and vol_s >= _mvol:
+            elif not long_only and not live_short_rules and adx >= _madx and dmn > dmp and ema_s < -_mslope and orb_l_dist <= -min_orb and vwap_d <= -min_vwap and vol_s >= _mvol:
+                direction = "short"
+            elif not long_only and live_short_rules and adx >= _madx + 3.0 and dmn > dmp and ema_s < -_mslope * 1.2 and orb_l_dist <= -min_orb * 1.1 and vwap_d <= -min_vwap * 1.1 and vol_s >= _mvol * 1.25:
                 direction = "short"
 
             if direction and daily_regime_window:
@@ -364,6 +370,9 @@ def run_currency_backtest(
             else:
                 tp = round(c_price + tp_mult * sdist * d, 4)
                 be = round(c_price + BE_ACTIVATION_MULT * sdist * d, 4)
+                if live_short_rules and d == -1:                             # entry_signal.py's live short exit: TP x0.8 (min 1.4R), breakeven at 0.4R
+                    tp = round(c_price - max(1.4, tp_mult * 0.80) * sdist, 4)
+                    be = round(c_price - 0.40 * sdist, 4)
 
             in_pos = True
             pos = {

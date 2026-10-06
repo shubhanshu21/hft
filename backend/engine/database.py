@@ -280,7 +280,10 @@ class TradingDB:
             ))
 
     def update_position_stop(self, position_id: str, current_stop: float,
-                             best_price: float, armed_be: bool) -> None:
+                             best_price: float, armed_be: bool, state_updates: Optional[dict] = None) -> None:
+        """`state_updates` (optional) is merged into the position's JSON `state` -- exit-state keys that change after entry
+        (core/exits' trail_bar_ts, the armed flag) so a restart resumes from where the position really was."""
+        import json
         now_str = datetime.now(IST).isoformat()
         with self._get_conn() as conn:
             conn.execute("""
@@ -291,6 +294,12 @@ class TradingDB:
                 updated_at = ?
             WHERE position_id = ? AND status = 'OPEN'
             """, (current_stop, best_price, 1 if armed_be else 0, now_str, position_id))
+            if state_updates:
+                row = conn.execute("SELECT state FROM positions WHERE position_id = ? AND status = 'OPEN'", (position_id,)).fetchone()
+                if row is not None:
+                    state = json.loads(row[0]) if row[0] else {}
+                    state.update(state_updates)
+                    conn.execute("UPDATE positions SET state = ? WHERE position_id = ? AND status = 'OPEN'", (json.dumps(state), position_id))
 
     def get_open_positions(self, account_id: str = "DRYRUN_ACCOUNT") -> List[dict]:
         with self._get_conn() as conn:

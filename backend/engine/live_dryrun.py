@@ -376,6 +376,12 @@ class DryRunner(RiskGates):
             pos.update(strat.restore(p))
             if p.get("state"):
                 pos.update(json.loads(p["state"]))     # exact state the runner saved at entry wins over legacy fallbacks
+            for k in ("armed_be", "armed_trail"):
+                if k in pos:
+                    # ...except the armed flag, which changes AFTER entry: the entry-time state says False, the armed_be column holds the
+                    # flag as of the last stop update. Letting the entry state win (before 2026-10-05) un-armed a restarted position, so it
+                    # stopped trailing and a later re-arm could pull its stop back down to the breakeven lock.
+                    pos[k] = bool(p["armed_be"])
             self.positions[p["symbol"]] = pos
 
         self.trades: list[dict] = []
@@ -987,15 +993,16 @@ class DryRunner(RiskGates):
             return
         live_prices.update(sym, candles[-1]["close"], now)               # for the dashboard's unrealised P&L (it never calls Upstox itself)
         armed_key = "armed_be" if "armed_be" in pos else "armed_trail"
-        before = (pos["current_stop"], pos.get(armed_key))
+        before = (pos["current_stop"], pos.get(armed_key), pos.get("trail_bar_ts"))
         decision = strat.manage(pos, ExitContext(symbol=sym, candles=candles, now=now))
         if decision is not None:
             self._close_position(sym, pos, decision.price, decision.reason, now)
             return
-        if (pos["current_stop"], pos.get(armed_key)) != before:
+        if (pos["current_stop"], pos.get(armed_key), pos.get("trail_bar_ts")) != before:
             self.db.update_position_stop(
                 position_id=pos["position_id"], current_stop=pos["current_stop"],
                 best_price=pos["best_price"], armed_be=bool(pos.get(armed_key, False)),
+                state_updates={k: pos[k] for k in (armed_key, "trail_bar_ts") if k in pos},     # see core/exits._manage_bars
             )
 
     def _close_position(self, sym: str, pos: dict, exit_p: float, reason: str, now: datetime):

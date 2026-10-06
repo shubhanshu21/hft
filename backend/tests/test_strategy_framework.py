@@ -182,6 +182,28 @@ class TestOvernightStrategyInDryRunner(unittest.TestCase):
             self.assertIn("entry_bar_ts", _rows(path, "SELECT state FROM positions")[0]["state"])
             self.assertEqual(make().positions["TATASTEEL"]["entry_bar_ts"], "2026-09-10T11:00:00+05:30")
 
+    def test_a_restart_keeps_the_armed_flag_the_position_really_had(self):
+        # The entry-time state saved armed_trail=False; the stop was armed later (armed_be column = 1). Before 2026-10-05 the entry state won
+        # on restore, so a restarted position stopped trailing and a later re-arm could pull its stop back down to the breakeven lock.
+        import json as _json
+        with _dry_runner() as (make, sim, bars, alerts, path):
+            from engine.database import TradingDB
+            db = TradingDB(path)
+            db.open_position(position_id="EQ1", symbol="TATASTEEL", direction="long", qty=100, entry_price=200.0, current_stop=198.0,
+                             target_price=201.2, breakeven_price=201.2, account_id="FW", instrument_key="K", entry_order_id="O", strategy="scalping",
+                             state=_json.dumps({"armed_trail": False, "activation_price": 201.2, "trail_mult": 0.3, "entry_bar_ts": "2026-09-10T10:55:00+05:30"}))
+            db.update_position_stop(position_id="EQ1", current_stop=200.4, best_price=201.5, armed_be=True,
+                                    state_updates={"armed_trail": True, "trail_bar_ts": "2026-09-10T11:05:00+05:30"})
+            pos = make().positions["TATASTEEL"]
+            self.assertTrue(pos["armed_trail"])
+            self.assertEqual((pos["current_stop"], pos["trail_bar_ts"]), (200.4, "2026-09-10T11:05:00+05:30"))
+            # and a row whose state never got the update (saved before state_updates existed) still restores armed from the column
+            db.update_position_stop(position_id="EQ1", current_stop=200.4, best_price=201.5, armed_be=True)
+            con = sqlite3.connect(path)
+            con.execute("UPDATE positions SET state = ? WHERE position_id = 'EQ1'", (_json.dumps({"armed_trail": False, "activation_price": 201.2, "trail_mult": 0.3}),))
+            con.commit(); con.close()
+            self.assertTrue(make().positions["TATASTEEL"]["armed_trail"])
+
     def test_a_long_only_strategy_can_never_open_a_short(self):
         with _dry_runner(ToyShort()) as (make, sim, bars, alerts, path):
             bars["TATASTEEL"] = [_bar(200.0)]

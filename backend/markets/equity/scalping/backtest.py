@@ -208,6 +208,9 @@ def _simulate_symbol_candidates(sym: str, from_date: str | None, to_date: str | 
                     "entry_time": pos["entry_time"], "exit_time": c_time,
                     "entry_price": pos["entry_price"], "exit_price": exit_p,
                     "stop_dist": pos["stop_dist"], "reason": reason,
+                    # exit parameters as set at entry -- lets a finer-grained replay re-run the exit on 1-minute data
+                    "sl": pos["sl"], "activation_price": pos["activation_price"], "trail_mult": pos["trail_mult"],
+                    "hold_bars": pos.get("hold", HOLD_BARS),
                 })
                 in_pos = False
                 pos = {}

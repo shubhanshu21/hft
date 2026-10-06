@@ -49,13 +49,18 @@ class TestDynamicExit(unittest.TestCase):
         candles.append({"timestamp": "2026-09-28T10:05:00+05:30", "open": 96.0, "high": 96.10, "low": 96.0, "close": 96.08, "volume": 3000})
         with patch.object(type(STRATEGY), "close_at", new_callable=PropertyMock, return_value=(16, 25)):
             decision = STRATEGY.manage(pos, ExitContext(symbol="USDINR", candles=candles, now=entry_time + timedelta(minutes=8)))
+            self.assertIsNone(decision)
+            # 10:08: the 10:05 bar is still forming -- it is checked against the stop, but moves nothing (core/exits._manage_bars)
+            self.assertFalse(pos["armed_trail"])
+            self.assertEqual(pos["current_stop"], 95.94)
+            decision = STRATEGY.manage(pos, ExitContext(symbol="USDINR", candles=candles, now=entry_time + timedelta(minutes=11)))
         self.assertIsNone(decision)
-        self.assertTrue(pos["armed_trail"])                                       # 96.10 passed the 96.036 activation
+        self.assertTrue(pos["armed_trail"])                                       # 10:11: the bar is complete; 96.10 passed the 96.036 activation
         self.assertGreater(pos["current_stop"], 95.94)                            # the stop moved up to the lock / trail
         fixed = {"direction": "long", "entry_price": 96.0, "entry_time": entry_time, "stop_dist": 0.06, "current_stop": 95.94, "best_price": 96.0, "tp": 96.2, "be": 96.03, "armed_be": False,
                  "entry_bar_ts": "2026-09-28T10:00:00+05:30"}
         with patch.object(type(STRATEGY), "close_at", new_callable=PropertyMock, return_value=(16, 25)):
-            STRATEGY.manage(fixed, ExitContext(symbol="USDINR", candles=candles, now=entry_time + timedelta(minutes=8)))
+            STRATEGY.manage(fixed, ExitContext(symbol="USDINR", candles=candles, now=entry_time + timedelta(minutes=11)))
         self.assertTrue(fixed["armed_be"])                                        # the original break-even path
 
     def test_restore_reads_the_persisted_state(self):

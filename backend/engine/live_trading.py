@@ -357,6 +357,9 @@ class LiveTrader(RiskGates):
             pos.update(strat.restore(p))
             if p.get("state"):
                 pos.update(json.loads(p["state"]))
+            for k in ("armed_be", "armed_trail"):
+                if k in pos:
+                    pos[k] = bool(p["armed_be"])     # the armed flag changes after entry: the column, not the entry-time state (see live_dryrun)
             self.positions[p["symbol"]] = pos
             log.warning("Restored OPEN real position from DB on startup: %s %s qty=%s -- "
                         "verify this matches the actual Upstox position book before trusting it.",
@@ -655,14 +658,15 @@ class LiveTrader(RiskGates):
         if not candles:
             return
         armed_key = "armed_be" if "armed_be" in pos else "armed_trail"
-        before = (pos["current_stop"], pos.get(armed_key))
+        before = (pos["current_stop"], pos.get(armed_key), pos.get("trail_bar_ts"))
         decision = strat.manage(pos, ExitContext(symbol=sym, candles=candles, now=now))
         if decision is not None:
             self._exit(sym, pos, decision, now)
             return
-        if (pos["current_stop"], pos.get(armed_key)) != before:
+        if (pos["current_stop"], pos.get(armed_key), pos.get("trail_bar_ts")) != before:
             self.db.update_position_stop(position_id=pos["position_id"], current_stop=pos["current_stop"],
-                                          best_price=pos["best_price"], armed_be=bool(pos.get(armed_key, False)))
+                                          best_price=pos["best_price"], armed_be=bool(pos.get(armed_key, False)),
+                                          state_updates={k: pos[k] for k in (armed_key, "trail_bar_ts") if k in pos})     # see core/exits._manage_bars
 
     def _exit(self, sym: str, pos: dict, decision, now: datetime) -> None:
         reason, expected_price = decision.reason, decision.price

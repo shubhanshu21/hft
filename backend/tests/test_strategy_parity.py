@@ -5,8 +5,11 @@ strategy-driven code reproduces them exactly:
 
   * live_scenarios.json -- what would reach the broker (side, quantity, product, tag), the DB rows and the alert
     kinds for scripted real-order entries, slippage re-anchoring, rejections, ambiguous fills and exits.
-  * replay_quick.json   -- 152 orders / 76 trades from replaying DryRunner.scan() bar by bar over recorded
-    commodity, currency and equity data (every exit type exercised).
+  * replay_quick.json   -- 72 orders / 36 trades from replaying DryRunner.scan() bar by bar over recorded
+    commodity, currency and equity data (every exit type exercised). Re-recorded 2026-10-05 when live short
+    entries were aligned with the backtests' symmetric rules (markets/commodity/scalping/entry_signal.py): a
+    2026-09-01 crude short that armed at the old 0.4R breakeven now runs to its stop, and the day's 5% loss
+    kill switch then halts the rest of that day's entries -- every other difference is that cascade.
 
 If you change trading behaviour ON PURPOSE (a threshold, an exit rule), regenerate the golden that moved:
 

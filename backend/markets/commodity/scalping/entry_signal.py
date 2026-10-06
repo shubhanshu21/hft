@@ -138,11 +138,14 @@ def compute_entry_signal(
         direction = "long"
         setup_type = "trend_breakout"
 
-    # Setup 1 (SHORT): Panic Liquidation Breakdown (requires 25% higher volume surge & steeper velocity)
-    elif direction_filter != "long" and adx >= (min_adx + 3.0) and dmn > dmp and ema_s < (-min_ema_slope * 1.2) and orb_l_dist <= (-min_orb * 1.1) and vwap_d <= (-min_vwap * 1.1) and vol_s >= (min_vol * 1.25):
+    # Setup 1 (SHORT): the mirror of the long -- the same thresholds the backtests validated (markets/commodity/scalping/backtest.py,
+    # markets/currency/scalping/backtest.py). Until 2026-10-05 live shorts used stricter, never-backtested rules (ADX +3, slope x1.2, ORB/VWAP
+    # x1.1, volume x1.25, take-profit x0.8, breakeven at 0.4R). Put into the backtests as `live_short_rules` and run on the real archive, they
+    # took fewer trades and made less: TEST (2026-08-01..10-01) +Rs31,084 vs +Rs43,531 symmetric across SILVERMIC/CRUDEOILM/GOLDTEN/USDINR,
+    # TRAIN (05-18..07-31) +Rs18,205 vs +Rs20,491.
+    elif direction_filter != "long" and adx >= min_adx and dmn > dmp and ema_s < -min_ema_slope and orb_l_dist <= -min_orb and vwap_d <= -min_vwap and vol_s >= min_vol:
         direction = "short"
         setup_type = "trend_breakout"
-        tp_mult = max(1.4, tp_mult * 0.80)  # quicker profit lock on shorts
 
     # Setup 2: Statistical VWAP Mean-Reversion Extremes (MCX Commodities only, not currencies).
     # Deliberately NOT blocked by regime_ok: mean-reversion BENEFITS from choppy/mean-reverting
@@ -220,11 +223,10 @@ def compute_entry_signal(
         return None
 
     d = 1 if direction == "long" else -1
-    sl = round(entry - sdist * d, 2)
-    tp = round(entry + tp_mult * sdist * d, 2)
-    # Asymmetric breakeven lock: 0.40R on shorts to protect against violent short squeeze, 0.60R on longs
-    be_mult = 0.40 if direction == "short" else 0.60
-    be = round(entry + be_mult * sdist * d, 2)
+    nd = 4 if is_curr else 2                                    # currency ticks are 0.0025: 2 decimals moved USDINR levels by up to ~8% of a stop distance
+    sl = round(entry - sdist * d, nd)
+    tp = round(entry + tp_mult * sdist * d, nd)
+    be = round(entry + 0.60 * sdist * d, nd)                    # breakeven arm at 0.6R both ways, as in the backtests (BE_ACTIVATION_MULT)
 
     return {
         "symbol": sym, "direction": direction, "entry_price": entry,

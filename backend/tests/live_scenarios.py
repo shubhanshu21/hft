@@ -75,7 +75,7 @@ def _trader(broker, db_path):
     env = {"USE_COMMODITY_REGIME_FILTER": "false", "USE_EQUITY_REGIME_FILTER": "false", "ENABLE_MEAN_REVERSION": "false",
            "EQUITY_PULLBACK_FRAC": "0", "COMMODITY_PULLBACK_FRAC": "0", "CURRENCY_PULLBACK_FRAC": "0", "CRUDEOILM_PULLBACK_FRAC": "0",
            "CURRENCY_EXIT_MODE": "fixed", "USDINR_EXIT_MODE": "fixed",
-           "SILVERMIC_INTRADAY_CHOP_WINDOW": "0", "USDINR_INTRADAY_CHOP_WINDOW": "0"}
+           "SILVERMIC_INTRADAY_CHOP_WINDOW": "0", "USDINR_INTRADAY_CHOP_WINDOW": "0", "LIVE_BAR_COMPLETE_LAG_S": "0"}
     with patch.dict(os.environ, env), patch.object(live_trading, "_build_symbol_map", lambda: {}):
         return live_trading.LiveTrader(broker=broker, db=TradingDB(db_path), symbols=["CRUDEOILM"], capital=100000.0,
                                        risk_pct=4.0, leverage=5.0, account_id="SCEN")

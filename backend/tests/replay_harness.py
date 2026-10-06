@@ -71,6 +71,8 @@ ENV = {
     # intraday chop gates (markets/commodity/scalping/entry_signal.py) are operator opt-ins in .env; the goldens pin them off --
     # found 2026-10-03 when USDINR_INTRADAY_CHOP_WINDOW=65 going live changed which golden-fixture trades fired
     "SILVERMIC_INTRADAY_CHOP_WINDOW": "0", "USDINR_INTRADAY_CHOP_WINDOW": "0",
+    # the harness scans once per bar with only COMPLETED archive bars visible (now = bar + 5m10s): every bar it shows is finished
+    "LIVE_BAR_COMPLETE_LAG_S": "0",
 }
 
 

@@ -1,7 +1,7 @@
 """NSE equity intraday scalping -- the existing validated scalper behind the Strategy contract.
 
-No fixed take-profit: an ADX-scaled activation level arms a trailing stop that is recomputed from
-the current bar's ATR every scan (core/exits.activation_trail).
+No fixed take-profit: an ADX-scaled activation level arms a trailing stop, moved once per completed
+5-minute bar using that bar's ATR and checked on every scan (core/exits.activation_trail_bars).
 """
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from core import sessions
 
 import pandas as pd
 
-from core.exits import activation_trail
+from core.exits import activation_trail_bars
 from core.strategy import EntryContext, ExitContext, ExitDecision, Signal, Strategy
 from markets.equity.costs import compute_nse_equity_costs
 from markets.equity.features import compute_equity_features
@@ -59,8 +59,12 @@ class EquityScalping(Strategy):
         if not ctx.candles or len(ctx.candles) < 25:
             return None
         feat = compute_equity_features(pd.DataFrame(ctx.candles))
-        atr = float(feat["atr"].iloc[-1]) if len(feat) else pos["stop_dist"]
-        return activation_trail(pos, ctx.candles[-1], atr, ctx.now, close_at=self.close_at, max_hold_s=HOLD_SECONDS)
+        atr_by_ts = dict(zip(feat["timestamp"].astype(str), feat["atr"].astype(float))) if len(feat) else {}
+
+        def atr_of(candle: dict) -> float:                      # the trail distance comes from the completed bar that moves it (as in the backtest)
+            atr = atr_by_ts.get(str(candle["timestamp"]), float(pos["stop_dist"]))
+            return atr if atr == atr and atr > 0 else float(pos["stop_dist"])
+        return activation_trail_bars(pos, ctx.candles, atr_of, ctx.now, close_at=self.close_at, max_hold_s=HOLD_SECONDS)
 
     def costs(self, symbol: str, direction: str, entry: float, exit_price: float, qty: int) -> dict:
         return compute_nse_equity_costs(direction, entry, exit_price, qty)

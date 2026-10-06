@@ -8,10 +8,15 @@ one here only if it needs a genuinely different exit shape.
 Both mutate the position dict (stop / best price / armed flag) exactly as the runners did and
 return an ExitDecision when the trade should close, else None. They are pure with respect to
 the broker and the DB.
+
+Live strategies call the *_bars versions (fixed_tp_breakeven_trail_bars, activation_trail_bars), which take the whole candle
+list and move the stop only once a 5-minute bar is COMPLETE -- see _manage_bars for why. The single-bar functions below them are
+the per-bar step, kept for callers that already hand them one completed bar at a time.
 """
 from __future__ import annotations
 
-from datetime import datetime
+import os
+from datetime import datetime, timedelta
 
 from core.strategy import ExitDecision
 
@@ -135,3 +140,141 @@ def activation_trail(pos: dict, latest: dict, atr: float, now: datetime, *,
         trail = pos["best_price"] - trail_dist * d
         pos["current_stop"] = max(pos["current_stop"], trail) if d == 1 else min(pos["current_stop"], trail)
     return None
+
+
+# ---------------------------------------------------------------------------------------------------------------------------------------
+# Bar-sequence exit managers: what live strategies call. The stop is CHECKED on every scan against the bar-so-far, but it MOVES (breakeven
+# arm, trail) only from a COMPLETED bar -- exactly the order the backtests use (bar i's adverse extreme is tested against the stop as it
+# stood before bar i; bar i's favourable extreme then moves the stop for bar i+1 onward).
+#
+# Why (found 2026-10-05, measured on 1-minute data): the single-bar functions above were called with the still-FORMING 5-minute bar on
+# every 30-second scan. A scan that saw the forming bar's high raised the stop; the NEXT scan of the same bar then tested that bar's LOW
+# -- often made minutes BEFORE the high -- against the raised stop and closed the trade at a price that never traded after the stop moved.
+# It cut winners short: live paper trades exited 1.5-6 minutes after entry with small gains while losses ran to the full stop. Replaying the
+# backtests' own entries at 1-minute resolution, same entries, only the exit mechanics varied: commodity+currency (537 trades, 2026-05-18
+# ..10-01) backtest-style exits +Rs63,012, live's same-bar mechanics -Rs57,282, these bar-sequence mechanics +Rs52,689; equity (208 trades,
+# 2026-05-12..10-01) -Rs12,750 / -Rs72,875 / -Rs12,750. Moving the stop every minute, even with correct ordering, recovered only part of it
+# (commodity+currency +Rs13,262): the validated edge depends on the trail being advanced once per 5-minute bar.
+# ---------------------------------------------------------------------------------------------------------------------------------------
+BAR_SECONDS = 300
+
+
+def bar_complete_lag_s() -> float:
+    """Seconds after a bar's nominal end before its candle counts as complete: Upstox publishes a minute's bar ~15-20 s after it ends
+    (measured 2026-10-05), so the 5-minute candle is missing its last minute until then. A newer candle in the list settles it sooner."""
+    return float(os.environ.get("LIVE_BAR_COMPLETE_LAG_S", "45"))
+
+
+def _naive_pair(a: datetime, b: datetime) -> tuple[datetime, datetime]:
+    if (a.tzinfo is None) != (b.tzinfo is None):
+        return a.replace(tzinfo=None), b.replace(tzinfo=None)
+    return a, b
+
+
+def _is_complete(candles: list[dict], i: int, now: datetime, interval_s: int, lag_s: float) -> bool:
+    if i < len(candles) - 1:
+        return True                                              # a newer candle exists: this one is finished
+    end, n = _naive_pair(_ts(candles[i]["timestamp"]) + timedelta(seconds=interval_s + lag_s), now)
+    return n >= end
+
+
+def _stop_hit(pos: dict, fav: float, adv: float, d: int, check_tp: bool, armed_key: str, moved_reason: str) -> ExitDecision | None:
+    if check_tp and (fav >= pos["tp"] if d == 1 else fav <= pos["tp"]):
+        return ExitDecision(pos["tp"], "take_profit")
+    if (adv <= pos["current_stop"] if d == 1 else adv >= pos["current_stop"]):
+        return ExitDecision(pos["current_stop"], moved_reason if pos.get(armed_key) else "initial_stop")
+    return None
+
+
+def _raise(pos: dict, level: float, d: int) -> None:
+    pos["current_stop"] = max(pos["current_stop"], level) if d == 1 else min(pos["current_stop"], level)
+
+
+def _apply_fixed(pos: dict, fav: float, d: int) -> None:
+    if not pos["armed_be"] and (fav >= pos["be"] if d == 1 else fav <= pos["be"]):
+        pos["armed_be"] = True
+        _raise(pos, lock_stop(pos["entry_price"], pos["be"], d), d)
+    if pos["armed_be"]:
+        pos["best_price"] = max(pos["best_price"], fav) if d == 1 else min(pos["best_price"], fav)
+        _raise(pos, pos["best_price"] - FIXED_TP_TRAIL_MULT * pos["stop_dist"] * d, d)
+
+
+def _apply_activation(pos: dict, fav: float, atr: float, d: int) -> None:
+    if not pos["armed_trail"] and (fav >= pos["activation_price"] if d == 1 else fav <= pos["activation_price"]):
+        pos["armed_trail"] = True
+        _raise(pos, lock_stop(pos["entry_price"], pos["activation_price"], d), d)
+    if pos["armed_trail"]:
+        pos["best_price"] = max(pos["best_price"], fav) if d == 1 else min(pos["best_price"], fav)
+        _raise(pos, pos["best_price"] - pos["trail_mult"] * max(atr, pos["stop_dist"] * 0.1) * d, d)
+
+
+def _manage_bars(pos: dict, candles: list[dict], now: datetime, *, kind: str, atr_of, close_at, max_hold_s,
+                 interval_s: int, lag_s: float | None) -> ExitDecision | None:
+    if not candles:
+        return None
+    lag_s = bar_complete_lag_s() if lag_s is None else lag_s
+    d = 1 if pos["direction"] == "long" else -1
+    armed_key, moved_reason, check_tp = ("armed_be", "be_stop", True) if kind == "fixed" else ("armed_trail", "trail_stop", False)
+    if pos.get("entry_bar_ts") is None:                          # a row saved before entry bars were recorded: treat the bar we first see as the entry bar
+        pos["entry_bar_ts"] = str(candles[-1]["timestamp"])
+    ebar = _ts(pos["entry_bar_ts"])
+    if pos.get("trail_bar_ts") is None:
+        if pos.get(armed_key):
+            # A position from before this field existed that has already moved its stop: re-testing old bars against today's stop would close it
+            # on prices from before the move -- start from the newest completed bar instead.
+            done = [str(c["timestamp"]) for i, c in enumerate(candles) if _is_complete(candles, i, now, interval_s, lag_s)]
+            pos["trail_bar_ts"] = done[-1] if done else pos["entry_bar_ts"]
+        else:
+            pos["trail_bar_ts"] = pos["entry_bar_ts"]
+    applied = _ts(pos["trail_bar_ts"])
+    last = len(candles) - 1
+    for i, c in enumerate(candles):
+        ts = _ts(c["timestamp"])
+        ts_cmp, e_cmp = _naive_pair(ts, ebar)
+        if ts_cmp < e_cmp:
+            continue
+        if ts_cmp == e_cmp:
+            if i == last:                                        # still inside the entry bar: only its latest price is known to be post-entry (see _side)
+                px = float(c["close"])
+                dec = _stop_hit(pos, px, px, d, check_tp, armed_key, moved_reason)
+                if dec is not None:
+                    return dec
+            continue
+        ts_cmp, a_cmp = _naive_pair(ts, applied)
+        if ts_cmp <= a_cmp:
+            continue                                             # already tested and applied on an earlier scan
+        fav = float(c["high"]) if d == 1 else float(c["low"])
+        adv = float(c["low"]) if d == 1 else float(c["high"])
+        dec = _stop_hit(pos, fav, adv, d, check_tp, armed_key, moved_reason)
+        if dec is not None:
+            return dec
+        if not _is_complete(candles, i, now, interval_s, lag_s):
+            break                                                # the forming bar: tested against the stop as it stood when the bar began, moves nothing
+        if kind == "fixed":
+            _apply_fixed(pos, fav, d)
+        else:
+            _apply_activation(pos, fav, atr_of(c), d)
+        pos["trail_bar_ts"] = str(c["timestamp"])
+        applied = ts
+    close = float(candles[-1]["close"])
+    if max_hold_s is not None and (now - pos["entry_time"]).total_seconds() >= max_hold_s:
+        return ExitDecision(close, "timeout_exit")
+    deadline = _deadline(now, close_at)
+    if deadline is not None and now >= deadline:
+        return ExitDecision(close, "eod_squareoff")
+    return None
+
+
+def fixed_tp_breakeven_trail_bars(pos: dict, candles: list[dict], now: datetime, *, close_at: tuple[int, int] | None,
+                                  max_hold_s: float | None, interval_s: int = BAR_SECONDS, lag_s: float | None = None) -> ExitDecision | None:
+    """fixed_tp_breakeven_trail over the candle list: checks every scan, moves the stop only on completed bars (see the block comment above).
+    Persist pos["trail_bar_ts"] with the position so a restart continues from the last bar applied."""
+    return _manage_bars(pos, candles, now, kind="fixed", atr_of=None, close_at=close_at, max_hold_s=max_hold_s, interval_s=interval_s, lag_s=lag_s)
+
+
+def activation_trail_bars(pos: dict, candles: list[dict], atr_of, now: datetime, *, close_at: tuple[int, int] | None,
+                          max_hold_s: float | None, interval_s: int = BAR_SECONDS, lag_s: float | None = None) -> ExitDecision | None:
+    """activation_trail over the candle list. `atr_of(candle)` returns that COMPLETED bar's ATR -- the trail distance for the next bar
+    comes from the bar that moved it, as in the equity backtest (markets/equity/scalping/backtest.py: cur_atr = atrs[i])."""
+    return _manage_bars(pos, candles, now, kind="activation", atr_of=atr_of, close_at=close_at, max_hold_s=max_hold_s,
+                        interval_s=interval_s, lag_s=lag_s)
