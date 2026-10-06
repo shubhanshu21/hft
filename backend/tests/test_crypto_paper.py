@@ -17,6 +17,8 @@ _saved_env: dict = {}
 
 def setUpModule():
     """The operator's .env (loaded by other test modules) sets leverage, strategy and demo keys: pin them so these tests never depend on it or reach an exchange."""
+    from engine import crypto_breakout
+    crypto_breakout.DB_PATH = Path(tempfile.mkdtemp()) / "breakout.db"      # never the operator's ledger
     for k in _ENV_KEYS:
         _saved_env[k] = os.environ.pop(k, None)
     os.environ["CRYPTO_LEVERAGE"] = "1.0"

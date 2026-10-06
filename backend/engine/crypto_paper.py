@@ -217,16 +217,21 @@ class DemoExecutor:
         con.commit()
 
     def sync(self, con, qty: dict, symbols) -> None:
+        from engine import crypto_breakout
         for s in symbols:
             spot = self.c.spot_balance(s[:-4]) - float(get_state(con, f"base_spot_{s}", 0.0))
-            perp = self.c.futures_position(s)["amt"] - float(get_state(con, f"base_perp_{s}", 0.0))
+            # the exchange holds ONE perpetual position per coin, shared with the breakout sleeve (engine/crypto_breakout.py): take its part out
+            perp = self.c.futures_position(s)["amt"] - float(get_state(con, f"base_perp_{s}", 0.0)) - crypto_breakout.open_qty(s)
             qty[s] = max(spot, 0.0) + perp
 
     def funding(self, con, symbols, qty, prices, now, get_funding, share) -> float:
+        from engine import crypto_breakout
         since = int(get_state(con, "last_funding_ms", int(now.timestamp() * 1000)))
         total = sum(self.c.futures_income(since + 1, s) for s in symbols)
         set_state(con, "last_funding_ms", int(now.timestamp() * 1000))
-        return total
+        seen, now_total = float(get_state(con, "seen_breakout_funding", crypto_breakout.funding_total())), crypto_breakout.funding_total()
+        set_state(con, "seen_breakout_funding", now_total)
+        return total - (now_total - seen)                                       # the account's funding includes the breakout sleeve's: not ours
 
     def _ensure_margin(self, symbol: str) -> None:
         if symbol not in self._margin_set:
@@ -255,7 +260,10 @@ class DemoExecutor:
                 else:
                     log.info("%s: spot order of %.6g is below the exchange minimum (%.6g coins / %.2f USDT) -- skipped", s, qf, f["min_qty"], f["min_notional"])
             dperp = perp1 - perp0
+            from engine import crypto_breakout
+            shared = crypto_breakout.open_qty(s) != 0                            # the breakout sleeve also holds this coin: the exchange nets the two, so never reduce-only
             for side, q, reduce_only in perp_legs(perp0, dperp):
+                reduce_only = reduce_only and not shared
                 f = self.c.filters("futures", s)
                 qf = floor_step(q, f["step"])
                 if reduce_only:
@@ -467,9 +475,27 @@ def main(argv=None) -> int:
         if os.environ.get("ENABLE_CRYPTO_TRADING", "true").lower() not in ("1", "true", "yes"):
             print("ENABLE_CRYPTO_TRADING is off")
             return 0
+        from engine import crypto_breakout
+        breakout_on = os.environ.get("CRYPTO_BREAKOUT_ENABLED", "false").lower() in ("1", "true", "yes")
+        bcon = crypto_breakout.connect() if breakout_on else None
+        if bcon is not None and crypto_breakout.get_state(bcon, "capital") is None:
+            crypto_breakout.reset(bcon, float(os.environ.get("CRYPTO_BREAKOUT_CAPITAL_USDT", os.environ.get("CRYPTO_CAPITAL_USDT", "500"))))
+        bfills = (crypto_breakout.DemoFills(executor.c) if isinstance(executor, DemoExecutor) else crypto_breakout.SimFills()) if breakout_on else None
+
+        def breakout_cycle():
+            # AFTER the blend, in the same process: the blend has just read the exchange with this sleeve's last known quantity subtracted
+            if bcon is not None:
+                try:
+                    crypto_breakout.run_cycle(bcon, symbols, bfills)
+                except Exception as exc:
+                    log.error("breakout cycle failed: %s", exc)
+
         if a.once:
             r = run_cycle(con, symbols, executor=executor)
+            breakout_cycle()
             print(status(con))
+            if bcon is not None:
+                print(crypto_breakout.status(bcon))
             return 0
         DB_DIR.mkdir(parents=True, exist_ok=True)
         lock = open(LOCK_PATH, "w")
@@ -482,12 +508,17 @@ def main(argv=None) -> int:
         os_signal.signal(os_signal.SIGTERM, lambda *_: stop.update(now=True))
         log.info("crypto trading started: %s, %s USDT, executed on %s, leverage %sx", ", ".join(symbols), f"{capital:,.0f}", executor.name, get_state(con, "leverage", "1.0"))
         telegram.send(f"<b>CRYPTO trading started</b> — {', '.join(symbols)}, {get_state(con, 'strategy', 'blend')} strategy, {get_state(con, 'leverage', '1.0')}x, executed on {executor.name}.")
+        if bcon is not None:
+            log.info("breakout sleeve on: %s USDT, executed on %s", crypto_breakout.get_state(bcon, "capital"), bfills.name)
         while not stop["now"]:
             try:
                 run_cycle(con, symbols, executor=executor)
             except Exception as exc:                                    # a network blip must not kill the daemon; the next cycle retries
                 log.error("cycle failed: %s", exc)
-            time.sleep(_next_wake(datetime.now(timezone.utc)))
+            breakout_cycle()
+            wake = time.monotonic() + _next_wake(datetime.now(timezone.utc))
+            while not stop["now"] and time.monotonic() < wake:          # a stop request (systemctl stop/restart) is honoured within a second, not after the whole wait
+                time.sleep(1.0)
     return 0
 
 

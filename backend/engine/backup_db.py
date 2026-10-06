@@ -48,6 +48,7 @@ CRYPTO_TABLES = ("state", "holdings", "trades", "equity")
 DATABASES = {
     "main": ("paper_trading", DB_PATH, TABLES, "accounts"),
     "crypto": ("crypto_paper", CRYPTO_DB_PATH, CRYPTO_TABLES, "equity"),
+    "breakout": ("crypto_breakout", DB_DIR / "crypto_breakout.db", ("state", "positions", "trades", "equity"), "equity"),   # engine/crypto_breakout.py
 }
 
 log = get_logger("backup_db")
