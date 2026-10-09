@@ -48,8 +48,11 @@ def _bar(ts, rows: pd.DataFrame) -> dict:
 
 def replay(trade: dict, m1: pd.DataFrame, b5: pd.DataFrame, atr5: pd.Series, *, mode: str, kind: str,
            close_at: tuple[int, int], hold_s: float, max_bars: int = 400) -> tuple[float, str, pd.Timestamp]:
-    """kind: 'fixed_tp' (MCX / currency fixed exit) or 'activation' (currency dynamic / equity). Returns (exit price, reason, exit time)."""
+    """kind: 'fixed_tp' (MCX / currency fixed exit) or 'activation' (currency dynamic / equity). Returns (exit price, reason, exit time).
+    A pullback entry that filled and was stopped inside its own bar (trade["stopped_on_fill"]) has no exit to replay: its stop-out is kept."""
     T = pd.Timestamp(trade["entry_time"])
+    if trade.get("stopped_on_fill"):
+        return float(trade["exit_price"]), "initial_stop", T
     d = 1 if trade["direction"] == "long" else -1
     entry = float(trade["entry_price"])
     pos = {"direction": trade["direction"], "entry_price": entry, "entry_time": (T + timedelta(minutes=5) + SCAN_LAG).to_pydatetime(),
@@ -71,7 +74,7 @@ def replay(trade: dict, m1: pd.DataFrame, b5: pd.DataFrame, atr5: pd.Series, *, 
         if B.strftime("%Y-%m-%d") != day:
             break
         if mode == "bar":
-            dec = single({"timestamp": B.isoformat(), "high": row["high"], "low": row["low"], "close": row["close"]},
+            dec = single({"timestamp": B.isoformat(), "open": row["open"], "high": row["high"], "low": row["low"], "close": row["close"]},
                          (B + timedelta(minutes=5) + SCAN_LAG).to_pydatetime(), float(atr5.get(B, pos["stop_dist"])))
             if dec is not None:
                 return dec.price, dec.reason, B

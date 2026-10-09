@@ -1,14 +1,17 @@
 """Opt-in 'do not chase' entry shared by the backtests (research only; live trading is unchanged).  See docs/FIVE_MINUTE_SIGNAL_SCREEN.md.
 
 The 5-minute screen found that the most stable pattern after a strong bar is a small reversal over the next 15 minutes -- exactly where the trend rule buys. `step` turns a signal into a RESTING LIMIT a fraction of a stop distance
-better than the signal price, valid for `bars` bars: it fills only if a later bar trades to the limit (through it by `through` stop-distances, a conservative queue assumption) without also trading through the stop; otherwise the signal is dropped.
+better than the signal price, valid for `bars` bars: it fills only if a later bar trades to the limit (through it by `through` stop-distances, a conservative queue assumption); if that bar also trades through the stop, the fill is followed by an immediate stop-out (a loss, not a missed trade).
 """
 from __future__ import annotations
 
 
 def step(pending: dict | None, i: int, direction: str | None, sdist: float, c_price: float, c_low: float, c_high: float,
-         frac: float, bars: int, through: float = 0.0) -> tuple[dict | None, str | None, float, float]:
-    """Returns (pending, direction, sdist, price). `direction` is None when there is no entry on this bar; otherwise the entry is `direction` at `price` with stop distance `sdist`."""
+         frac: float, bars: int, through: float = 0.0) -> tuple[dict | None, str | None, float, float, bool]:
+    """Returns (pending, direction, sdist, price, stopped). `direction` is None when there is no entry on this bar; otherwise the entry is
+    `direction` at `price` with stop distance `sdist`. `stopped` is True when the bar that reached the limit also reached the stop: price passes
+    the limit on its way to the stop, so the order filled and was stopped out inside this bar -- a full one-stop loss the caller must record.
+    (Such bars used to drop the signal as "never filled", hiding exactly the worst trades: 226 equity trades 2022-26, docs/FILL_MODEL_AUDIT.md.)"""
     if pending is not None and i - pending["idx"] > bars:
         pending = None                                              # never filled in time
     if pending is not None:
@@ -16,13 +19,13 @@ def step(pending: dict | None, i: int, direction: str | None, sdist: float, c_pr
         long = d == "long"
         touched = (c_low <= lim - through * psd) if long else (c_high >= lim + through * psd)
         blown = (c_low <= lim - psd) if long else (c_high >= lim + psd)
-        if touched and not blown:
-            return None, d, psd, lim
-        return (None if blown else pending), None, sdist, c_price
+        if touched:
+            return None, d, psd, lim, blown
+        return (None if blown else pending), None, sdist, c_price, False
     if direction:
         sign = 1 if direction == "long" else -1
-        return {"direction": direction, "idx": i, "sdist": sdist, "limit": round(c_price - sign * frac * sdist, 4)}, None, sdist, c_price
-    return None, None, sdist, c_price
+        return {"direction": direction, "idx": i, "sdist": sdist, "limit": round(c_price - sign * frac * sdist, 4)}, None, sdist, c_price, False
+    return None, None, sdist, c_price, False
 
 
 # ---------------------------------------------------------------------------------------------------------------------------------------------------
@@ -79,9 +82,11 @@ class PendingBook:
         return self._p[symbol]
 
     def check(self, symbol: str, candles: list[dict], now: datetime):
-        """('none'|'wait'|'filled'|'dropped', shifted Signal | None). Looks at the bars AFTER the signal bar (the forming bar included) exactly like the backtest:
-        filled when a bar trades to the limit (through it by `through` stop-distances) without also trading through the stop; dropped when a bar trades through
-        the stop, the day changes, or `bars` bars passed without a fill ('none' = expired, the caller may look for a fresh signal)."""
+        """('none'|'wait'|'filled'|'stopped'|'dropped', shifted Signal | None). Looks at the bars AFTER the signal bar (the forming bar included) exactly like the
+        backtest: filled when a bar trades to the limit (through it by `through` stop-distances); 'stopped' when that same bar (as seen by this scan) also traded
+        through the stop -- the order filled on the way and the caller records an immediate stop-out; 'none' when the day changes or `bars` bars passed
+        without a fill (expired, the caller may look for a fresh signal); 'dropped' only when the stop is reached without the limit being touched
+        (possible only with `through` >= 1)."""
         p = self._p.get(symbol)
         if p is None:
             return "none", None
@@ -94,12 +99,12 @@ class PendingBook:
         for c in rows[: p["bars"]]:
             touched = (c["low"] <= lim - through * sd) if long else (c["high"] >= lim + through * sd)
             blown = (c["low"] <= lim - sd) if long else (c["high"] >= lim + sd)
+            if touched:
+                self.clear(symbol)
+                return ("stopped" if blown else "filled"), shift_signal(sig, lim)
             if blown:
                 self.clear(symbol)
                 return "dropped", None
-            if touched:
-                self.clear(symbol)
-                return "filled", shift_signal(sig, lim)
         if len(rows) > p["bars"]:
             self.clear(symbol)
             return "none", None                                       # expired unfilled

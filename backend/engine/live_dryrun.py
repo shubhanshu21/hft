@@ -885,7 +885,7 @@ class DryRunner(RiskGates):
                    risk_pct=base_risk_pct * self._drawdown_risk_scale(), leverage=leverage, direction_filter=self.direction_filter,
                    full_session=self.full_session, regime_ok=regime_ok, equity_regime_ok=self._gate_flags()["equity_regime_ok"])
         pb = entry_pullback.config_for(sym, market)
-        from_pullback = False
+        from_pullback = stopped_on_fill = False
         sig_result = None
         if pb and sym in self.pending_entries:
             status, shifted = self.pending_entries.check(sym, candles, now)
@@ -893,9 +893,10 @@ class DryRunner(RiskGates):
                 if status == "dropped":
                     log.info("%s: pullback limit dropped (price ran through the stop before it filled).", sym)
                 return False
-            if status == "filled":
-                sig_result, from_pullback = shifted, True
-                log.info("%s: pullback limit FILLED at %s (signal was %s).", sym, shifted.entry_price, "long" if shifted.direction == "long" else "short")
+            if status in ("filled", "stopped"):
+                sig_result, from_pullback, stopped_on_fill = shifted, True, status == "stopped"
+                log.info("%s: pullback limit FILLED at %s (signal was %s)%s.", sym, shifted.entry_price, "long" if shifted.direction == "long" else "short",
+                         " and price then ran through the stop before this scan -- stopped out" if stopped_on_fill else "")
         if sig_result is None:
             sig_result = strat.entry(EntryContext(capital=sizing_capital, **ctx)) if sizing_capital > 0 else None
         if not sig_result:
@@ -983,6 +984,8 @@ class DryRunner(RiskGates):
         self.positions[sym] = {**sig, "entry_time": now, "current_stop": sl, "best_price": entry, **sig_result.exit_state}
         # Rehearse the same order against Upstox's sandbox (background, off unless UPSTOX_SANDBOX_TOKEN is set): paper trading is never affected.
         sandbox_rehearsal.submit("entry", sym, market, SYMBOL_MAP.get(sym), "BUY" if direction == "long" else "SELL", qty, sig_result.lot_size, pos_id)
+        if stopped_on_fill:
+            self._close_position(sym, self.positions[sym], sl, "initial_stop", now)       # the resting limit filled, then the stop: a real loss, not a missed trade
         return True
 
     def _maybe_exit(self, sym: str, now: datetime):

@@ -1,5 +1,7 @@
 # Why the live paper account lost money while the backtests made money (2026-10-05)
 
+> **2026-10-07:** the rupee figures below come from the old fill model, which filled stops at prices the market had already passed. See [FILL_MODEL_AUDIT.md](FILL_MODEL_AUDIT.md) for the corrected numbers; equity is now off.
+
 **Short answer:** the live engine managed exits differently from every backtest, and the difference cut winning trades short. Same
 entries, exits replayed at 1-minute resolution: commodity + currency went from **+Rs63,012** (backtest mechanics) to **-Rs57,282**
 (live mechanics); equity from **-Rs30,678** to **-Rs71,541** over its own recent window. Fixed in `core/exits.py` (`*_bars` functions).

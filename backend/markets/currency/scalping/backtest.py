@@ -30,7 +30,8 @@ from __future__ import annotations
 from core import sessions
 
 from core import entry_pullback
-from core.exits import lock_stop
+from core.exits import bar_exit, intrabar_exit, lock_stop
+from core.minute_bars import MinuteBars
 from core.paths import ARCHIVE_ROOT, BACKEND_ROOT
 from core.regime import regime_ok as _regime_ok_intraday
 import argparse
@@ -142,6 +143,7 @@ def run_currency_backtest(
     intraday_chop_window: int = 0,   # same idea as markets/commodity/scalping/backtest.py's param of the same name, on 5-min closes instead of daily
     intraday_chop_min_autocorr: float = 0.0,
     intraday_chop_invert: bool = False,
+    minute_fills: bool = True,       # settle stop / target fills inside a 5-minute bar from the 1-minute archive where it exists (docs/FILL_MODEL_AUDIT.md); False = 5-minute bars only
 ) -> dict:
     target_symbols = symbols or ["USDINR"]
 
@@ -190,6 +192,25 @@ def run_currency_backtest(
     print(f"  Symbols ({len(target_symbols)}): {', '.join(target_symbols)}")
     print(f"{'='*75}\n")
 
+    def _record_trade(sym: str, pos: dict, exit_p: float, reason: str, exit_time, stopped_on_fill: bool = False) -> None:
+        nonlocal current_capital
+        cost_info = compute_ncd_currency_costs(sym, pos["direction"], pos["entry_price"], exit_p, pos["lots"])
+        net_pnl = cost_info["net"]
+        current_capital += net_pnl
+        equity_curve.append(current_capital)
+
+        all_trades.append({
+            "symbol": sym, "direction": pos["direction"],
+            "entry_time": pos["entry_time"], "exit_time": exit_time,
+            "entry_price": pos["entry_price"], "exit_price": exit_p,
+            "lots": pos["lots"], "gross_pnl": cost_info["gross"],
+            "total_fees": cost_info["total"], "net_pnl": net_pnl, "reason": reason,
+            # exit parameters as set at entry -- lets a finer-grained replay (engine/live_replay.py) re-run the exit on 1-minute data
+            "sl": pos["sl"], "tp": pos["tp"], "be": pos["be"], "stop_dist": pos["stop_dist"],
+            "trail_mult": pos["trail_mult"], "hold_bars": pos.get("hold", HOLD_BARS), "stopped_on_fill": stopped_on_fill,
+            **cost_info,
+        })
+
     for sym in target_symbols:
         csv_path = ARCHIVE_DIR / f"{sym.upper()}_5minute.csv"
         if not csv_path.exists():
@@ -198,12 +219,14 @@ def run_currency_backtest(
 
         raw_df = pd.read_csv(csv_path)
         feat_df = compute_commodity_features(raw_df, symbol=sym.upper())
+        minute_bars = MinuteBars(csv_path.with_name(csv_path.name.replace("_5minute", "_1minute")) if minute_fills else None)
 
         in_pos = False
         pos = {}
         pending_pb = None
 
         n = len(feat_df)
+        opens = feat_df["open"].values
         closes = feat_df["close"].values
         highs = feat_df["high"].values
         lows = feat_df["low"].values
@@ -241,32 +264,20 @@ def run_currency_backtest(
                 adv = c_low  if d == 1 else c_high
 
                 exit_p = None; reason = None
-                if (fav >= pos["tp"] if d == 1 else fav <= pos["tp"]):
-                    exit_p = pos["tp"]; reason = "take_profit"
-                elif (adv <= pos["current_stop"] if d == 1 else adv >= pos["current_stop"]):
-                    exit_p = pos["current_stop"]; reason = "be_stop" if pos["armed_be"] else "initial_stop"
+                hit = bar_exit(pos["current_stop"], pos["tp"], opens[i], fav, adv, d)      # stop first when one bar reaches both; the open when it opened through the stop
+                if hit is not None and minute_bars:
+                    mins = minute_bars.get(c_time)
+                    if mins is not None:
+                        hit = intrabar_exit(pos["current_stop"], pos["tp"], mins, d) or hit     # which came first, and a jump through the stop inside the bar
+                if hit is not None:
+                    exit_p = hit[0]; reason = "take_profit" if hit[1] == "tp" else ("be_stop" if pos["armed_be"] else "initial_stop")
                 elif (i - pos["entry_idx"]) >= pos.get("hold", HOLD_BARS):
                     exit_p = c_price; reason = "timeout_exit"
                 elif m_open >= sessions.CURRENCY_SQUAREOFF_MIN:  # square-off, ahead of Upstox's 16:30 auto square-off and the 17:00 close
                     exit_p = c_price; reason = "eod_squareoff"
 
                 if exit_p is not None:
-                    cost_info = compute_ncd_currency_costs(sym, pos["direction"], pos["entry_price"], exit_p, pos["lots"])
-                    net_pnl = cost_info["net"]
-                    current_capital += net_pnl
-                    equity_curve.append(current_capital)
-
-                    all_trades.append({
-                        "symbol": sym, "direction": pos["direction"],
-                        "entry_time": pos["entry_time"], "exit_time": c_time,
-                        "entry_price": pos["entry_price"], "exit_price": exit_p,
-                        "lots": pos["lots"], "gross_pnl": cost_info["gross"],
-                        "total_fees": cost_info["total"], "net_pnl": net_pnl, "reason": reason,
-                        # exit parameters as set at entry -- lets a finer-grained replay (engine/live_replay.py) re-run the exit on 1-minute data
-                        "sl": pos["sl"], "tp": pos["tp"], "be": pos["be"], "stop_dist": pos["stop_dist"],
-                        "trail_mult": pos["trail_mult"], "hold_bars": pos.get("hold", HOLD_BARS),
-                        **cost_info,
-                    })
+                    _record_trade(sym, pos, exit_p, reason, c_time)
                     in_pos = False
                     pos = {}
                     continue
@@ -345,8 +356,9 @@ def run_currency_backtest(
                 if _chop_ok is False:
                     direction = None
 
+            stopped_on_fill = False
             if pullback_frac:
-                pending_pb, direction, sdist, c_price = entry_pullback.step(pending_pb, i, direction, sdist, c_price, c_low, c_high, pullback_frac, pullback_bars, pullback_through)
+                pending_pb, direction, sdist, c_price, stopped_on_fill = entry_pullback.step(pending_pb, i, direction, sdist, c_price, c_low, c_high, pullback_frac, pullback_bars, pullback_through)
 
             if not direction:
                 continue
@@ -381,6 +393,10 @@ def run_currency_backtest(
                 "best_price": c_price, "armed_be": False, "stop_dist": sdist,
                 "trail_mult": TRAIL_DIST_MULT * (_scale if exit_mode == "dynamic" else 1.0), "hold": int(round(HOLD_BARS * _scale)) if hold_mode == "adx" else HOLD_BARS,
             }
+            if stopped_on_fill:                                  # the pullback limit filled and the stop was hit inside the same bar
+                _record_trade(sym, pos, sl, "initial_stop", c_time, stopped_on_fill=True)
+                in_pos = False
+                pos = {}
 
     total_trades = len(all_trades)
     if total_trades == 0:

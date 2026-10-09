@@ -12,7 +12,8 @@ Features:
 from __future__ import annotations
 
 from core import entry_pullback
-from core.exits import lock_stop
+from core.exits import bar_exit, intrabar_exit, lock_stop
+from core.minute_bars import MinuteBars
 from core.paths import ARCHIVE_ROOT, BACKEND_ROOT
 from core.regime import regime_ok as _regime_ok_intraday
 import argparse
@@ -196,7 +197,7 @@ def run_commodity_backtest(
     stop_floor_mode: str = "fixed",  # "fixed" = stop >= 0.35% of price (live); "dynamic" = stop >= 1.0 x the median ATR of the previous 5 trading days
     adaptive_window: int = 0,  # opt-in study (docs/DYNAMIC_THRESHOLDS.md): replace the FIXED ADX / volume-surge / EMA-slope thresholds by the rolling quantile of that feature over the previous `adaptive_window` bars, at the
     # quantile the fixed threshold represents over the whole sample (same selectivity, but the level follows the market); 0 = fixed thresholds (live behaviour)
-    pullback_frac: float = 0.0,  # opt-in study (docs/FIVE_MINUTE_SIGNAL_SCREEN.md): on a signal, do not chase -- rest a limit this fraction of a stop distance BETTER than the signal close and enter only if it is touched within `pullback_bars` bars (skipped if the bar also trades through the stop); 0 = enter at the signal (live behaviour)
+    pullback_frac: float = 0.0,  # opt-in study (docs/FIVE_MINUTE_SIGNAL_SCREEN.md): on a signal, do not chase -- rest a limit this fraction of a stop distance BETTER than the signal close and enter only if it is touched within `pullback_bars` bars (a bar that also trades through the stop is a filled-then-stopped loss); 0 = enter at the signal (live behaviour)
     pullback_bars: int = 3,
     pullback_through: float = 0.0,  # fill only if price trades THROUGH the limit by this fraction of a stop distance (queue-priority conservatism)
     max_cost_r: float | None = None,  # opt-in study: skip an entry whose round-trip costs exceed this fraction of the risked amount (stop distance x lots x multiplier); None = no gate (live behaviour)
@@ -215,6 +216,7 @@ def run_commodity_backtest(
     # the good window's own strong performance -- see conversation history for the full sweep. Off by
     # default (opt in explicitly) since this is a newer, less-tested lever than the entry thresholds
     # themselves.
+    minute_fills: bool = True,  # settle stop / target fills inside a 5-minute bar from the 1-minute archive where it exists (docs/FILL_MODEL_AUDIT.md); False = 5-minute bars only
 ) -> dict:
     target_symbols = symbols or ["CRUDEOILM", "NATGASMINI"]
 
@@ -330,6 +332,35 @@ def run_commodity_backtest(
         "SILVER": 30.0,
     }
 
+    def _record_trade(sym: str, pos: dict, exit_p: float, reason: str, exit_time, stopped_on_fill: bool = False) -> None:
+        nonlocal current_capital
+        cost_info = compute_mcx_commodity_costs(sym, pos["direction"], pos["entry_price"], exit_p, pos["lots"])
+        net_pnl = cost_info["net"]
+        current_capital += net_pnl
+        equity_curve.append(current_capital)
+
+        all_trades.append({
+            "symbol": sym,
+            "direction": pos["direction"],
+            "entry_time": pos["entry_time"],
+            "exit_time": exit_time,
+            "entry_price": pos["entry_price"],
+            "exit_price": exit_p,
+            "lots": pos["lots"],
+            "gross_pnl": cost_info["gross"],
+            "total_fees": cost_info["total"],
+            "net_pnl": net_pnl,
+            "reason": reason,
+            "adx": pos.get("diag_adx"),
+            "rsi": pos.get("diag_rsi"), "ema_slope": pos.get("diag_ema_slope"),
+            "vwap_dist": pos.get("diag_vwap_dist"), "vol_surge": pos.get("diag_vol_surge"),
+            "mins_since_open": pos.get("diag_mins_since_open"),
+            # exit parameters as set at entry -- lets a finer-grained replay (engine/live_replay.py) re-run the exit on 1-minute data
+            "sl": pos["sl"], "tp": pos["tp"], "be": pos["be"], "stop_dist": pos["stop_dist"],
+            "trail_mult": pos["trail_mult"], "hold_bars": pos.get("hold", HOLD_BARS), "stopped_on_fill": stopped_on_fill,
+            **cost_info,
+        })
+
     for sym in target_symbols:
         base_sym = aliases.get(sym.upper(), sym.upper())
         csv_path = ARCHIVE_DIR / f"{base_sym}_5minute.csv"
@@ -340,6 +371,7 @@ def run_commodity_backtest(
 
         raw_df = pd.read_csv(csv_path)
         feat_df = compute_commodity_features(raw_df, symbol=base_sym)
+        minute_bars = MinuteBars(csv_path.with_name(csv_path.name.replace("_5minute", "_1minute")) if minute_fills else None)
 
         in_pos = False
         pos = {}
@@ -349,6 +381,7 @@ def run_commodity_backtest(
         _adaptive_ready = False   # adaptive_window: rolling thresholds are computed once, on the first bar (the per-symbol thresholds are chosen inside the loop)
 
         n = len(feat_df)
+        opens = feat_df["open"].values
         closes = feat_df["close"].values
         highs = feat_df["high"].values
         lows = feat_df["low"].values
@@ -386,45 +419,20 @@ def run_commodity_backtest(
                 adv = c_low  if d == 1 else c_high
 
                 exit_p = None; reason = None
-                if (fav >= pos["tp"] if d == 1 else fav <= pos["tp"]):
-                    exit_p = pos["tp"]; reason = "take_profit"
-                elif (adv <= pos["current_stop"] if d == 1 else adv >= pos["current_stop"]):
-                    exit_p = pos["current_stop"]; reason = "be_stop" if pos["armed_be"] else "initial_stop"
+                hit = bar_exit(pos["current_stop"], pos["tp"], opens[i], fav, adv, d)      # stop first when one bar reaches both; the open when it opened through the stop
+                if hit is not None and minute_bars:
+                    mins = minute_bars.get(c_time)
+                    if mins is not None:
+                        hit = intrabar_exit(pos["current_stop"], pos["tp"], mins, d) or hit     # which came first, and a jump through the stop inside the bar
+                if hit is not None:
+                    exit_p = hit[0]; reason = "take_profit" if hit[1] == "tp" else ("be_stop" if pos["armed_be"] else "initial_stop")
                 elif (i - pos["entry_idx"]) >= pos.get("hold", HOLD_BARS):
                     exit_p = c_price; reason = "timeout_exit"
                 elif m_open >= 825:  # 22:45 IST square-off (ahead of Upstox 22:50 RMS cut-off)
                     exit_p = c_price; reason = "eod_squareoff"
 
                 if exit_p is not None:
-                    # Itemized MCX Cost calculation
-                    cost_info = compute_mcx_commodity_costs(sym, pos["direction"], pos["entry_price"], exit_p, pos["lots"])
-                    net_pnl = cost_info["net"]
-                    current_capital += net_pnl
-                    equity_curve.append(current_capital)
-
-                    all_trades.append({
-                        "symbol": sym,
-                        "direction": pos["direction"],
-                        "entry_time": pos["entry_time"],
-                        "exit_time": c_time,
-                        "entry_price": pos["entry_price"],
-                        "exit_price": exit_p,
-                        "lots": pos["lots"],
-                        "gross_pnl": cost_info["gross"],
-                        "total_fees": cost_info["total"],
-                        "net_pnl": net_pnl,
-                        "reason": reason,
-                        "adx": pos.get("diag_adx"),
-                        "rsi": pos.get("diag_rsi"), "ema_slope": pos.get("diag_ema_slope"),
-                        "vwap_dist": pos.get("diag_vwap_dist"), "vol_surge": pos.get("diag_vol_surge"),
-                        "mins_since_open": pos.get("diag_mins_since_open"),
-                        # exit parameters as set at entry -- lets a finer-grained replay (engine/live_replay.py) re-run the exit on 1-minute data
-                        "sl": pos["sl"], "tp": pos["tp"], "be": pos["be"], "stop_dist": pos["stop_dist"],
-                        "trail_mult": pos["trail_mult"], "hold_bars": pos.get("hold", HOLD_BARS),
-                        **cost_info,
-                    })
-
-
+                    _record_trade(sym, pos, exit_p, reason, c_time)
                     if reason == "initial_stop" and stop_cooldown_bars:
                         cool_side, cool_until = pos["direction"], i + stop_cooldown_bars
                     in_pos = False
@@ -565,8 +573,9 @@ def run_commodity_backtest(
 
 
 
+            stopped_on_fill = False
             if pullback_frac:
-                pending_pb, direction, sdist, c_price = entry_pullback.step(pending_pb, i, direction, sdist, c_price, c_low, c_high, pullback_frac, pullback_bars, pullback_through)
+                pending_pb, direction, sdist, c_price, stopped_on_fill = entry_pullback.step(pending_pb, i, direction, sdist, c_price, c_low, c_high, pullback_frac, pullback_bars, pullback_through)
                 if direction is None:
                     continue
 
@@ -655,6 +664,12 @@ def run_commodity_backtest(
                 "diag_ema_slope": ema_s, "diag_vwap_dist": vwap_d,
                 "diag_vol_surge": vol_s, "diag_mins_since_open": mins_open[i],
             }
+            if stopped_on_fill:                                  # the pullback limit filled and the stop was hit inside the same bar
+                _record_trade(sym, pos, sl, "initial_stop", c_time, stopped_on_fill=True)
+                if stop_cooldown_bars:
+                    cool_side, cool_until = direction, i + stop_cooldown_bars
+                in_pos = False
+                pos = {}
 
 
 

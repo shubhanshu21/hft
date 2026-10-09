@@ -9,7 +9,10 @@ strategy-driven code reproduces them exactly:
     commodity, currency and equity data (every exit type exercised). Re-recorded 2026-10-05 when live short
     entries were aligned with the backtests' symmetric rules (markets/commodity/scalping/entry_signal.py): a
     2026-09-01 crude short that armed at the old 0.4R breakeven now runs to its stop, and the day's 5% loss
-    kill switch then halts the rest of that day's entries -- every other difference is that cascade.
+    kill switch then halts the rest of that day's entries -- every other difference is that cascade. Re-recorded again
+    2026-10-07 for the fill model (docs/FILL_MODEL_AUDIT.md): 16 exits now fill at the bar's open where it opened
+    through the stop (or take the stop first where one bar reached stop and target), and the lower 2026-09-10 commodity
+    P&L (-3.18% by 19:10) trips the 3% market cooldown, so the 19:40 CRUDEOILM entry is skipped.
 
 If you change trading behaviour ON PURPOSE (a threshold, an exit rule), regenerate the golden that moved:
 

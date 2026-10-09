@@ -73,6 +73,8 @@ ENV = {
     "SILVERMIC_INTRADAY_CHOP_WINDOW": "0", "USDINR_INTRADAY_CHOP_WINDOW": "0",
     # the harness scans once per bar with only COMPLETED archive bars visible (now = bar + 5m10s): every bar it shows is finished
     "LIVE_BAR_COMPLETE_LAG_S": "0",
+    # which strategies trade is an operator choice in .env (2026-10-07 commodity went swing-only); the goldens record the scalpers
+    "COMMODITY_STRATEGIES": "scalping", "CURRENCY_STRATEGIES": "scalping", "EQUITY_STRATEGIES": "scalping",
 }
 
 

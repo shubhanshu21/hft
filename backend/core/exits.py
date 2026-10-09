@@ -33,6 +33,48 @@ def lock_stop(entry: float, trigger: float, d: int) -> float:
     return entry + min(BE_LOCK_BUFFER_PCT * entry, abs(trigger - entry)) * d
 
 
+def stop_fill(stop: float, bar_open, d: int) -> float:
+    """The price a stop really fills at on a bar that reaches it.
+
+    A stop resting on the right side of the bar's open fills at the stop. A bar that OPENS already through it -- the stop was just moved
+    past the market (a tight trail raised from a bar's high on a bar that then closed lower) or price gapped -- fills at the open: a real
+    stop order cannot do better than the market. Filling those at the stop price inflated every backtest and the paper account
+    (2026-10-07: 41% of equity stop exits opened through the stop, by ~22 bp on average; docs/FILL_MODEL_AUDIT.md)."""
+    if bar_open is None:
+        return stop
+    o = float(bar_open)
+    if o != o:
+        return stop
+    return min(stop, o) if d == 1 else max(stop, o)
+
+
+def bar_exit(stop: float, tp: float | None, bar_open, fav: float, adv: float, d: int) -> tuple[float, str] | None:
+    """(fill price, "stop" | "tp") when this bar reaches the stop or the take-profit, else None.
+
+    When one bar reaches both, the order inside it is unknown: the stop is taken first unless the bar opened at or beyond the target.
+    (The backtests used to assume the target always came first.)"""
+    stop_hit = adv <= stop if d == 1 else adv >= stop
+    tp_hit = tp is not None and (fav >= tp if d == 1 else fav <= tp)
+    if tp_hit and bar_open is not None and (float(bar_open) >= tp if d == 1 else float(bar_open) <= tp):
+        return tp, "tp"
+    if stop_hit:
+        return stop_fill(stop, bar_open, d), "stop"
+    if tp_hit:
+        return tp, "tp"
+    return None
+
+
+def intrabar_exit(stop: float, tp: float | None, minutes, d: int) -> tuple[float, str] | None:
+    """bar_exit settled minute by minute inside one bar. `minutes` = rows of (open, high, low) in time order (core.minute_bars). A minute that
+    opens through the stop fills at that open -- price jumped through it inside the bar -- and within one minute the stop still comes before
+    the target. None if no minute reaches either level."""
+    for o, h, l in minutes:
+        hit = bar_exit(stop, tp, o, h if d == 1 else l, l if d == 1 else h, d)
+        if hit is not None:
+            return hit
+    return None
+
+
 def _ts(value) -> datetime:
     return value if isinstance(value, datetime) else datetime.fromisoformat(str(value))
 
@@ -70,6 +112,18 @@ def post_entry_range(pos: dict, latest: dict) -> tuple[float | None, float | Non
     return fav, adv
 
 
+def open_after_entry(pos: dict, latest: dict) -> float | None:
+    """The first price of `latest` the position could fill at: the bar's open, or on the entry bar the latest price (the only post-entry
+    price known there, see _side). None when the candle has no open. A custom Strategy.manage() fills its stop with
+    stop_fill(stop, open_after_entry(pos, candle), d)."""
+    entry_bar = pos.get("entry_bar_ts")
+    if entry_bar is not None:
+        bar, ebar = _naive_pair(_ts(latest["timestamp"]), _ts(entry_bar))
+        if bar == ebar:
+            return float(latest["close"])
+    return float(latest["open"]) if latest.get("open") is not None else None
+
+
 def _deadline(now: datetime, close_at: tuple[int, int] | None) -> datetime | None:
     return None if close_at is None else now.replace(hour=close_at[0], minute=close_at[1], second=0, microsecond=0)
 
@@ -88,10 +142,9 @@ def fixed_tp_breakeven_trail(pos: dict, latest: dict, now: datetime, *,
     close = float(latest["close"])
 
     if fav is not None:
-        if (fav >= pos["tp"] if d == 1 else fav <= pos["tp"]):
-            return ExitDecision(pos["tp"], "take_profit")
-        if (adv <= pos["current_stop"] if d == 1 else adv >= pos["current_stop"]):
-            return ExitDecision(pos["current_stop"], "be_stop" if pos["armed_be"] else "initial_stop")
+        hit = bar_exit(pos["current_stop"], pos["tp"], open_after_entry(pos, latest), fav, adv, d)
+        if hit is not None:
+            return ExitDecision(hit[0], "take_profit" if hit[1] == "tp" else ("be_stop" if pos["armed_be"] else "initial_stop"))
     if max_hold_s is not None and (now - pos["entry_time"]).total_seconds() >= max_hold_s:
         return ExitDecision(close, "timeout_exit")
     if deadline is not None and now >= deadline:
@@ -123,7 +176,7 @@ def activation_trail(pos: dict, latest: dict, atr: float, now: datetime, *,
     close = float(latest["close"])
 
     if fav is not None and (adv <= pos["current_stop"] if d == 1 else adv >= pos["current_stop"]):
-        return ExitDecision(pos["current_stop"], "trail_stop" if pos["armed_trail"] else "initial_stop")
+        return ExitDecision(stop_fill(pos["current_stop"], open_after_entry(pos, latest), d), "trail_stop" if pos["armed_trail"] else "initial_stop")
     if max_hold_s is not None and (now - pos["entry_time"]).total_seconds() >= max_hold_s:
         return ExitDecision(close, "timeout_exit")
     if deadline is not None and now >= deadline:
@@ -178,12 +231,13 @@ def _is_complete(candles: list[dict], i: int, now: datetime, interval_s: int, la
     return n >= end
 
 
-def _stop_hit(pos: dict, fav: float, adv: float, d: int, check_tp: bool, armed_key: str, moved_reason: str) -> ExitDecision | None:
-    if check_tp and (fav >= pos["tp"] if d == 1 else fav <= pos["tp"]):
-        return ExitDecision(pos["tp"], "take_profit")
-    if (adv <= pos["current_stop"] if d == 1 else adv >= pos["current_stop"]):
-        return ExitDecision(pos["current_stop"], moved_reason if pos.get(armed_key) else "initial_stop")
-    return None
+def _stop_hit(pos: dict, fav: float, adv: float, bar_open: float | None, d: int, check_tp: bool, armed_key: str, moved_reason: str) -> ExitDecision | None:
+    hit = bar_exit(pos["current_stop"], pos["tp"] if check_tp else None, bar_open, fav, adv, d)
+    if hit is None:
+        return None
+    if hit[1] == "tp":
+        return ExitDecision(hit[0], "take_profit")
+    return ExitDecision(hit[0], moved_reason if pos.get(armed_key) else "initial_stop")
 
 
 def _raise(pos: dict, level: float, d: int) -> None:
@@ -236,7 +290,7 @@ def _manage_bars(pos: dict, candles: list[dict], now: datetime, *, kind: str, at
         if ts_cmp == e_cmp:
             if i == last:                                        # still inside the entry bar: only its latest price is known to be post-entry (see _side)
                 px = float(c["close"])
-                dec = _stop_hit(pos, px, px, d, check_tp, armed_key, moved_reason)
+                dec = _stop_hit(pos, px, px, px, d, check_tp, armed_key, moved_reason)
                 if dec is not None:
                     return dec
             continue
@@ -245,7 +299,7 @@ def _manage_bars(pos: dict, candles: list[dict], now: datetime, *, kind: str, at
             continue                                             # already tested and applied on an earlier scan
         fav = float(c["high"]) if d == 1 else float(c["low"])
         adv = float(c["low"]) if d == 1 else float(c["high"])
-        dec = _stop_hit(pos, fav, adv, d, check_tp, armed_key, moved_reason)
+        dec = _stop_hit(pos, fav, adv, float(c["open"]) if c.get("open") is not None else None, d, check_tp, armed_key, moved_reason)
         if dec is not None:
             return dec
         if not _is_complete(candles, i, now, interval_s, lag_s):

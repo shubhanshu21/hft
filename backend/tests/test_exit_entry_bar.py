@@ -46,7 +46,7 @@ class TestEntryBarIsNotAllowedToStopThePositionOut(unittest.TestCase):
     def test_the_latest_price_on_the_entry_bar_still_counts(self):
         pos = _long()
         decision = _mcx(pos, _bar(ENTRY_BAR, high=8894, low=8790, close=8800))          # price really fell through the stop now
-        self.assertEqual((decision.reason, decision.price), ("initial_stop", 8814.29))
+        self.assertEqual((decision.reason, decision.price), ("initial_stop", 8800.0))    # filled where the market is, not at the better stop price
         pos = _long()
         self.assertEqual(_mcx(pos, _bar(ENTRY_BAR, high=8894, low=8790, close=8935)).reason, "take_profit")
 

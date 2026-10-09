@@ -337,3 +337,19 @@ class TestPullbackEntryInDryRunner(unittest.TestCase):
             self.assertAlmostEqual(pos["current_stop"], limit - 4.0, places=2)         # stop distance unchanged, anchored to the fill
             self.assertAlmostEqual(pos["target"], 204.0 - 1.0, places=2)               # the strategy's own price level moved by the same 1.0
             self.assertNotIn("TATASTEEL", runner.pending_entries)
+
+    def test_a_bar_through_the_limit_and_the_stop_is_a_filled_then_stopped_loss(self):
+        with _dry_runner(ToySwing()) as (make, sim, bars, alerts, path), self._env(True):
+            bars["TATASTEEL"] = [_bar(200.0, "2026-09-10T10:55:00+05:30")]
+            runner = make()
+            self.assertEqual(runner.scan(), [])                                       # signal -> resting limit 199.0, stop level 195.0
+            sim["now"] = datetime(2026, 9, 10, 11, 2, tzinfo=IST)
+            bars["TATASTEEL"] = [_bar(200.0, "2026-09-10T10:55:00+05:30"), {**_bar(195.5, "2026-09-10T11:00:00+05:30"), "low": 194.8, "high": 200.1}]
+            runner.scan()
+            self.assertNotIn("TATASTEEL", runner.positions)                           # price passed 199.0 on its way through 195.0
+            self.assertNotIn("TATASTEEL", runner.pending_entries)
+            trade = runner.trades[-1]
+            self.assertEqual(trade["exit_reason"], "initial_stop")
+            self.assertAlmostEqual(trade["entry_price"], 199.0, places=2)
+            self.assertAlmostEqual(trade["exit_price"], 195.0, places=2)
+            self.assertLess(trade["net_pnl"], 0)

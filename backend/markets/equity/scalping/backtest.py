@@ -52,7 +52,8 @@ from __future__ import annotations
 from core import sessions
 
 from core import entry_pullback
-from core.exits import lock_stop
+from core.exits import intrabar_exit, lock_stop, stop_fill
+from core.minute_bars import MinuteBars
 from core.paths import ARCHIVE_ROOT, BACKEND_ROOT
 import argparse
 from pathlib import Path
@@ -127,7 +128,7 @@ _MAX_CONCURRENT_POSITIONS = 3  # portfolio-concentration cap -- a real account w
 
 def _simulate_symbol_candidates(sym: str, from_date: str | None, to_date: str | None, long_only: bool, et: dict,
                                 pullback_frac: float = 0.0, pullback_bars: int = 3, pullback_through: float = 0.0,
-                                adaptive_window: int = 0, hold_mode: str = "fixed", stop_floor_mode: str = "fixed") -> list[dict]:
+                                adaptive_window: int = 0, hold_mode: str = "fixed", stop_floor_mode: str = "fixed", minute_fills: bool = True) -> list[dict]:
     """Phase 1: walks one symbol's bars and produces fully-formed candidate
     trades (entry/exit price & time already resolved via TP/SL/timeout/EOD),
     completely independent of capital or position sizing -- share quantity
@@ -141,8 +142,10 @@ def _simulate_symbol_candidates(sym: str, from_date: str | None, to_date: str | 
     if len(raw_df) < 50:
         return []
     feat_df = compute_equity_features(raw_df)
+    minute_bars = MinuteBars(ARCHIVE_DIR / f"{sym.upper()}_1minute.csv" if minute_fills else None)      # stop fills inside a bar, where the 1-minute archive exists
 
     n = len(feat_df)
+    opens = feat_df["open"].values
     closes = feat_df["close"].values
     highs = feat_df["high"].values
     lows = feat_df["low"].values
@@ -196,7 +199,10 @@ def _simulate_symbol_candidates(sym: str, from_date: str | None, to_date: str | 
 
             exit_p = None; reason = None
             if (adv <= pos["current_stop"] if d == 1 else adv >= pos["current_stop"]):
-                exit_p = pos["current_stop"]; reason = "trail_stop" if pos["armed_trail"] else "initial_stop"
+                exit_p = stop_fill(pos["current_stop"], opens[i], d); reason = "trail_stop" if pos["armed_trail"] else "initial_stop"      # the open, if the bar opened through the stop
+                mins = minute_bars.get(c_time) if minute_bars else None
+                if mins is not None:
+                    exit_p = (intrabar_exit(pos["current_stop"], None, mins, d) or (exit_p,))[0]       # a jump through the stop inside the bar
             elif (i - pos["entry_idx"]) >= pos.get("hold", HOLD_BARS):
                 exit_p = c_price; reason = "timeout_exit"
             elif m_open >= _SQUAREOFF_MIN:
@@ -252,8 +258,9 @@ def _simulate_symbol_candidates(sym: str, from_date: str | None, to_date: str | 
         elif not long_only and adx >= _madx and dmn > dmp and ema_s < -_mslope and orb_l_dist <= -min_orb and vwap_d <= -min_vwap and vol_s >= _mvol:
             direction = "short"
 
+        stopped_on_fill = False
         if pullback_frac:                                            # opt-in research option, see core/entry_pullback.py
-            pending_pb, direction, sdist, c_price = entry_pullback.step(pending_pb, i, direction, sdist, c_price, c_low, c_high, pullback_frac, pullback_bars, pullback_through)
+            pending_pb, direction, sdist, c_price, stopped_on_fill = entry_pullback.step(pending_pb, i, direction, sdist, c_price, c_low, c_high, pullback_frac, pullback_bars, pullback_through)
 
         if not direction:
             continue
@@ -270,6 +277,14 @@ def _simulate_symbol_candidates(sym: str, from_date: str | None, to_date: str | 
         trail_mult = TRAIL_DIST_MULT * exit_scale
         activation_price = round(c_price + activation_mult * sdist * d, 4)
         _hold = int(round(HOLD_BARS * exit_scale)) if hold_mode == "adx" else HOLD_BARS
+
+        if stopped_on_fill:                                          # the pullback limit filled and the stop was hit inside the same bar
+            candidates.append({
+                "symbol": sym, "direction": direction, "entry_time": c_time, "exit_time": c_time,
+                "entry_price": c_price, "exit_price": sl, "stop_dist": sdist, "reason": "initial_stop", "stopped_on_fill": True,
+                "sl": sl, "activation_price": activation_price, "trail_mult": trail_mult, "hold_bars": _hold,
+            })
+            continue
 
         in_pos = True
         pos = {
@@ -291,6 +306,7 @@ def run_equity_backtest(
     to_date: str | None = None,
     thresholds: dict | None = None,
     return_trades: bool = False,
+    pullback: tuple[float, int, float] | None = None,
 ) -> dict:
     """Phase 1 generates each symbol's candidate trades independently (see
     _simulate_symbol_candidates). Phase 2 below merges ALL candidates across
@@ -304,6 +320,9 @@ def run_equity_backtest(
     share -- both realistic portfolio constraints, not simulation artifacts."""
     target_symbols = symbols or NIFTY50_SYMBOLS
     _et = thresholds or ENTRY_THRESHOLDS
+    if pullback is None:                                           # the live entry (core/entry_pullback.config_for: EQUITY_PULLBACK_* in .env), so this reproduces paper trading
+        pullback = entry_pullback.config_for(target_symbols[0], "equity") or (0.0, 3, 0.0)
+    pb_frac, pb_bars, pb_through = pullback
 
     print(f"\n{'='*75}")
     print(f"  NSE EQUITY 5-MINUTE INTRADAY (MIS) SCALPER WALK-FORWARD BACKTEST")
@@ -312,12 +331,15 @@ def run_equity_backtest(
     print(f"  Session: NSE equity cash (09:15-15:30 IST, square-off 15:15)")
     print(f"  Entry thresholds: ONE shared set across the whole universe (not per-symbol -- see module docstring)")
     print(f"  Simulation: chronologically interleaved across symbols, max {_MAX_CONCURRENT_POSITIONS} concurrent positions")
+    print(f"  Entry: {f'pullback limit {pb_frac} of a stop better, {pb_bars} bars, through {pb_through}' if pb_frac else 'at the signal close'}"
+          f" | stops fill at the bar / minute open when price opened through them (docs/FILL_MODEL_AUDIT.md)")
     print(f"  Symbols ({len(target_symbols)}): {', '.join(target_symbols)}")
     print(f"{'='*75}\n")
 
     all_candidates: list[dict] = []
     for sym in target_symbols:
-        all_candidates.extend(_simulate_symbol_candidates(sym, from_date, to_date, long_only, _et))
+        all_candidates.extend(_simulate_symbol_candidates(sym, from_date, to_date, long_only, _et,
+                                                          pullback_frac=pb_frac, pullback_bars=pb_bars, pullback_through=pb_through))
 
     if not all_candidates:
         print("No trades executed.")
@@ -422,10 +444,14 @@ def main():
     parser.add_argument("--long-only", action="store_true")
     parser.add_argument("--from", "--from-date", dest="from_date", default=None)
     parser.add_argument("--to", "--to-date", dest="to_date", default=None)
+    parser.add_argument("--pullback-frac", type=float, default=None, help="0 = enter at the signal close; default: EQUITY_PULLBACK_FRAC from .env (the live entry)")
+    parser.add_argument("--pullback-bars", type=int, default=3)
+    parser.add_argument("--pullback-through", type=float, default=0.0)
     args = parser.parse_args()
+    pullback = None if args.pullback_frac is None else (args.pullback_frac, args.pullback_bars, args.pullback_through)
     run_equity_backtest(
         symbols=args.symbols, capital=args.capital, risk_pct=args.risk_pct, leverage=args.leverage,
-        long_only=args.long_only, from_date=args.from_date, to_date=args.to_date,
+        long_only=args.long_only, from_date=args.from_date, to_date=args.to_date, pullback=pullback,
     )
 
 

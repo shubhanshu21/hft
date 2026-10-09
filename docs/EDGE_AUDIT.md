@@ -1,5 +1,7 @@
 # Edge audit: does each live strategy beat random entries? (2026-10-06)
 
+> **2026-10-07:** the rupee figures below come from the old fill model, which filled stops at prices the market had already passed. See [FILL_MODEL_AUDIT.md](FILL_MODEL_AUDIT.md) for the corrected numbers; equity is now off.
+
 A backtest that makes money can still have no edge: the exits, the sizing or the market's drift may be doing the work. Test used here:
 keep everything (instrument, days, exit rule, size, costs) and replace only the ENTRY by random ones, many times. A real signal beats
 almost all random runs. Plus cost stress and per-period checks. Scripts: scratch studies summarised below; tools that stay in the repo:
