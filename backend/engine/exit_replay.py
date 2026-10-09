@@ -32,7 +32,8 @@ MODES = ("bar", "old_live", "live")
 
 
 def load_1m(market: str, stem: str) -> pd.DataFrame:
-    df = pd.read_csv(ARCHIVE_ROOT / market / f"{stem}_1minute.csv")
+    path = ARCHIVE_ROOT / market / f"{stem}_1minute.csv"
+    df = pd.read_csv(path if path.exists() else path.with_name(path.name + ".gz"))
     df["ts"] = pd.to_datetime(df["timestamp"])
     return df.drop_duplicates("ts").sort_values("ts").set_index("ts")[["open", "high", "low", "close", "volume"]]
 
@@ -151,7 +152,7 @@ def equity(start: str = "2026-05-12", end: str = "2026-10-01") -> None:
     from markets.equity.universe import NIFTY50_SYMBOLS
     per = {m: [] for m in MODES}
     for s in NIFTY50_SYMBOLS:
-        if not (ARCHIVE_ROOT / "equity" / f"{s}_1minute.csv").exists():
+        if not any((ARCHIVE_ROOT / "equity" / f"{s}_1minute.csv{gz}").exists() for gz in ("", ".gz")):
             continue
         cands = eqbt._simulate_symbol_candidates(s, start, end, False, eqbt.ENTRY_THRESHOLDS, pullback_frac=0.15, pullback_through=0.02)
         if not cands:

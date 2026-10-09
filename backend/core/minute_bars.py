@@ -16,6 +16,8 @@ class MinuteBars:
 
     def __init__(self, path: Path | None, bar_minutes: int = 5):
         self._bars: dict[int, np.ndarray] = {}
+        if path is not None and not Path(path).exists() and Path(str(path) + ".gz").exists():
+            path = Path(str(path) + ".gz")                         # engine/research_data.py stores long 1-minute histories compressed
         if path is None or not Path(path).exists():
             return
         df = pd.read_csv(path, usecols=["timestamp", "open", "high", "low"])
