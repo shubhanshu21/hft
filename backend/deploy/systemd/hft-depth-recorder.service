@@ -1,0 +1,15 @@
+[Unit]
+Description=HFT order-book recorder (Upstox 5-level depth for the paper-traded contracts, RECORD ONLY, no orders)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/var/www/html/hft/backend
+ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m engine.depth_recorder
+Restart=always
+RestartSec=30
+# Writes var/archive/depth/<SYMBOL>/<day>.csv(.gz). Symbols: DEPTH_SYMBOLS in backend/.env (default USDINR SILVERMIC GOLDTEN CRUDEOILM).
+# Connects only on weekdays 08:58-23:35 IST; one Upstox WebSocket connection; reuses the token the other services keep fresh.
+
+[Install]
+WantedBy=default.target

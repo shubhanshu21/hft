@@ -353,3 +353,24 @@ class TestPullbackEntryInDryRunner(unittest.TestCase):
             self.assertAlmostEqual(trade["entry_price"], 199.0, places=2)
             self.assertAlmostEqual(trade["exit_price"], 195.0, places=2)
             self.assertLess(trade["net_pnl"], 0)
+
+
+class TestGateSkipLoggedOncePerDay(unittest.TestCase):
+    """A signal blocked by a portfolio gate is re-evaluated every scan; its block is logged once a day, not every 30 seconds
+    (2026-10-09: the swing strategy's heat-cap blocks wrote 214 identical lines in one morning)."""
+
+    def test_same_block_logs_once_a_day(self):
+        with _dry_runner(ToySwing()) as (make, sim, bars, alerts, path):
+            bars["TATASTEEL"] = [_bar(200.0)]
+            runner = make()
+            runner.max_portfolio_heat_pct = 0.5                       # ToySwing risks 1% of the account: always over the cap
+            with self.assertLogs("live_dryrun", level="INFO") as cm:
+                runner.scan()
+                sim["now"] = datetime(2026, 9, 10, 11, 1, tzinfo=IST)
+                runner.scan()
+                sim["now"] = datetime(2026, 9, 11, 11, 0, tzinfo=IST)
+                bars["TATASTEEL"] = [_bar(200.0, "2026-09-11T11:00:00+05:30")]
+                runner.scan()
+            skips = [m for m in cm.output if "entry skipped" in m and "heat cap" in m]
+            self.assertEqual(len(skips), 2, cm.output)                # day 1 once, day 2 once
+            self.assertNotIn("TATASTEEL", runner.positions)

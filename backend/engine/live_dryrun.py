@@ -511,6 +511,7 @@ class DryRunner(RiskGates):
         self.spread_sample_interval_min = float(os.environ.get("SPREAD_SAMPLE_INTERVAL_MIN", "5"))
         self._last_spread_sample: dict[str, datetime] = {}
         self._stale_logged: dict[str, datetime] = {}      # newest candle time already reported as stale, per symbol
+        self._skip_logged: dict[tuple[str, str], str] = {}   # (symbol, gate reason) -> day it was last logged: a swing signal re-checked every scan logs its block once a day
         self._equity_offset = 0                            # rotating start of the equity pass when the API budget binds
         self._last_throttle_log: datetime | None = None
         self.spread_log_path = LOG_DIR / "spread_samples.csv"
@@ -923,7 +924,10 @@ class DryRunner(RiskGates):
 
         rejection = self._entry_gate_rejection(sym, market, sig_result, leverage)
         if rejection:
-            log.info("%s: %s entry skipped -- %s.", sym, market, rejection)
+            today = now.strftime("%Y-%m-%d")
+            if self._skip_logged.get((sym, rejection)) != today:
+                self._skip_logged[(sym, rejection)] = today
+                log.info("%s: %s entry skipped -- %s.", sym, market, rejection)
             return False
 
         # Ask Upstox what THIS exact order would block, right now (margins and lot sizes change at the broker's discretion).
