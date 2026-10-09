@@ -69,3 +69,16 @@ class TestRecorderRouting(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestThrottle(unittest.TestCase):
+    def test_updates_within_one_second_keep_only_the_newest(self):
+        import time as _t
+        from unittest.mock import patch
+        rec = dr.Recorder(["USDINR"])
+        rec.keys = {"NCD_FO|1284": "USDINR"}
+        for ms, ltp in ((1_000_100, 96.1), (1_000_900, 96.2), (1_001_050, 96.3)):
+            with patch.object(_t, "time", lambda ms=ms: ms / 1000):
+                feed = {"fullFeed": {"marketFF": {**FEED["fullFeed"]["marketFF"], "ltpc": {"ltp": ltp}}}}
+                rec.on_message({"feeds": {"NCD_FO|1284": feed}})
+        self.assertEqual([r["ltp"] for r in rec.buf["USDINR"]], [96.2, 96.3])      # second 1000: newest only; second 1001: its own row

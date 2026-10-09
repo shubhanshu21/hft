@@ -7,7 +7,8 @@ history (docs/COMMODITY_LEADING_SIGNALS.md). After a few weeks of recording, the
 
 Records only; places no orders and does not touch the trading daemon or its DB. One WebSocket connection (Upstox MarketDataStreamerV3, mode
 "full"), connected on weekdays during market hours, re-mapped to the front contract each day, reconnected if the feed goes silent.
-Output: var/archive/depth/<SYMBOL>/<YYYY-MM-DD>.csv (gzipped once the day is over). Symbols: DEPTH_SYMBOLS in .env (default below).
+Output: var/archive/depth/<SYMBOL>/<YYYY-MM-DD>.csv (gzipped once the day is over), at most one row per instrument per second.
+Symbols: DEPTH_SYMBOLS in .env (default below; NIFTY / BANKNIFTY = the front-month index futures, stocks = NSE cash).
 """
 from __future__ import annotations
 
@@ -28,7 +29,7 @@ from services.utils.logger import get_logger
 log = get_logger("depth_recorder")
 IST = ZoneInfo("Asia/Kolkata")
 DEPTH_DIR = ARCHIVE_ROOT / "depth"
-DEFAULT_SYMBOLS = "USDINR SILVERMIC GOLDTEN CRUDEOILM"
+DEFAULT_SYMBOLS = "USDINR SILVERMIC GOLDTEN CRUDEOILM NIFTY BANKNIFTY RELIANCE HDFCBANK ICICIBANK INFY TCS"
 LEVELS = 5
 SESSION = ((8, 58), (23, 35))          # MCX 09:00-23:30 covers NSE currency 09:00-17:00; a few minutes either side
 SILENT_RECONNECT_S = 180               # no update for this long inside the session -> reconnect
@@ -113,10 +114,15 @@ def compress_finished_days(root: Path = DEPTH_DIR, today: str | None = None) -> 
 
 
 def resolve_keys(symbols: list[str]) -> dict[str, str]:
-    """{instrument_key: symbol} for today's front contracts."""
-    from services.broker.instruments import build_currency_map, build_mcx_commodity_map
-    m = {**build_mcx_commodity_map(), **build_currency_map()}
-    return {m[s]: s for s in symbols if s in m}
+    """{instrument_key: symbol}: today's front contracts for MCX, currency and index futures (NIFTY, BANKNIFTY); NSE cash for stocks."""
+    from services.broker.instruments import build_currency_map, build_index_futures_map, build_mcx_commodity_map, get_instrument_key
+    m = {**build_mcx_commodity_map(), **build_currency_map(), **build_index_futures_map()}
+    out = {}
+    for s in symbols:
+        key = m.get(s) or get_instrument_key(s)
+        if key:
+            out[key] = s
+    return out
 
 
 class Recorder:
@@ -127,6 +133,7 @@ class Recorder:
         self.lock = threading.Lock()
         self.last_msg = 0.0
         self.counts: dict[str, int] = {}
+        self.last_sec: dict[str, int] = {}           # at most one row per instrument per second (the latest): keeps a liquid stock's day ~1 MB
         self.streamer = None
         self.keys: dict[str, str] = {}
         self.day = ""
@@ -143,8 +150,14 @@ class Recorder:
                 sym = self.keys.get(key)
                 row = parse_feed(feed, recv_ms) if sym else None
                 if row:
-                    self.buf.setdefault(sym, []).append(row)
-                    self.counts[sym] = self.counts.get(sym, 0) + 1
+                    rows = self.buf.setdefault(sym, [])
+                    sec = recv_ms // 1000
+                    if rows and self.last_sec.get(sym) == sec:
+                        rows[-1] = row                           # same second: keep only the newest state
+                    else:
+                        rows.append(row)
+                        self.counts[sym] = self.counts.get(sym, 0) + 1
+                    self.last_sec[sym] = sec
 
     def flush(self) -> None:
         with self.lock:
