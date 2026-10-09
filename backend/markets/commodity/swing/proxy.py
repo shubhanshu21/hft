@@ -12,12 +12,18 @@ import pandas as pd
 
 from services.data.yahoo import fetch_daily
 
-# MCX symbol -> Yahoo global futures ticker
+# MCX symbol -> Yahoo global futures ticker (one entry per underlying: the research loops over this)
 MCX_PROXY = {"CRUDEOILM": "CL=F", "GOLDM": "GC=F", "SILVER": "SI=F", "NATGASMINI": "NG=F", "COPPER": "HG=F"}
+# smaller MCX contracts on the same underlying -- the ones a Rs1 lakh account can actually hold overnight
+ALIASES = {"GOLDTEN": "GOLDM", "SILVERMIC": "SILVER"}
+
+
+def has_proxy(symbol: str) -> bool:
+    return symbol in MCX_PROXY or symbol in ALIASES
 
 
 def inr_frame(symbol: str) -> pd.DataFrame:
     """Daily OHLC of the global futures for an MCX symbol, in rupees. Index = date."""
-    usd = fetch_daily(MCX_PROXY[symbol])
+    usd = fetch_daily(MCX_PROXY[ALIASES.get(symbol, symbol)])
     rate = fetch_daily("INR=X")["close"].reindex(usd.index).ffill().bfill()
     return pd.DataFrame({k: usd[k] * rate for k in ("open", "high", "low", "close")}).dropna()

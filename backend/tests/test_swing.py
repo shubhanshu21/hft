@@ -119,9 +119,10 @@ class TestCommoditySwingStrategy(unittest.TestCase):
         frame = _frame(closes, start="2025-01-01")
         frame.index = pd.bdate_range(end="2026-09-23", periods=len(frame))
         s = mod.CommoditySwing()
-        patcher = patch.object(mod, "inr_frame", lambda sym: frame)
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        for target, value in (("inr_frame", lambda sym: frame), ("mcx_front_expiry", lambda sym: "2026-12-31")):
+            patcher = patch.object(mod, target, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
         return s
 
     def test_it_is_discovered_but_never_runs_unless_named_in_env(self):
@@ -161,7 +162,7 @@ class TestCommoditySwingStrategy(unittest.TestCase):
 
     def test_if_the_proxy_series_is_unavailable_it_does_not_trade(self):
         from markets.commodity.swing import strategy as mod
-        with patch.object(mod, "inr_frame", side_effect=RuntimeError("download failed")):
+        with patch.object(mod, "inr_frame", side_effect=RuntimeError("download failed")), patch.object(mod, "mcx_front_expiry", lambda sym: "2026-12-31"):
             self.assertIsNone(mod.CommoditySwing().entry(self._ctx()))
 
     def test_todays_forming_bar_is_never_used_for_the_signal(self):
@@ -182,8 +183,37 @@ class TestCommoditySwingStrategy(unittest.TestCase):
         bar = lambda px, ts="2026-09-24T09:15:00+05:30": {"timestamp": ts, "open": px, "high": px, "low": px, "close": px, "volume": 1}
         flip = s.manage(pos, ExitContext(symbol="GOLDM", candles=[bar(149000.0)], now=now))
         self.assertEqual(flip.reason, "signal_exit")                                  # momentum turned negative while long
-        stop = s.manage(pos, ExitContext(symbol="GOLDM", candles=[bar(144000.0)], now=now.replace(hour=14)))
+        later = now.replace(hour=14)
+        through = {**bar(146000.0, "2026-09-24T14:00:00+05:30"), "low": 144000.0}
+        stop = s.manage(pos, ExitContext(symbol="GOLDM", candles=[through], now=later))
         self.assertEqual((stop.reason, stop.price), ("initial_stop", 145000.0))       # outside the window: only the stop applies
+        gap = s.manage(pos, ExitContext(symbol="GOLDM", candles=[bar(144000.0, "2026-09-24T14:00:00+05:30")], now=later))
+        self.assertEqual((gap.reason, gap.price), ("initial_stop", 144000.0))         # opened below the stop: filled at the open
+
+    def test_the_affordable_mini_contracts_use_their_underlyings_series(self):
+        from markets.commodity.swing.proxy import ALIASES, MCX_PROXY, has_proxy
+        self.assertEqual(MCX_PROXY[ALIASES["GOLDTEN"]], "GC=F")
+        self.assertEqual(MCX_PROXY[ALIASES["SILVERMIC"]], "SI=F")
+        self.assertTrue(has_proxy("GOLDTEN") and has_proxy("SILVERMIC") and not has_proxy("USDINR"))
+        self.assertNotIn("GOLDTEN", MCX_PROXY)                                      # the research universe keeps one series per underlying
+        s = self._strategy(np.linspace(100, 300, 400))
+        sig = s.entry(self._ctx(sym="GOLDTEN", price=146000.0, cash=100000.0))
+        self.assertEqual((sig.direction, sig.exit_state["contract_expiry"]), ("long", "2026-12-31"))
+
+    def test_it_rolls_out_before_expiry_and_waits_for_the_next_contract(self):
+        from core.strategy import ExitContext
+        from markets.commodity.swing import strategy as mod
+        s = self._strategy(np.linspace(100, 300, 400))
+        now = datetime(2026, 9, 24, 9, 20, tzinfo=IST)
+        with patch.object(mod, "mcx_front_expiry", lambda sym: "2026-09-30"):           # 6 days left: inside the roll window
+            self.assertIsNone(s.entry(self._ctx(now=now)))
+        bar = {"timestamp": "2026-09-24T09:15:00+05:30", "open": 151000.0, "high": 151500.0, "low": 150800.0, "close": 151200.0, "volume": 1}
+        pos = {"symbol": "GOLDM", "direction": "long", "entry_price": 150000.0, "current_stop": 145000.0, "entry_time": now - timedelta(days=20),
+               "contract_expiry": "2026-09-30"}
+        roll = s.manage(pos, ExitContext(symbol="GOLDM", candles=[bar], now=now))
+        self.assertEqual((roll.reason, roll.price), ("contract_roll", 151200.0))
+        pos["contract_expiry"] = "2026-10-30"
+        self.assertIsNone(s.manage(pos, ExitContext(symbol="GOLDM", candles=[bar], now=now.replace(hour=14))))
 
 
 if __name__ == "__main__":

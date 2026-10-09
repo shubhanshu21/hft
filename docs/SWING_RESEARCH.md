@@ -131,6 +131,39 @@ Trend rules win only 20–30% of the time and earn through a few large winners, 
 
 `markets/commodity/swing/strategy.py` — hold long while the 252-day return is positive, short while negative, exit on a sign flip or a 3 x ATR stop; signals use completed daily bars and act in the first hour of the next MCX session. Because Upstox has no 252-day history for the current contract, the *direction and stop distance* come from the proxy series while sizing and stops use the real MCX price. It is **off** until named in `COMMODITY_STRATEGIES`; enable it in paper trading (e.g. `COMMODITY_STRATEGIES=scalping,swing`) to collect real evidence. If the proxy download fails it opens nothing. Shares the margin pool with the scalpers, so one margin-bound scalp can leave no room for a swing entry.
 
+### Re-tested as this account would trade it, and switched on in paper (2026-10-07)
+
+After the intraday scalpers were found to have no edge with real fills ([FILL_MODEL_AUDIT.md](FILL_MODEL_AUDIT.md)), the rule was
+re-run as a portfolio on the three contracts Rs1 lakh can hold overnight: GOLDTEN, SILVERMIC, CRUDEOILM, priced from global futures
+x USDINR in MCX units. The run used Rs97,858, real Upstox margin (10.8x / 7.7x / 3.2x), 10% risk with the code's minimum of 1 lot,
+the live 12% heat cap and a maximum of 3 positions. Costs were the MCX cost model plus 0.04% slippage, and each ~21 days held paid
+one extra round trip for the monthly roll. Stops gapped through overnight fill at the open. The pass bar, set before the run: TEST
+(2019 onward, never used to choose the rule) net positive with PF >= 1.2.
+
+| | Trades | PF | Net | Max DD |
+|---|---|---|---|---|
+| TEST 2019-2026, all three | 21 | 1.88 | **+97,362** | **59.6%** |
+| TEST, gold alone | 21 | 6.70 | +5,89,466 | 27.9% |
+| TEST, silver alone | 42 | 1.43 | +48,617 | 78.0% |
+| TEST, crude alone | 53 | 0.89 | -11,391 | 35.3% |
+| TRAIN 2005-2018, all three | 38 | 1.27 | +2,47,498 | 60.5% |
+| TRAIN, gold / silver / crude alone | 94 / 117 / 75 | 0.94 / 0.94 / 1.00 | -40,943 / -37,301 / -417 | 90% / 79% / 59% |
+
+It passes the bar, but weakly. Nearly all of the TEST profit is one long gold position through the 2024-26 rally, and each contract
+alone lost or broke even over 2005-18. With one lot this large next to the account, drawdowns run 30-60%. **Paper only, never real
+money at this size.** In practice the heat cap leaves room for about one position: on 2026-10-08 all three were long, with stops
+6.4% (gold), 6.9% (silver) and 14.2% (crude) away. One lot risked about 9.5%, 16% and 13% of the account, so only GOLDTEN fits.
+
+Live wiring added the same day:
+* `GOLDTEN` / `SILVERMIC` map to the gold / silver series (`proxy.ALIASES`).
+* Positions close 7 days before their contract expires (`contract_roll`), and no entry is made inside that window. The runner
+  re-maps a symbol to the next contract after expiry, so a held position would otherwise show the contract-to-contract price gap
+  as profit or loss and skip the roll cost.
+* A stop gapped through at the 09:00 open fills at the open.
+
+`.env`: `COMMODITY_STRATEGIES=swing` (commodity scalping off) and `DRYRUN_SYMBOLS=GOLDTEN SILVERMIC CRUDEOILM USDINR`. The
+`CRUDEOILM_PULLBACK_*` settings are commented out, because pullback settings apply per symbol to every strategy.
+
 ---
 
 # Wider search: 34 rule variants, with luck controlled (2026-09-24)
