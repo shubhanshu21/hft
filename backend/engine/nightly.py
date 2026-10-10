@@ -26,7 +26,8 @@ STEPS = [                            # (name, argv, exit codes that count as suc
     ("commodity data", [PY, "-m", "markets.commodity.data", "--topup"], {0}),
     ("currency data", [PY, "-m", "markets.currency.data", "--topup"], {0}),
     ("equity data", [PY, "-m", "markets.equity.data", "--topup"], {0}),
-    ("research data", [PY, "-m", "engine.research_data", "all"], {0}),     # 1-minute stocks/indexes, futures OI, NSE participant OI, Nifty options OI
+    ("research data", [PY, "-m", "engine.research_data", "all", "--max-minutes", "40"], {0}),     # 1-minute stocks/indexes, futures/options OI, NSE participant OI;
+                                                                                                # stops inside STEP_TIMEOUT_S and resumes next night (a 2026-10-09 first backfill was killed at 45 min)
     ("db backup", [PY, "-m", "engine.backup_db"], {0}),
     ("db backup verify", [PY, "-m", "engine.backup_db", "--verify"], {0}),      # open the newest backup: a backup nobody has opened is a hope
     ("cost drift", [PY, "-m", "engine.cost_drift"], {0, 1}),                    # our charges vs Upstox's calculator; 1 = alerted itself
