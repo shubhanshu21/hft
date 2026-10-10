@@ -115,3 +115,49 @@ class TestNseAndGlobalParsers(unittest.TestCase):
         a = pd.DataFrame({"date": ["d1", "d1"], "category": ["FII", "DII"], "net": ["1", "2"]})
         self.assertEqual(rd.append_unique(path, a, ["date", "category"]), 2)
         self.assertEqual(rd.append_unique(path, a, ["date", "category"]), 0)
+
+
+def _dbf(fields, rows) -> bytes:
+    """A tiny dBase III file: header, 32-byte field descriptors, 0x0D, then space-padded records."""
+    rlen = 1 + sum(w for _, w in fields)
+    hlen = 32 + 32 * len(fields) + 1
+    head = bytes([3, 26, 1, 1]) + len(rows).to_bytes(4, "little") + hlen.to_bytes(2, "little") + rlen.to_bytes(2, "little") + bytes(20)
+    desc = b"".join(n.encode().ljust(11, b"\x00") + b"C" + bytes(4) + bytes([w]) + bytes(15) for n, w in fields)
+    recs = b"".join(b" " + b"".join(str(v).encode().ljust(w) for v, (_, w) in zip(r, fields)) for r in rows)
+    return head + desc + b"\x0d" + recs + b"\x1a"
+
+
+def _zip(name, raw) -> bytes:
+    import io, zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr(name, raw)
+    return buf.getvalue()
+
+
+class TestCurrencyBhavcopy(unittest.TestCase):
+    OLD = ["CONTRACT_D", "PREVIOUS_S", "OPEN_PRICE", "HIGH_PRICE", "LOW_PRICE", "CLOSE_PRIC", "SETTLEMENT", "NET_CHANGE", "OI_NO_CON",
+           "TRADED_QUA", "TRD_NO_CON", "TRADED_VAL"]
+    ROWS = [["FUTCURUSDINR27-JAN-2012", 53.4, 53.49, 53.59, 53.43, 53.52, 53.52, 0.1, 1189166, 1190539, 5, 1.0],
+            ["OPTCURUSDINR27-JAN-2012CE53.00", 0.5, 0.5, 0.6, 0.4, 0.55, 0.55, 0, 10, 10, 1, 1.0]]
+
+    def test_old_dbf_and_csv_files_give_the_same_futures_rows(self):
+        dbf = _zip("CD_NSE_FO030112.dbf", _dbf([(c, 31) for c in self.OLD], self.ROWS))
+        csv = _zip("CD_NSE_FO030112.csv", ",".join(self.OLD) + "\n" + "\n".join(",".join(map(str, r)) for r in self.ROWS))
+        for content in (dbf, csv):
+            df = rd.parse_currency_bhavcopy(content, date(2012, 1, 3))
+            self.assertEqual(list(df.columns), rd.CURRENCY_DAILY_COLS)
+            self.assertEqual(len(df), 1)                                  # the option row is dropped
+            r = df.iloc[0]
+            self.assertEqual((r.date, r.symbol, r.expiry), ("2012-01-03", "USDINR", "2012-01-27"))
+            self.assertAlmostEqual(r.settle, 53.52)
+            self.assertEqual(r.oi, 1189166)
+
+    def test_udiff_file_keeps_only_currency_futures(self):
+        csv = ("TckrSymb,FinInstrmTp,XpryDt,OpnPric,HghPric,LwPric,ClsPric,SttlmPric,UndrlygPric,OpnIntrst,TtlTradgVol\n"
+               "USDINR,CDF,2026-10-28,97.07,97.14,96.91,97.12,97.12,96.88,1601160,756602\n"
+               "USDINR,CDO,2026-10-28,0.1,0.1,0.1,0.1,0.1,96.88,5,5\n")
+        df = rd.parse_currency_bhavcopy(_zip("BhavCopy_NSE_CD_0_0_0_20261008_F_0000.csv", csv), date(2026, 10, 8))
+        self.assertEqual(len(df), 1)
+        self.assertEqual(df.iloc[0].expiry, "2026-10-28")
+        self.assertAlmostEqual(df.iloc[0].underlying, 96.88)

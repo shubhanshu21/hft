@@ -10,6 +10,7 @@
     python3 -m engine.research_data delivery              # delivery quantity and % per NIFTY50 stock, NSE bhavcopy, 2020 onward
     python3 -m engine.research_data events                # board meetings / results dates for NIFTY50, 2022 onward + next 60 days
     python3 -m engine.research_data global-1m             # US futures, dollar index, crude, metals, US 10y, USD/INR, VIX (Yahoo keeps 7 days: daily)
+    python3 -m engine.research_data currency-daily        # every NSE currency future, daily OHLC / settle / OI, 2012 onward (NSE bhavcopy)
     python3 -m engine.research_data all                   # everything above; already-held data is skipped
     python3 -m engine.research_data all --max-minutes 40  # the nightly job: stops in time, saves progress, finishes on later nights
 
@@ -307,7 +308,9 @@ def job_nifty_options_oi() -> None:
 NSE_API_HEADERS = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
                    "Accept": "application/json,text/html,*/*", "Accept-Language": "en-US,en;q=0.9", "Referer": "https://www.nseindia.com/"}
 GLOBAL_1M = {"ES=F": "SP500_FUT", "YM=F": "DOW_FUT", "NQ=F": "NASDAQ_FUT", "DX-Y.NYB": "DXY", "CL=F": "WTI", "BZ=F": "BRENT", "GC=F": "GOLD",
-             "SI=F": "SILVER", "HG=F": "COPPER", "^TNX": "US10Y", "INR=X": "USDINR_SPOT", "^VIX": "US_VIX"}
+             "SI=F": "SILVER", "HG=F": "COPPER", "^TNX": "US10Y", "INR=X": "USDINR_SPOT", "^VIX": "US_VIX",
+             # fair value of the thin rupee crosses: EURINR ~ EURUSD x USDINR (docs/CURRENCY_RESEARCH.md, ML section)
+             "EURUSD=X": "EURUSD", "GBPUSD=X": "GBPUSD", "JPY=X": "USDJPY", "CNH=X": "USDCNH", "EURINR=X": "EURINR_SPOT", "GBPINR=X": "GBPINR_SPOT"}
 
 
 def append_unique(path: Path, df: pd.DataFrame, keys: list[str]) -> int:
@@ -452,9 +455,114 @@ def job_global_1m() -> None:
         log(f"{name}: {len(new)} new-window bars, {len(out.drop_duplicates('timestamp')):,} held")
 
 
+# ---------------------------------------------------------------------------------------------------------------- NSE currency futures, daily
+CURRENCY_DAILY = ARCHIVE_ROOT / "currency" / "futures_daily.csv.gz"
+CURRENCY_DAILY_COLS = ["date", "symbol", "expiry", "open", "high", "low", "close", "settle", "oi", "volume", "underlying"]
+
+
+def read_dbf(raw: bytes) -> pd.DataFrame:
+    """Minimal dBase III reader (NSE's currency bhavcopies before ~2016 are .dbf): fixed-width text fields."""
+    n = int.from_bytes(raw[4:8], "little")
+    hlen, rlen = int.from_bytes(raw[8:10], "little"), int.from_bytes(raw[10:12], "little")
+    fields, pos = [], 32
+    while raw[pos] != 0x0D:
+        fields.append((raw[pos:pos + 11].split(b"\x00")[0].decode("latin-1"), raw[pos + 16]))
+        pos += 32
+    rows = []
+    for i in range(n):
+        rec = raw[hlen + i * rlen: hlen + (i + 1) * rlen]
+        if len(rec) < rlen or rec[:1] == b"*":
+            continue
+        off, row = 1, {}
+        for name, flen in fields:
+            row[name] = rec[off:off + flen].decode("latin-1").strip()
+            off += flen
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def parse_currency_bhavcopy(content: bytes, day: date) -> pd.DataFrame:
+    """Futures rows of one NSE currency-derivatives bhavcopy zip (old CD_Bhavcopy .csv/.dbf, or UDiFF since 2024-07-08)."""
+    import zipfile
+    z = zipfile.ZipFile(io.BytesIO(content))
+    names = z.namelist()
+    if any(n.startswith("BhavCopy_NSE_CD") for n in names):
+        df = pd.read_csv(io.BytesIO(z.read(names[0])))
+        f = df[df["FinInstrmTp"] == "CDF"]
+        out = pd.DataFrame({"symbol": f["TckrSymb"], "expiry": f["XpryDt"], "open": f["OpnPric"], "high": f["HghPric"], "low": f["LwPric"],
+                            "close": f["ClsPric"], "settle": f["SttlmPric"], "oi": f["OpnIntrst"], "volume": f["TtlTradgVol"],
+                            "underlying": f["UndrlygPric"]})
+    else:
+        n = next((x for x in names if "_FO" in x.upper()), None)
+        if n is None:
+            return pd.DataFrame(columns=CURRENCY_DAILY_COLS)
+        raw = z.read(n)
+        df = read_dbf(raw) if n.lower().endswith(".dbf") else pd.read_csv(io.BytesIO(raw), encoding="latin-1", dtype=str)
+        df.columns = [c.strip() for c in df.columns]
+        c = df["CONTRACT_D"].astype(str).str.strip()
+        f = df[c.str.startswith("FUTCUR")].copy()
+        cd = f["CONTRACT_D"].astype(str).str.strip()
+        out = pd.DataFrame({"symbol": cd.str[6:-11], "expiry": pd.to_datetime(cd.str[-11:], format="%d-%b-%Y").dt.strftime("%Y-%m-%d"),
+                            "open": f["OPEN_PRICE"], "high": f["HIGH_PRICE"], "low": f["LOW_PRICE"], "close": f["CLOSE_PRIC"],
+                            "settle": f["SETTLEMENT"], "oi": f.get("OI_NO_CON"), "volume": f.get("TRADED_QUA"), "underlying": None})
+    out.insert(0, "date", day.isoformat())
+    for col in ("open", "high", "low", "close", "settle", "oi", "volume", "underlying"):
+        out[col] = pd.to_numeric(out[col], errors="coerce")
+    return out[CURRENCY_DAILY_COLS]
+
+
+def job_currency_daily(start="2012-01-02") -> None:
+    """Every NSE currency future (USDINR, EURINR, GBPINR, JPYINR and the cross pairs), every day: OHLC, settlement, open interest, volume.
+    Real futures prices (they include the forward premium, so carry can be measured), years beyond Upstox's ~4 months."""
+    import requests
+    have = read_gz(CURRENCY_DAILY) if CURRENCY_DAILY.exists() else pd.DataFrame(columns=CURRENCY_DAILY_COLS)
+    done = set(have["date"].unique()) if not have.empty else set()
+    none_file = CURRENCY_DAILY.with_name("futures_daily_holidays.txt")
+    holidays = set(none_file.read_text().split()) if none_file.exists() else set()
+    s = requests.Session()
+    frames, got = [have], 0
+    d, end = date.fromisoformat(start), date.today()
+    while d <= end:
+        if out_of_time(f"currency futures {d}"):
+            break
+        key = d.isoformat()
+        if d.weekday() < 5 and key not in done and key not in holidays:
+            url = (f"https://archives.nseindia.com/archives/cd/bhav/BhavCopy_NSE_CD_0_0_0_{d:%Y%m%d}_F_0000.csv.zip" if d >= date(2024, 7, 8)
+                   else f"https://archives.nseindia.com/archives/cd/bhav/CD_Bhavcopy{d:%d%m%y}.zip")
+            try:
+                r = s.get(url, headers=NSE_API_HEADERS, timeout=30)
+                if r.status_code == 200 and r.content[:2] == b"PK":
+                    frames.append(parse_currency_bhavcopy(r.content, d))
+                    got += 1
+                elif r.status_code == 404 and d < end - timedelta(days=3):
+                    holidays.add(key)
+            except Exception as ex:
+                log(f"currency futures {d}: {str(ex)[:80]}")
+            time.sleep(0.3)
+            if got and got % 100 == 0:                                      # keep progress if the run is cut short
+                _save_currency_daily(frames, holidays, none_file)
+                frames = [read_gz(CURRENCY_DAILY)]
+        d += timedelta(days=1)
+    _save_currency_daily(frames, holidays, none_file)
+    log(f"currency futures daily: +{got} days")
+
+
+def _save_currency_daily(frames, holidays, none_file) -> None:
+    out = concat(frames)
+    if not out.empty:
+        CURRENCY_DAILY.parent.mkdir(parents=True, exist_ok=True)
+        out = out.drop_duplicates(["date", "symbol", "expiry"], keep="last").sort_values(["date", "symbol", "expiry"])
+        tmp = CURRENCY_DAILY.with_suffix(".tmp")
+        with gzip.open(tmp, "wt") as fh:
+            out.to_csv(fh, index=False)
+        tmp.replace(CURRENCY_DAILY)
+    none_file.write_text("\n".join(sorted(holidays)))
+
+
 JOBS = {"equity-1m": job_equity_1m, "index": job_index, "index-futures": job_index_futures,
         "participant-oi": job_participant_oi, "nifty-options-oi": job_nifty_options_oi, "fii-dii-cash": job_fii_dii_cash,
-        "bulk-block": job_bulk_block, "delivery": job_delivery, "events": job_events, "global-1m": job_global_1m}
+        "bulk-block": job_bulk_block, "delivery": job_delivery, "events": job_events, "global-1m": job_global_1m,
+        "currency-daily": job_currency_daily}
 
 
 def main(argv=None) -> int:
@@ -468,8 +576,8 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
     global _deadline
     _deadline = time.time() + a.max_minutes * 60 if a.max_minutes else None
-    order = (["fii-dii-cash", "bulk-block", "global-1m", "index", "participant-oi", "events", "delivery", "index-futures", "equity-1m",
-              "nifty-options-oi"] if a.job == "all" else [a.job])     # the collect-daily-or-lose-it sources first
+    order = (["fii-dii-cash", "bulk-block", "global-1m", "index", "participant-oi", "events", "delivery", "currency-daily", "index-futures",
+              "equity-1m", "nifty-options-oi"] if a.job == "all" else [a.job])     # the collect-daily-or-lose-it sources first
     failed = []
     for name in order:
         if out_of_time(name):
@@ -477,7 +585,7 @@ def main(argv=None) -> int:
         try:
             if name == "equity-1m":
                 job_equity_1m(a.symbols, a.start or "2022-01-03")
-            elif name in ("index", "participant-oi", "delivery", "events") and a.start:
+            elif name in ("index", "participant-oi", "delivery", "events", "currency-daily") and a.start:
                 JOBS[name](a.start)
             else:
                 JOBS[name]()

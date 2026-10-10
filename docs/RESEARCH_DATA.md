@@ -8,11 +8,11 @@ out of reach. Storage is compressed (the disk had ~30 GB free on 2026-10-10 afte
 
 | Data | Instruments | Where | Service |
 |---|---|---|---|
-| Order flow: every feed update (5 best bid/ask prices and quantities, last trade price/size/time, average price, cumulative volume, total buy/sell quantity, open interest) -- since 2026-10-10 no sampling, so signed volume can be rebuilt | USDINR, SILVERMIC, GOLDTEN, CRUDEOILM, NIFTY and BANKNIFTY front futures, RELIANCE, HDFCBANK, ICICIBANK, INFY, TCS | `var/archive/depth/<SYMBOL>/<day>.csv.gz` | `hft-depth-recorder.service` (`engine/depth_recorder.py`), since 2026-10-09 |
+| Order flow: every feed update (5 best bid/ask prices and quantities, last trade price/size/time, average price, cumulative volume, total buy/sell quantity, open interest) -- since 2026-10-10 no sampling, so signed volume can be rebuilt | USDINR, SILVERMIC, GOLDTEN, CRUDEOILM, NIFTY and BANKNIFTY front futures, RELIANCE, HDFCBANK, ICICIBANK, INFY, TCS; EURINR and GBPINR since 2026-10-12 | `var/archive/depth/<SYMBOL>/<day>.csv.gz` | `hft-depth-recorder.service` (`engine/depth_recorder.py`), since 2026-10-09 |
 | Live Nifty option chain: current weekly expiry, ATM +-10 strikes, calls and puts: implied volatility, delta/gamma/theta/vega, open interest, depth; one row per option every 15 s | NIFTYOPT | `var/archive/depth/NIFTYOPT/<day>.csv.gz` (column `instrument`) | same service, since 2026-10-10 |
 | FII/FPI and DII cash-market buy / sell / net (NSE provisional, Rs crore) | daily | `var/archive/nse/fii_dii_cash.csv` | nightly `research_data fii-dii-cash` (NSE serves only the latest day) |
 | Bulk and block deals | daily | `var/archive/nse/bulk_deals.csv`, `block_deals.csv` | nightly `research_data bulk-block` (history pages refuse servers) |
-| US index futures, dollar index, WTI, Brent, gold, silver, copper, US 10-year, USD/INR spot, US VIX at 1 minute | daily | `var/archive/global_1m/<NAME>_1minute.csv.gz` | nightly `research_data global-1m` (Yahoo keeps 7 days) |
+| US index futures, dollar index, WTI, Brent, gold, silver, copper, US 10-year, USD/INR spot, US VIX at 1 minute; EUR/USD, GBP/USD, USD/JPY, USD/CNH, EUR/INR and GBP/INR spot since 2026-10-10 | daily | `var/archive/global_1m/<NAME>_1minute.csv.gz` | nightly `research_data global-1m` (Yahoo keeps 7 days) |
 
 Upstox keeps no depth history and NSE/Yahoo publish these flows for a few days only, so every day not recorded is lost. Change the
 instrument list with `DEPTH_SYMBOLS` in `.env` (`NIFTYOPT` = the option chain; `DEPTH_OPTION_STRIKES`, `DEPTH_OPTION_EVERY_S`;
@@ -29,6 +29,7 @@ instrument list with `DEPTH_SYMBOLS` in `.env` (`NIFTYOPT` = the option chain; `
 | Nifty weekly options within +-3% of the index: 5-minute OHLC, volume, open interest, per expiry | 2024-10 onward | `var/archive/options/NIFTY/<expiry>.csv.gz` | options positioning (put/call OI, OI walls, changes) as an input; not for trading options |
 | Delivery quantity and % per NIFTY50 stock (NSE full bhavcopy) | 2020-01 onward | `var/archive/nse/delivery/<day>.csv` | real accumulation vs intraday churn |
 | Board meetings / results dates for NIFTY50 stocks, plus NSE's forward event calendar (60 days) | 2022-01 onward | `var/archive/nse/board_meetings.csv`, `event_calendar.csv` | avoid or target results days |
+| Every NSE currency future (USDINR, EURINR, GBPINR, JPYINR, and the EURUSD/GBPUSD/USDJPY crosses from 2018), daily OHLC, settlement, open interest, volume (NSE bhavcopy: dBase files to ~2016, CSV after, UDiFF since 2024-07-08) | 2012-01 onward | `var/archive/currency/futures_daily.csv.gz` (`futures_daily_holidays.txt` = days with no file) | currency strategies over 14 years instead of Upstox's ~4 months; the forward premium (carry) is in the prices |
 
 Upstox calls are paced at 1.2 s (`UPSTOX_PACE_S`) to stay inside the 2,000-per-30-minutes limit the trading daemon shares; the first full
 backfill takes about four hours, the nightly top-up a few minutes. The nightly step runs with `--max-minutes 40`: it stops in time, keeps
@@ -41,7 +42,7 @@ what it has, and continues the next night. Run a long one-off backfill with `sys
 |---|---|
 | Tick-by-tick order book (every order added, changed, cancelled) | exchange TBT feed for trading members, needs co-location-grade infrastructure |
 | 30-level depth | Upstox Plus subscription (paid) |
-| MCX and currency intraday history before ~4 months ago | Upstox serves only current contracts and its expired-contract data covers NSE index derivatives only; paid data vendors |
+| MCX and currency INTRADAY history before ~4 months ago (daily currency history is downloaded, above) | Upstox serves only current contracts and its expired-contract data covers NSE index derivatives only; paid data vendors |
 | Client order flow (banks' FX flows, brokers' order books) | private to those firms |
 | Global 1-minute history older than 7 days | Yahoo keeps 7 days; collected daily from 2026-10-10. Dukascopy (`services/data/dukascopy.py`) has years but timed out on 2026-10-09 |
 | Bulk / block deal history | NSE's historical endpoints return 503 to servers; collected daily from 2026-10-10 |

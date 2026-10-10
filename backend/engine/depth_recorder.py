@@ -34,7 +34,7 @@ from services.utils.logger import get_logger
 log = get_logger("depth_recorder")
 IST = ZoneInfo("Asia/Kolkata")
 DEPTH_DIR = ARCHIVE_ROOT / "depth"
-DEFAULT_SYMBOLS = "USDINR SILVERMIC GOLDTEN CRUDEOILM NIFTY BANKNIFTY RELIANCE HDFCBANK ICICIBANK INFY TCS NIFTYOPT"
+DEFAULT_SYMBOLS = "USDINR EURINR GBPINR SILVERMIC GOLDTEN CRUDEOILM NIFTY BANKNIFTY RELIANCE HDFCBANK ICICIBANK INFY TCS NIFTYOPT"
 OPTION_GROUPS = {"NIFTYOPT": ("NIFTY", "NSE_INDEX|Nifty 50", 50)}      # pseudo-symbol -> (option underlying name, spot key, strike step)
 LEVELS = 5
 SESSION = ((8, 58), (23, 35))          # MCX 09:00-23:30 covers NSE currency 09:00-17:00; a few minutes either side
