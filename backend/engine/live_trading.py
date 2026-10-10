@@ -481,6 +481,11 @@ class LiveTrader(RiskGates):
     def _strategy_of(self, pos: dict, sym: str | None = None):
         return registry.get(_get_market(sym or pos["symbol"]), pos.get("strategy", "scalping"))
 
+    def _market_data(self):
+        """Other symbols' bars and live quotes for a strategy that needs them (core.strategy.MarketData)."""
+        from engine.market_data import BrokerMarketData
+        return BrokerMarketData(lambda s: _fetch_candles(self.broker, s, self.symbol_map.get(s), self.today), self.broker, self.symbol_map)
+
     def _candles(self, sym: str, ikey: str, strat) -> list[dict]:
         unit, interval = strat.timeframe
         if strat.lookback_days > 0:
@@ -492,6 +497,8 @@ class LiveTrader(RiskGates):
 
     def _try_enter(self, strat, sym: str, now: datetime) -> bool:
         market = _get_market(sym)
+        if hasattr(strat, "trades") and not strat.trades(sym):
+            return False                     # <MARKET>_<NAME>_SYMBOLS limits this strategy to other symbols
         if strat.blocked({"equity_regime_ok": self.equity_regime_ok if self.use_equity_regime_filter else True}):
             return False
         if strat.max_positions is not None:
@@ -523,6 +530,7 @@ class LiveTrader(RiskGates):
             risk_pct=base_risk_pct * self._drawdown_risk_scale(), leverage=leverage,
             direction_filter=self.direction_filter, full_session=self.full_session,
             regime_ok=regime_ok, equity_regime_ok=self.equity_regime_ok if self.use_equity_regime_filter else True,
+            data=self._market_data(),
         ))
         if not signal or (signal.direction == "short" and not strat.allow_short):
             return False
@@ -659,7 +667,7 @@ class LiveTrader(RiskGates):
             return
         armed_key = "armed_be" if "armed_be" in pos else "armed_trail"
         before = (pos["current_stop"], pos.get(armed_key), pos.get("trail_bar_ts"))
-        decision = strat.manage(pos, ExitContext(symbol=sym, candles=candles, now=now))
+        decision = strat.manage(pos, ExitContext(symbol=sym, candles=candles, now=now, data=self._market_data()))
         if decision is not None:
             self._exit(sym, pos, decision, now)
             return

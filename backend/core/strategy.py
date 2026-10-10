@@ -59,6 +59,21 @@ class ExitDecision:
     reason: str                         # "take_profit" | "initial_stop" | "trail_stop" | "eod_squareoff" | ...
 
 
+class MarketData:
+    """Read-only market data a strategy may need beyond its own candles: another symbol's bars, or the live best bid/ask. The runners pass
+    one built on their own broker connection (engine/market_data.py), so a strategy still never holds the broker; backtests and tests pass
+    their own or None. Both methods return empty / None when the data is unavailable -- a strategy must then simply not trade."""
+
+    def candles(self, symbol: str) -> list[dict]:
+        """Chronological 5-minute candles of `symbol` (today plus the previous sessions, the same as the strategy's own)."""
+        return []
+
+    def quote(self, symbol: str) -> dict | None:
+        """{"bid", "ask", "bid_qty", "ask_qty", "bids", "asks", "ltp"} from the live order book (bids / asks = up to 5 (price, qty)
+        levels, best first), or None."""
+        return None
+
+
 @dataclass
 class EntryContext:
     symbol: str
@@ -72,6 +87,7 @@ class EntryContext:
     full_session: bool                  # MCX full session vs evening-only window
     regime_ok: bool | None = True       # this symbol's regime gate (None = unknown)
     equity_regime_ok: bool | None = True
+    data: MarketData | None = None      # other symbols' bars / live quotes (None in backtests that do not provide them)
 
 
 @dataclass
@@ -79,6 +95,7 @@ class ExitContext:
     symbol: str
     candles: list[dict]
     now: datetime
+    data: MarketData | None = None
 
 
 class Strategy:
@@ -120,6 +137,13 @@ class Strategy:
         gate entries on trading hours itself (each strategy owns its own entry window)."""
         from core.sessions import is_open
         return is_open(self.market, now)
+
+    def trades(self, symbol: str) -> bool:
+        """Which of the market's symbols this strategy may trade: <MARKET>_<NAME>_SYMBOLS in .env (space or comma separated, e.g.
+        CURRENCY_SCALPING_SYMBOLS=USDINR); unset = every symbol of its market, as before."""
+        import os
+        raw = os.environ.get(f"{self.market.upper()}_{self.name.upper()}_SYMBOLS", "").replace(",", " ").split()
+        return not raw or symbol.upper() in {r.upper() for r in raw}
 
     def due(self, now: datetime) -> bool:
         """False = skip entry evaluation on this scan (e.g. a daily strategy that only looks

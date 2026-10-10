@@ -72,6 +72,8 @@ STRATEGY = EquitySwing()
 `ctx` gives you the candles, the time, `capital` (the whole account, or less once other positions hold margin),
 `risk_pct` (already scaled down by the drawdown rule), `leverage` (1.0 when `uses_leverage = False`),
 `direction_filter` and the regime flags.
+`ctx.data` (also on the exit context) reads other symbols' 5-minute candles (`ctx.data.candles("USDINR")`) and the live 5-level book (`ctx.data.quote(sym)`); it is None in backtests that do not provide one, so a strategy must then not trade. `<MARKET>_<NAME>_SYMBOLS` in `.env` limits a strategy to some of its market's symbols (override `trades()` for a fixed rule); `markets/currency/parity/strategy.py` uses both.
+
 Size the position from `ctx.capital` and `ctx.risk_pct` — see `size_equity_shares` / `size_commodity_lots` for the
 two existing sizing rules. Reusable exit managers live in `core/exits.py`; the three existing strategies
 (`markets/*/scalping/strategy.py`) are complete worked examples.

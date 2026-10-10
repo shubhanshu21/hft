@@ -104,6 +104,52 @@ Luck control (20 runs with each day's labels swapped for another day's, developm
 against a shuffled maximum of 1.2-2.2 bp. USDINR's 5-minute correlation (0.06-0.07) beats 95-100% of shuffles but is worth 0.2 bp
 against a 1.4 bp cost; its 15-30 minute correlations are at chance.
 
+### Round 2: real spread and a ten-model contest (2026-10-10)
+
+The 10.9 / 10.1 bp costs above used a 7.5 bp EURINR spread from 90 quote snapshots on two days. The spread actually paid in trades
+(Roll estimate from 30 days of 1-minute prices) is 3.9 bp EURINR, 3.1 bp GBPINR (USDINR 1.0 bp, matching its quotes). Realistic
+market-order round trips: EURINR 7.4 bp at 2 lots / 5.4 bp at 5 lots, GBPINR 6.1 / 4.5 bp.
+
+Ten models (ridge, elastic net, LightGBM, XGBoost, extra trees, neural net, k-nearest neighbours, logistic, a rank-average ensemble,
+and the no-ML rule "fade the parity gap") x horizons 15 / 30 / 60 minutes, all walk-forward, with each model's trade threshold also
+chosen walk-forward from its own earlier out-of-sample days. The late days (09-28..10-09) were seen once in round 1, so they are a
+second look, not a clean holdout.
+
+| configurations net-positive (EURINR + GBPINR, of 30) | development | late days | both |
+|---|---|---|---|
+| cost model (10-11 bp) | 0 | 4 | 0 |
+| 2 lots, real spread | 7 | 24 | 6 |
+| 5 lots, real spread | 18 | 30 | 18 |
+
+Best (30-minute horizon, both periods together): ensemble EURINR at 5 lots +2.1 bp a trade, 117 trades, t = 3.0, 12 of 16 days
+positive; parity rule GBPINR at 5 lots +2.5 bp, 65 trades, t = 2.3; elastic net (pre-registered winner) EURINR at 2 lots +1.9 bp, 41
+trades, t = 1.3. The plain parity rule is about as good as the models: the edge is the parity gap, ML adds little. USDINR: no model
+trades it profitably.
+
+Open risks, all answerable only live: the spread at the moment of a signal (a gap may open exactly when the book is wide), whether
+5 lots fill at the touch in a ~1,800-contract-a-day market, and a live EUR/USD price. Next step: shadow-trade EURINR/GBPINR from
+2026-10-12 (signals logged live, filled against the recorded bid/ask), decide on paper trading after ~3 weeks.
+
+## Deployed to paper trading: `markets/currency/parity` (from 2026-10-12)
+
+Rule (no ML -- the plain gap did as well as the models): on each completed 5-minute bar, gap = log(cross) - log(EUR/USD or GBP/USD,
+Yahoo) - log(NSE USDINR), minus its median over the last 60 bars (restarted after an overnight jump > 25 bp, i.e. a contract roll on one
+leg). EURINR |gap| > 10 bp, GBPINR > 12 bp: fade it, 5 lots, hold 30 minutes, protective stop 25 bp, entries 09:20-15:50. Thresholds
+chosen on 2026-08-21..09-16 only. Paper fills walk the live 5-level book (the crosses often show 1-3 lots at the best price), so the
+paper P&L pays the real spread; costs() adds brokerage, exchange, SEBI, stamp duty and GST.
+
+Backtest of that exact code on the raw archives (`python3 -m markets.currency.parity.backtest`; entry next open + half the Roll spread,
+exit 30 min later - half spread):
+
+| 5 lots | trades | win % | net bp a trade | net Rs | t |
+|---|---|---|---|---|---|
+| threshold-choosing days (to 09-16) | 77 | 58 | +2.2 | +9,562 | 2.3 |
+| test days (09-17..10-09) | 57 | 61 | +2.7 | +9,312 | 2.3 |
+| all (31 days) | 134 | 60 | +2.4 | +18,873 (fees 11,396) | 3.3 |
+| same, 2 lots | 134 | 48 | +0.6 | +1,857 | 0.8 |
+
+7 of 8 weeks positive. At 2 lots the fixed Rs70.8 brokerage takes almost all of it. Judge it on its paper trades from 2026-10-12.
+
 ## What changed in 2024: only USDINR is liquid
 
 RBI's 2024 rule (rupee currency derivatives need an underlying exposure) emptied the other pairs. Median daily volume of the contract

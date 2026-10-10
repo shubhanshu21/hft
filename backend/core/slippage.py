@@ -48,8 +48,9 @@ _csv_path: Path | None = None
 def set_spread_log_path(path: Path) -> None:
     """Called once by the live runner to wire in the real log path.
     Falls back to the default relative path if never called."""
-    global _csv_path
+    global _csv_path, _cache_loaded_at
     _csv_path = path
+    _cache_loaded_at = float("-inf")             # a new file: the cached medians belong to the old one, reload on next use
 
 
 def _resolve_csv() -> Path:

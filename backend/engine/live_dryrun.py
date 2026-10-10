@@ -823,6 +823,11 @@ class DryRunner(RiskGates):
     def _strategy_of(self, pos: dict, sym: str | None = None):
         return registry.get(_get_market(sym or pos["symbol"]), pos.get("strategy", "scalping"))
 
+    def _market_data(self):
+        """Other symbols' bars and live quotes for a strategy that needs them (core.strategy.MarketData)."""
+        from engine.market_data import BrokerMarketData
+        return BrokerMarketData(lambda s: _fetch_candles(self.broker, s, self.today), self.broker, SYMBOL_MAP)
+
     def _candles(self, sym: str, strat) -> list[dict]:
         unit, interval = strat.timeframe
         if strat.lookback_days > 0:
@@ -855,6 +860,8 @@ class DryRunner(RiskGates):
     def _try_enter(self, strat, sym: str, now: datetime, signals: list[dict]) -> bool:
         """Evaluate `strat` for `sym`; open a (paper) position if it signals and every gate passes."""
         market = _get_market(sym)
+        if hasattr(strat, "trades") and not strat.trades(sym):
+            return False                     # <MARKET>_<NAME>_SYMBOLS limits this strategy to other symbols
         if not strat.in_session(now):
             return False                     # market closed: the entry functions would reject this anyway, and every candle fetch counts against Upstox's rate limits
         if strat.blocked(self._gate_flags()):
@@ -884,7 +891,8 @@ class DryRunner(RiskGates):
             return False
         ctx = dict(symbol=sym, candles=candles, now=now, instrument_key=SYMBOL_MAP.get(sym),
                    risk_pct=base_risk_pct * self._drawdown_risk_scale(), leverage=leverage, direction_filter=self.direction_filter,
-                   full_session=self.full_session, regime_ok=regime_ok, equity_regime_ok=self._gate_flags()["equity_regime_ok"])
+                   full_session=self.full_session, regime_ok=regime_ok, equity_regime_ok=self._gate_flags()["equity_regime_ok"],
+                   data=self._market_data())
         pb = entry_pullback.config_for(sym, market)
         from_pullback = stopped_on_fill = False
         sig_result = None
@@ -961,7 +969,7 @@ class DryRunner(RiskGates):
         sig = {
             "position_id": pos_id, "entry_order_id": entry_order_id, "strategy": strat.name,
             "time": now.strftime("%H:%M:%S"), "symbol": sym, "direction": direction,
-            "entry_price": round(entry, 2), "sl": sl, **sig_result.alert_levels,
+            "entry_price": round(entry, strat.price_decimals), "sl": sl, **sig_result.alert_levels,
             "qty": qty, "lots": qty, "setup_type": sig_result.setup_type,
             "trade_value": round(trade_val, 2),
             # Balance/capital only ever changes on a CLOSE (see _close_position -- self.capital +=
@@ -1001,7 +1009,7 @@ class DryRunner(RiskGates):
         live_prices.update(sym, candles[-1]["close"], now)               # for the dashboard's unrealised P&L (it never calls Upstox itself)
         armed_key = "armed_be" if "armed_be" in pos else "armed_trail"
         before = (pos["current_stop"], pos.get(armed_key), pos.get("trail_bar_ts"))
-        decision = strat.manage(pos, ExitContext(symbol=sym, candles=candles, now=now))
+        decision = strat.manage(pos, ExitContext(symbol=sym, candles=candles, now=now, data=self._market_data()))
         if decision is not None:
             self._close_position(sym, pos, decision.price, decision.reason, now)
             return
