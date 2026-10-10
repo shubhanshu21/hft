@@ -9,7 +9,7 @@ Run on 2026-09-23.
 |---|---|---|
 | **Equity** | **No swing rule survives out-of-sample.** Great-looking numbers on the long Yahoo history are survivorship-biased and regime-dependent; on real Upstox data every rule turned negative in the test window. | nothing |
 | **Currency** | **Nothing works.** Trend rules lose money; mean-reversion is flat. | nothing |
-| **Commodity** | **Weak, unproven edge.** 12-month time-series momentum: test PF 1.85 (229 trades), survives 4x costs, but t = 1.5, carried by gold and copper. | `markets/commodity/swing` — **paper-only candidate, off by default** |
+| **Commodity** | **Weak, unproven edge.** 12-month time-series momentum: test PF 1.85 (229 trades), survives 4x costs, but t = 1.5, carried by gold and copper. | `markets/commodity/strategies/swing` — **paper-only candidate, off by default** |
 
 Nothing here justifies real money. The one addition is a hypothesis worth collecting paper-trading evidence on.
 
@@ -129,7 +129,7 @@ Trend rules win only 20–30% of the time and earn through a few large winners, 
 
 ## The commodity swing strategy
 
-`markets/commodity/swing/strategy.py` — hold long while the 252-day return is positive, short while negative, exit on a sign flip or a 3 x ATR stop; signals use completed daily bars and act in the first hour of the next MCX session. Because Upstox has no 252-day history for the current contract, the *direction and stop distance* come from the proxy series while sizing and stops use the real MCX price. It is **off** until named in `COMMODITY_STRATEGIES`; enable it in paper trading (e.g. `COMMODITY_STRATEGIES=scalping,swing`) to collect real evidence. If the proxy download fails it opens nothing. Shares the margin pool with the scalpers, so one margin-bound scalp can leave no room for a swing entry.
+`markets/commodity/strategies/swing/strategy.py` — hold long while the 252-day return is positive, short while negative, exit on a sign flip or a 3 x ATR stop; signals use completed daily bars and act in the first hour of the next MCX session. Because Upstox has no 252-day history for the current contract, the *direction and stop distance* come from the proxy series while sizing and stops use the real MCX price. It is **off** until named in `COMMODITY_STRATEGIES`; enable it in paper trading (e.g. `COMMODITY_STRATEGIES=scalping,swing`) to collect real evidence. If the proxy download fails it opens nothing. Shares the margin pool with the scalpers, so one margin-bound scalp can leave no room for a swing entry.
 
 ### Re-tested as this account would trade it, and switched on in paper (2026-10-07)
 

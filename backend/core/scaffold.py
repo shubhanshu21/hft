@@ -15,7 +15,7 @@ MARKETS = ("commodity", "currency", "equity")
 _TEMPLATE = '''"""{market} / {name} -- TODO: one line on what this strategy does and why it should have an edge.
 
 Not switched on until it is named in .env:   {MARKET}_STRATEGIES=scalping,{name}
-Guide: docs/ADDING_A_STRATEGY.md.  Worked examples: markets/*/scalping/strategy.py
+Guide: docs/ADDING_A_STRATEGY.md.  Worked examples: markets/*/strategies/scalping/strategy.py
 """
 from __future__ import annotations
 
@@ -64,11 +64,12 @@ def create(market: str, name: str, root: Path | None = None) -> Path:
         raise ValueError(f"market must be one of {MARKETS}")
     if not re.fullmatch(r"[a-z][a-z0-9_]*", name):
         raise ValueError("name must be lowercase letters, digits and underscores, starting with a letter")
-    folder = (root or BACKEND_ROOT / "markets") / market / name
+    folder = (root or BACKEND_ROOT / "markets") / market / "strategies" / name
     target = folder / "strategy.py"
     if target.exists():
         raise FileExistsError(f"{target} already exists")
     folder.mkdir(parents=True, exist_ok=True)
+    (folder.parent / "__init__.py").touch(exist_ok=True)
     (folder / "__init__.py").touch(exist_ok=True)
     target.write_text(_TEMPLATE.format(
         market=market, name=name, MARKET=market.upper(), Class="".join(p.capitalize() for p in name.split("_")) + market.capitalize(),

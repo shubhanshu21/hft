@@ -3,7 +3,7 @@
     python3 -m markets.equity.experiments.multi_strategy_study [--symbols A B ...] [--json out.json]
 
 Same question as markets/commodity/experiments/regime_switch_study.py, but equity has ~4 years of 5-min history (2022-08 .. now), so the phase tests have real power.
-Library: TREND = the live rule (markets/equity/scalping/backtest.py, incl. its ADX-scaled trailing exit); MR-A / MR-B = VWAP + RSI mean reversion (two strengths);
+Library: TREND = the live rule (markets/equity/strategies/scalping/backtest.py, incl. its ADX-scaled trailing exit); MR-A / MR-B = VWAP + RSI mean reversion (two strengths);
 ORB / ORB-FADE = the first-30-minute range broken / faded once per stock per day. Each strategy is run through the SAME portfolio rules as live -- one Rs100,000 pool,
 at most 3 concurrent positions across the universe, real Upstox MIS 5x, real cost model (STT, exchange, stamp, min(0.06%, Rs30) brokerage), risk 4% -- but on a FIXED
 Rs100,000 (no compounding) so a strategy's daily P&L does not depend on how it did before, which is what lets the pickers be compared fairly.
@@ -25,7 +25,7 @@ from core.paths import ARCHIVE_ROOT
 from markets.commodity.experiments.regime_switch_study import max_drawdown, performance_switch, regime_map
 from markets.equity.costs import compute_nse_equity_costs, size_equity_shares
 from markets.equity.features import compute_equity_features
-from markets.equity.scalping import backtest as eqbt
+from markets.equity.strategies.scalping import backtest as eqbt
 from markets.equity.universe import NIFTY50_SYMBOLS
 
 ARCHIVE = ARCHIVE_ROOT / "equity"

@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from markets.crypto import router, backtest as b
+from markets.crypto.strategies import router
+from markets.crypto import backtest as b
 from markets.crypto.experiments.momentum_study import load
 BASE=("BTCUSDT","ETHUSDT","SOLUSDT"); EXTRA=("BNBUSDT","XRPUSDT","ADAUSDT","DOGEUSDT","LINKUSDT","AVAXUSDT")
 ALL=BASE+EXTRA

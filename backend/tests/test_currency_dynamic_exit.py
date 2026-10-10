@@ -1,4 +1,4 @@
-"""The opt-in ADX-scaled exit for the currency scalper (markets/currency/scalping/strategy.py)."""
+"""The opt-in ADX-scaled exit for the currency scalper (markets/currency/strategies/scalping/strategy.py)."""
 import os
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -18,7 +18,7 @@ def _signal(adx=30.0, direction="long"):
 
 class TestDynamicExit(unittest.TestCase):
     def test_off_unless_asked_for(self):
-        from markets.currency.scalping import strategy as s
+        from markets.currency.strategies.scalping import strategy as s
         with patch.dict(os.environ, {}, clear=False):
             for k in ("CURRENCY_EXIT_MODE", "USDINR_EXIT_MODE"):
                 os.environ.pop(k, None)
@@ -29,7 +29,7 @@ class TestDynamicExit(unittest.TestCase):
             self.assertEqual(s.exit_mode("USDINR"), "fixed")                     # the symbol setting wins
 
     def test_signal_conversion_scales_activation_and_trail_by_adx(self):
-        from markets.currency.scalping.strategy import to_dynamic
+        from markets.currency.strategies.scalping.strategy import to_dynamic
         strong = to_dynamic(_signal(adx=30.0))                                   # scale 1.2
         self.assertAlmostEqual(strong.exit_state["activation_price"], 96.0 + (0.6 / 1.2) * 0.06, places=4)
         self.assertAlmostEqual(strong.exit_state["trail_mult"], 0.3 * 1.2, places=6)
@@ -40,7 +40,7 @@ class TestDynamicExit(unittest.TestCase):
         self.assertAlmostEqual(capped.exit_state["trail_mult"], 0.3 * 1.8, places=6)
 
     def test_dynamic_position_arms_then_trails_and_a_fixed_position_keeps_the_fixed_exit(self):
-        from markets.currency.scalping.strategy import STRATEGY, to_dynamic
+        from markets.currency.strategies.scalping.strategy import STRATEGY, to_dynamic
         sig = to_dynamic(_signal(adx=25.0))                                       # activation 96.036, trail 0.3
         entry_time = datetime(2026, 9, 28, 10, 0, tzinfo=IST)
         pos = {"direction": "long", "entry_price": 96.0, "entry_time": entry_time, "stop_dist": 0.06, "current_stop": 95.94, "best_price": 96.0,
@@ -65,7 +65,7 @@ class TestDynamicExit(unittest.TestCase):
 
     def test_restore_reads_the_persisted_state(self):
         import json
-        from markets.currency.scalping.strategy import STRATEGY
+        from markets.currency.strategies.scalping.strategy import STRATEGY
         got = STRATEGY.restore({"state": json.dumps({"activation_price": 96.03, "trail_mult": 0.36, "armed_trail": False}), "armed_be": 1, "target_price": 96.03, "breakeven_price": 96.03})
         self.assertEqual(got, {"activation_price": 96.03, "trail_mult": 0.36, "armed_trail": True})
         legacy = STRATEGY.restore({"state": None, "target_price": 96.2, "breakeven_price": 96.03, "armed_be": 0})

@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 
 from markets.crypto.experiments.momentum_study import SYMBOLS, TEST_START, TRAIN_END, load, stats
-from markets.crypto.momentum import COST_SIDE, ensemble_position as _ensemble
+from markets.crypto.strategies.momentum import COST_SIDE, ensemble_position as _ensemble
 
 BPD = 24
 def ensemble_position(df: pd.DataFrame):

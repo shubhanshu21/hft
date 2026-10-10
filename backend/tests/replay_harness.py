@@ -68,7 +68,7 @@ ENV = {
     # pullback entries (core/entry_pullback.py) are an operator opt-in in .env; the goldens pin them off
     "EQUITY_PULLBACK_FRAC": "0", "COMMODITY_PULLBACK_FRAC": "0", "CURRENCY_PULLBACK_FRAC": "0", "CRUDEOILM_PULLBACK_FRAC": "0",
     "CURRENCY_EXIT_MODE": "fixed", "USDINR_EXIT_MODE": "fixed",      # the dynamic USDINR exit is an operator opt-in in .env
-    # intraday chop gates (markets/commodity/scalping/entry_signal.py) are operator opt-ins in .env; the goldens pin them off --
+    # intraday chop gates (markets/commodity/strategies/scalping/entry_signal.py) are operator opt-ins in .env; the goldens pin them off --
     # found 2026-10-03 when USDINR_INTRADAY_CHOP_WINDOW=65 going live changed which golden-fixture trades fired
     "SILVERMIC_INTRADAY_CHOP_WINDOW": "0", "USDINR_INTRADAY_CHOP_WINDOW": "0",
     # the harness scans once per bar with only COMPLETED archive bars visible (now = bar + 5m10s): every bar it shows is finished
@@ -109,9 +109,9 @@ def run_replay(days=None, instruments=None) -> dict:
     with ExitStack() as st:
         for k, v in ENV.items():
             st.enter_context(patch.dict(os.environ, {k: v}))
-        from markets.commodity.scalping import backtest as _cbt
-        from markets.currency.scalping import backtest as _ubt
-        from markets.equity.scalping import entry_signal as _eq
+        from markets.commodity.strategies.scalping import backtest as _cbt
+        from markets.currency.strategies.scalping import backtest as _ubt
+        from markets.equity.strategies.scalping import entry_signal as _eq
         for table in (_cbt.ENTRY_THRESHOLDS, _ubt.ENTRY_THRESHOLDS):
             for key, row in table.items():
                 st.enter_context(patch.dict(row, {k: v for k, v in PERMISSIVE.items() if k in row}))

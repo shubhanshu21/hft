@@ -2,7 +2,7 @@
 
     python3 -m markets.equity.experiments.scaling_study
 
-Candidates are the LIVE rule's trades (markets/equity/scalping/backtest.py, one shared threshold set, ADX-scaled trailing exit), generated once; each variant re-runs the SAME portfolio
+Candidates are the LIVE rule's trades (markets/equity/strategies/scalping/backtest.py, one shared threshold set, ADX-scaled trailing exit), generated once; each variant re-runs the SAME portfolio
 phase as the real backtest -- chronological, one shared pool that COMPOUNDS, at most `cap` open positions, sized to the free margin (real Upstox MIS 5x), real costs -- with a different risk % / cap.
 Reported: net %, max drawdown, and the split 2022-08..2024-08 (first) vs 2024-09..2026-09 (second) so a variant has to hold in both, not just overall.
 """
@@ -11,7 +11,7 @@ from __future__ import annotations
 import numpy as np
 
 from markets.equity.costs import compute_nse_equity_costs, size_equity_shares
-from markets.equity.scalping import backtest as eqbt
+from markets.equity.strategies.scalping import backtest as eqbt
 from markets.equity.universe import NIFTY50_SYMBOLS
 
 CAPITAL, LEVERAGE = 100000.0, 5.0

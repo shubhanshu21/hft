@@ -626,7 +626,7 @@ def run_commodity_backtest(
 
             d = 1 if direction == "long" else -1
             sl = round(c_price - sdist * d, 2)
-            _scale = float(np.clip(adx / 25.0, 0.7, 1.8))                     # the equity scalper's ADX scale (markets/equity/scalping/backtest.py::_dynamic_exit_scale)
+            _scale = float(np.clip(adx / 25.0, 0.7, 1.8))                     # the equity scalper's ADX scale (markets/equity/strategies/scalping/backtest.py::_dynamic_exit_scale)
             if exit_mode == "dynamic":
                 tp = round(c_price + 1e9 * d, 2)                              # no fixed take-profit: the trail manages the exit
                 be = round(c_price + (BE_ACTIVATION_MULT / _scale) * sdist * d, 2)

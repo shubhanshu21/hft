@@ -33,7 +33,7 @@ The data itself is clean: a 5-minute bar opens within a median of 0-0.5 bp of th
   has it from 2026-05-12 (not topped up). Elsewhere the 5-minute rule applies. `minute_fills=False` switches this off for comparison.
 * `core/entry_pullback.py`: `step` returns `stopped=True` for a fill-then-stop bar. The backtests record that trade as an `initial_stop`
   loss, and `PendingBook.check` returns `"stopped"`, which the paper engine records as an immediate stop-out.
-* `markets/equity/scalping/backtest.py`: the CLI uses the live pullback entry (`EQUITY_PULLBACK_*` from `.env`) unless told otherwise.
+* `markets/equity/strategies/scalping/backtest.py`: the CLI uses the live pullback entry (`EQUITY_PULLBACK_*` from `.env`) unless told otherwise.
 * `tests/test_fill_model.py` covers the new rules; `tests/golden/replay_quick.json` was re-recorded (16 exits moved to the bar's open,
   one take-profit became a stop, and a 3% market cooldown cascade removed one entry; see `tests/test_strategy_parity.py`).
 

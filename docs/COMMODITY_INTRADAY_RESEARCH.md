@@ -32,3 +32,46 @@ SILVERMIC 2 lots 5.7 bp):
 Commodity carry (futures curve shape) needs years of every MCX contract month; mcxindia.com refuses automated downloads (403) and
 Upstox serves only current contracts. Earlier daily rules (breakout, moving averages, momentum, RSI) are in `docs/SWING_RESEARCH.md`:
 only 12-month momentum showed a weak edge (paper since 2026-10-08).
+
+## Same-commodity pairs: mini vs full, and next month vs this month (2026-10-10)
+
+The currency recipe (`markets/currency/strategies/parity`: a thin contract lags the liquid prices it is built from) applied inside MCX. Real
+1-minute history of 42 contracts downloaded from Upstox (`var/archive/mcx_contracts/`; Upstox serves only listed contracts, so ~2-5
+months each). Gap = log(thin) - log(sibling) minus its 60-bar median; fade it on the thin leg for 30 minutes; threshold chosen on the
+first 60% of days, tested on the last 40%. Costs: CTT 0.01% sell side, exchange, stamp, SEBI, GST (~1.8 bp) + Rs70.8 brokerage at
+~Rs5 lakh a trade (1.4 bp) + the thin leg's Roll spread.
+
+The minis are not the thin side: retail trades them more (GOLDPETAL 56k contracts a day vs GOLDTEN 6k; SILVERMIC 56k vs SILVERM 16k;
+CRUDEOILM 37k vs CRUDEOIL 15k).
+
+| pair (same expiry) | correlation (first 60%) | cost bp | test |
+|---|---|---|---|
+| CRUDEOILM vs CRUDEOIL | -0.06 | 5.3 | -4.2 bp a trade, 157 trades |
+| ZINCMINI vs ZINC | ~0 | 7.3 | -4.0 bp, 204 trades |
+| GOLDGUINEA vs GOLDTEN | -0.13 to -0.22 | 5.7-7.8 | -8.5 bp (Dec, 366 trades); too few in Oct/Nov |
+| SILVER100 vs SILVERMIC | -0.17 to -0.19 | 9.6 | 3 trades |
+| GOLDPETAL, NATGASMINI, SILVERMIC, ALUMINI, LEADMINI | -0.15 to 0 | 4.4-14 | nothing clears costs even on the choosing days |
+
+Next month vs this month: the thinnest next months lag strongly (CRUDEOIL Dec -0.66, ALUMINI / ZINC Nov -0.71 to -0.76, NATGASMINI
+Dec -0.43) but trade 90-1,600 contracts a day with 9-15 bp round trips; every setup tested lost (-1 to -8 bp a trade).
+
+**Why MCX fails where EURINR/GBPINR works:** where the lag is big the book is so thin that the spread is bigger still; where the book
+is tight, arbitrage desks leave no lag. The crosses sit in between (5-9 bp lag, 3-4 bp spread). A passive (limit-order) version on
+GOLDGUINEA / SILVER100 would need their order book recorded first.
+
+## Commodity-specific ideas (2026-10-10, rules fixed before running)
+
+World prices: Dukascopy 5-minute gold, silver, WTI, natgas 2024-01..2026-10; Yahoo daily gold/silver 2005-2026; MCX 5-minute (~100
+days). Costs at MCX sizes: CRUDEOILM 5.6 bp, NATGASMINI 7.3, GOLDTEN 6.3, SILVERMIC 5.7. Halves: 2024 vs 2025-26 (daily: 2005-15 vs
+2016-26). Luck control: 1000 random directions.
+
+| idea | first half | second half | verdict |
+|---|---|---|---|
+| A. Crude EIA inventory report (Wed 10:30 New York): follow the release bar for 60 min | +16.4 bp a trade (49, t 1.6) | +0.9 bp (89, t 0.1) | fails: worked in 2024, gone since |
+| A. Natgas EIA storage (Thu 10:30 NY), same rule | -5.7 | -11.3 | fails |
+| B. Gold/silver ratio, fade z > 2 (60-day), exit z < 0.5 or 20 days | +1.5 (53) | -41.7 (53) | fails; 1.5 / 2.5 worse |
+| C. Overnight + first half hour -> last MCX half hour (4 commodities) | -4 to -11 | -2 to -10 | fails |
+| D. MCX 09:00 gap to world price x USDINR, faded 09:05-09:35 | gold gross +5.5 | gold gross +5.0 (beats 95-97% of random) | near miss: below the 6.3 bp GOLDTEN cost (-0.8 / -1.3 net); silver, crude, natgas worse |
+
+D is the only consistent effect: MCX gold opens a few bp away from the world price and corrects in the first half hour, but the
+round trip costs more than the correction. At zero brokerage (~4 bp) it would be ~+1 bp a trade, about one trade a day.

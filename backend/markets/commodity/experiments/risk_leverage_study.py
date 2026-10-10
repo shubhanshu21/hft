@@ -12,9 +12,9 @@ import contextlib
 import io
 
 from engine import margin_rates
-from markets.commodity.scalping.backtest import run_commodity_backtest
-from markets.currency.scalping.backtest import run_currency_backtest
-from markets.equity.scalping.backtest import run_equity_backtest
+from markets.commodity.strategies.scalping.backtest import run_commodity_backtest
+from markets.currency.strategies.scalping.backtest import run_currency_backtest
+from markets.equity.strategies.scalping.backtest import run_equity_backtest
 
 CAPITAL = 100000.0
 CONFIGS = [(4.0, 5.0, "risk 4,  configured 5x"), (10.0, 5.0, "risk 10, configured 5x"),

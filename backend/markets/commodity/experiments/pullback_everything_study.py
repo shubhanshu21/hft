@@ -19,7 +19,7 @@ import numpy as np
 
 from markets.commodity.experiments import alt_strategy_study as alt
 from markets.commodity.experiments import global_proxy_study as gp
-from markets.commodity.scalping import backtest as bt
+from markets.commodity.strategies.scalping import backtest as bt
 
 FRACS = (0.15, 0.25, 0.35, 0.5, 0.75)
 VARIANTS = {"baseline": {}}
@@ -59,7 +59,7 @@ def commodity() -> None:
 
 
 def currency() -> None:
-    from markets.currency.scalping import backtest as cbt
+    from markets.currency.strategies.scalping import backtest as cbt
     print("\n=== USDINR at the live 10x, real Upstox data   net Rs (trades)")
     print(f"   {'variant':16s} | {'1st 06-02..07-31':>18s} {'2nd 08-01..09-24':>18s} | verdict")
     base = None
@@ -77,7 +77,7 @@ def currency() -> None:
 
 def equity() -> None:
     from markets.equity.experiments import multi_strategy_study as ms
-    from markets.equity.scalping import backtest as eqbt
+    from markets.equity.strategies.scalping import backtest as eqbt
     from markets.equity.universe import NIFTY50_SYMBOLS
     rows = {}
     for v, kw in VARIANTS.items():

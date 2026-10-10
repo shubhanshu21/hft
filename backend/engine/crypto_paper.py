@@ -10,7 +10,7 @@ only talk to those two hosts) with keys BINANCE_DEMO_API_KEY / BINANCE_DEMO_API_
 Either way nothing here can reach the live exchange. Market data comes from Binance's PUBLIC klines. State (sizing ledger, trades, equity) lives in var/db/crypto_paper.db, separate from the Upstox paper account.
 CRYPTO_LEVERAGE (default 1.0) multiplies every target: spot holds a long up to 1x the coin's share, a short or the part of a long above 1x is a USDT-M perpetual (isolated margin).
 
-Strategy (CRYPTO_STRATEGY: "blend" (default) = half the capital on the router and half on the trend ensemble (CRYPTO_ROUTER_WEIGHT, default 0.5); "router" = the regime router alone; "trend" = the long/flat spot ensemble alone): markets/crypto/router.py. BTC's regime (price vs the 200-day EMA and the 50/200-day EMA order) picks the book --
+Strategy (CRYPTO_STRATEGY: "blend" (default) = half the capital on the router and half on the trend ensemble (CRYPTO_ROUTER_WEIGHT, default 0.5); "router" = the regime router alone; "trend" = the long/flat spot ensemble alone): markets/crypto/strategies/router.py. BTC's regime (price vs the 200-day EMA and the 50/200-day EMA order) picks the book --
 bull / sideways: long spot, sized by the slow-momentum ensemble (EMA 20/50d + Donchian 20/10d + 90-day momentum, volatility-targeted); bear: short perpetuals, larger the fewer trend signals are on, for coins that are themselves in a bear regime.
 Signals use CLOSED HOURLY bars. The loop wakes every 15 minutes: it tops up the hourly archive, and when a new hourly bar has closed it decides each coin's signed target size and rebalances at the latest 15-minute price with the backtest's
 costs (spot 0.12% per side, SOL 0.15%; perp shorts 0.09%). A short earns the perpetual's funding rate (received when positive) every 8 hours. Between decisions it only records equity.
@@ -35,9 +35,9 @@ import pandas as pd
 import requests
 
 from core.paths import DB_DIR
-from markets.crypto import router
+from markets.crypto.strategies import router
 from services.broker.binance_demo import floor_step
-from markets.crypto.momentum import BARS_PER_DAY, COST_SIDE, WARMUP_DAYS, ensemble_position
+from markets.crypto.strategies.momentum import BARS_PER_DAY, COST_SIDE, WARMUP_DAYS, ensemble_position
 from services.data import binance
 from services.utils import telegram
 

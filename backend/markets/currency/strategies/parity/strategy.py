@@ -15,7 +15,7 @@ from core import sessions
 from core.exits import open_after_entry, post_entry_range, stop_fill
 from core.strategy import EntryContext, ExitContext, ExitDecision, Signal, Strategy
 from markets.currency.costs import compute_ncd_currency_costs, get_contract_multiplier, size_currency_lots
-from markets.currency.parity.signal import (BAR, FX, HOLD_MIN, MAX_SPREAD_BP, STOP_BP, THRESHOLD_BP, closes, gap_bp, yahoo_fx_5m)
+from markets.currency.strategies.parity.signal import (BAR, FX, HOLD_MIN, MAX_SPREAD_BP, STOP_BP, THRESHOLD_BP, closes, gap_bp, yahoo_fx_5m)
 from services.utils.logger import get_logger
 
 log = get_logger("parity")

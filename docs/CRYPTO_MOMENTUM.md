@@ -14,7 +14,7 @@ so this was researched first with the project's discipline: variants fixed in ad
 Slow trend rules (three unrelated families: channel breakout, moving-average cross, past return) beat buy-and-hold on Sharpe AND drawdown in the held-out test, on both the 1-hour and the 15-minute bars: 21 of 80 variants pass (11 on 1h, 10 on 15m),
 all of them long/flat and slow. Going to 15-minute bars adds nothing: with lookbacks of weeks the position changes only 2-14 times a year at either resolution; faster lookbacks just lose more to costs.
 
-## What is traded: the ensemble (`markets/crypto/momentum.py`)
+## What is traded: the ensemble (`markets/crypto/strategies/momentum.py`)
 Average of EMA 20/50-day crossover, Donchian 20-day breakout / 10-day exit and 90-day time-series momentum (each 0/1) x a volatility scale min(1, 40% / annual volatility of the previous 30 days). Spot, never leveraged, never short.
 Per asset, per calendar year and per period (`ensemble_study.py`): TEST portfolio +19% CAGR, Sharpe 0.87, max DD 26% (buy-and-hold +17%, 0.57, 65%); BTC 0.91 vs 0.76, ETH 0.84 vs 0.41, SOL 0.58 vs 0.48.
 It is a RISK-CONTROLLED exposure, not extra alpha: it gives up most of a bull run (2021: +92% vs +1,132% buy-and-hold; 2023: +46% vs +293%; 2024: +46% vs +92%) and wins when crypto falls or stalls (2022: -24% vs -79%; 2025: +3% vs -14%; 2026: +7% vs -6%).

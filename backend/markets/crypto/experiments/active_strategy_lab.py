@@ -2,7 +2,7 @@
 
     python3 -m markets.crypto.experiments.active_strategy_lab donchian|volbo|tsmom|misc
 
-Needs the 15-minute archive: services.data.binance.topup(sym, "15m") and topup_funding(sym). Library + sweep in one file; the chosen rule lives in markets/crypto/breakout.py.
+Needs the 15-minute archive: services.data.binance.topup(sym, "15m") and topup_funding(sym). Library + sweep in one file; the chosen rule lives in markets/crypto/strategies/breakout.py.
 """
 from __future__ import annotations
 import numpy as np, pandas as pd

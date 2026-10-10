@@ -2,7 +2,7 @@
 
     python3 -m markets.commodity.experiments.dynamic_thresholds_study
 
-The live rule uses fixed numbers (ADX >= 22, volume surge >= 1.3, |EMA slope| >= 0.05 ...), tuned on one market phase. `adaptive_window` (opt-in in markets/commodity/scalping/backtest.py) replaces each of those three
+The live rule uses fixed numbers (ADX >= 22, volume surge >= 1.3, |EMA slope| >= 0.05 ...), tuned on one market phase. `adaptive_window` (opt-in in markets/commodity/strategies/scalping/backtest.py) replaces each of those three
 by the rolling quantile of the SAME feature over the previous N bars, at the quantile the fixed number represents over the whole sample: identical selectivity, but the level rises in busy markets and falls in quiet ones.
 Windows: 1, 3, 5, 10 trading days (174 5-minute bars per MCX day). Judged like the other studies: net Rs on the real MCX halves and on the 2.7-year proxy by calendar year (each year restarts at Rs100k).
 """
@@ -13,7 +13,7 @@ import io
 
 from markets.commodity.experiments import alt_strategy_study as alt
 from markets.commodity.experiments import global_proxy_study as gp
-from markets.commodity.scalping import backtest as bt
+from markets.commodity.strategies.scalping import backtest as bt
 
 DAY = 174
 VARIANTS = {"fixed (live)": {}, "dynamic 1 day": {"adaptive_window": DAY}, "dynamic 3 days": {"adaptive_window": 3 * DAY}, "dynamic 5 days": {"adaptive_window": 5 * DAY}, "dynamic 10 days": {"adaptive_window": 10 * DAY}}

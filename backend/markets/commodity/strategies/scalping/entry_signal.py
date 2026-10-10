@@ -1,13 +1,13 @@
 """
-markets/commodity/scalping/entry_signal.py — shared "should we enter, and at what levels"
+markets/commodity/strategies/scalping/entry_signal.py — shared "should we enter, and at what levels"
 decision logic for MCX commodities + NSE currency, used by BOTH
 live_dryrun.py's DryRunner (paper, simulated fills) and live_trading.py's
 LiveTrader (real orders).
 
 Extracted 2026-09-18 from what used to be duplicated, nearly-identical code
 in both files -- exactly the "keep these two in sync by hand" drift risk
-that ENTRY_THRESHOLDS' own extraction (markets/commodity/scalping/backtest.py/
-markets/currency/scalping/backtest.py -> live_dryrun.py, same day) was built to eliminate,
+that ENTRY_THRESHOLDS' own extraction (markets/commodity/strategies/scalping/backtest.py/
+markets/currency/strategies/scalping/backtest.py -> live_dryrun.py, same day) was built to eliminate,
 just reintroduced one file later when live_trading.py was written as its
 own self-contained module. This is deliberately a pure function: no DB
 writes, no broker order placement, no mutation of caller state -- it only
@@ -29,8 +29,8 @@ log = logging.getLogger(__name__)
 from markets.commodity.costs import size_commodity_lots
 from markets.currency.costs import size_currency_lots
 from markets.commodity.features import compute_commodity_features, COMMODITY_FEATURE_COLUMNS
-from markets.commodity.scalping.backtest import ENTRY_THRESHOLDS as COMMODITY_ENTRY_THRESHOLDS
-from markets.currency.scalping.backtest import ENTRY_THRESHOLDS as CURRENCY_ENTRY_THRESHOLDS, _MIN_ORB as CURRENCY_MIN_ORB
+from markets.commodity.strategies.scalping.backtest import ENTRY_THRESHOLDS as COMMODITY_ENTRY_THRESHOLDS
+from markets.currency.strategies.scalping.backtest import ENTRY_THRESHOLDS as CURRENCY_ENTRY_THRESHOLDS, _MIN_ORB as CURRENCY_MIN_ORB
 from core.regime import regime_ok as _intraday_chop_ok
 
 CURRENCY_SYMBOLS = {"USDINR", "EURINR", "GBPINR", "JPYINR"}
@@ -83,12 +83,12 @@ def compute_entry_signal(
     if is_curr:
         # NSE currency derivatives trade 09:00-17:00 IST -- no MCX-style
         # evening/US-overlap session. 15-min open buffer + 16:50 square-off,
-        # matching markets/currency/scalping/backtest.py exactly.
+        # matching markets/currency/strategies/scalping/backtest.py exactly.
         if mins < 15 or mins > sessions.last_entry_since_open("currency"):          # from Upstox's session hours (core/sessions.py)
             return None
     else:
         # Full session (10:00-22:30 IST) vs US/Evening-overlap-only
-        # (18:30-22:00 IST) -- matches markets/commodity/scalping/backtest.py's
+        # (18:30-22:00 IST) -- matches markets/commodity/strategies/scalping/backtest.py's
         # us_session_only flag exactly.
         if full_session:
             if mins < 60 or mins > sessions.last_entry_since_open("commodity"):
@@ -138,8 +138,8 @@ def compute_entry_signal(
         direction = "long"
         setup_type = "trend_breakout"
 
-    # Setup 1 (SHORT): the mirror of the long -- the same thresholds the backtests validated (markets/commodity/scalping/backtest.py,
-    # markets/currency/scalping/backtest.py). Until 2026-10-05 live shorts used stricter, never-backtested rules (ADX +3, slope x1.2, ORB/VWAP
+    # Setup 1 (SHORT): the mirror of the long -- the same thresholds the backtests validated (markets/commodity/strategies/scalping/backtest.py,
+    # markets/currency/strategies/scalping/backtest.py). Until 2026-10-05 live shorts used stricter, never-backtested rules (ADX +3, slope x1.2, ORB/VWAP
     # x1.1, volume x1.25, take-profit x0.8, breakeven at 0.4R). Put into the backtests as `live_short_rules` and run on the real archive, they
     # took fewer trades and made less: TEST (2026-08-01..10-01) +Rs31,084 vs +Rs43,531 symmetric across SILVERMIC/CRUDEOILM/GOLDTEN/USDINR,
     # TRAIN (05-18..07-31) +Rs18,205 vs +Rs20,491.
@@ -175,12 +175,12 @@ def compute_entry_signal(
     # computed on 5-MIN BAR closes over a short trailing window instead of daily
     # closes over 15 days -- the daily gate has one data point per day and cannot see
     # a choppy stretch WITHIN a single session at all. Validated on the real archive
-    # (markets/commodity/scalping/backtest.py's intraday_chop_window param) with a
+    # (markets/commodity/strategies/scalping/backtest.py's intraday_chop_window param) with a
     # proper train/test split: window=20 bars (~100 min) improved PF on BOTH windows
     # independently (TRAIN 1.19->1.46, TEST 1.60->1.72) at roughly flat full-period net
     # profit. NOT extended to CRUDEOILM/GOLDTEN -- tested there too, and no window
     # held up on both train AND test (noise, not a real signal, consistent with crude/
-    # gold's already-known weak or absent edge -- see markets/commodity/scalping/backtest.py's
+    # gold's already-known weak or absent edge -- see markets/commodity/strategies/scalping/backtest.py's
     # ENTRY_THRESHOLDS comments). Like regime_ok, only gates trend_breakout: mean-
     # reversion benefits from exactly the chop this is built to detect. Env-tunable;
     # 0 = off (not SILVERMIC, or not configured).
@@ -205,7 +205,7 @@ def compute_entry_signal(
     # one cherry-picked point. window=65 (middle of that range) was chosen specifically because it's also the
     # smallest window whose TEST trade count (15) clears the project's >=15-trade credibility bar; narrower
     # windows had even better TEST PF (up to 4.12 at window=55) but only 10-12 TEST trades, too thin to trust
-    # alone. See markets/currency/scalping/backtest.py's intraday_chop_window param for the sweep.
+    # alone. See markets/currency/strategies/scalping/backtest.py's intraday_chop_window param for the sweep.
     if setup_type == "trend_breakout" and is_curr and sym.upper() == "USDINR":
         _chop_window = int(os.environ.get("USDINR_INTRADAY_CHOP_WINDOW", "0"))
         if _chop_window > 0:

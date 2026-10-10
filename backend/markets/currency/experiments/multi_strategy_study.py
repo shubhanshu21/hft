@@ -30,7 +30,7 @@ from core.paths import ARCHIVE_ROOT
 from markets.commodity.experiments import alt_strategy_study as alt
 from markets.commodity.experiments.regime_switch_study import efficiency_ratios, max_drawdown, performance_switch, regime_map, signal_orb, _series
 from markets.currency.costs import compute_ncd_currency_costs, size_currency_lots
-from markets.currency.scalping import backtest as cbt
+from markets.currency.strategies.scalping import backtest as cbt
 
 SYMBOL = "USDINR"
 ARCHIVE = ARCHIVE_ROOT / "currency"

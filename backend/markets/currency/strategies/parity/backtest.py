@@ -3,7 +3,7 @@ switches (no back-adjustment; signal.py's roll guard handles them), the same gap
 spread actually paid in trades (Roll estimate), exit at the close of the bar 30 minutes later minus half the spread, protective stop
 filled with core/exits.stop_fill. Costs: brokerage, exchange, SEBI, stamp duty, GST (the strategy's own costs()).
 
-    python3 -m markets.currency.parity.backtest [--lots 5] [--split 2026-09-17]
+    python3 -m markets.currency.strategies.parity.backtest [--lots 5] [--split 2026-09-17]
 
 Inputs: var/archive/currency/<PAIR>_5minute.csv, var/archive/global_5m/<EURUSD|GBPUSD>_5minute.csv (Yahoo 5-minute, inputs only)."""
 from __future__ import annotations
@@ -15,8 +15,8 @@ import pandas as pd
 
 from core.exits import stop_fill
 from core.paths import ARCHIVE_ROOT
-from markets.currency.parity.signal import HOLD_MIN, STOP_BP, THRESHOLD_BP, gap_bp
-from markets.currency.parity.strategy import STRATEGY
+from markets.currency.strategies.parity.signal import HOLD_MIN, STOP_BP, THRESHOLD_BP, gap_bp
+from markets.currency.strategies.parity.strategy import STRATEGY
 
 START = {"EURINR": "2026-08-21", "GBPINR": "2026-08-21"}
 FX_FILE = {"EURINR": "EURUSD", "GBPINR": "GBPUSD"}

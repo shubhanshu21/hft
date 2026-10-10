@@ -114,8 +114,8 @@ def _atr_commodity(b5: pd.DataFrame, sym: str) -> pd.Series:
 
 def commodity_and_currency() -> None:
     import os
-    from markets.commodity.scalping import backtest as cbt
-    from markets.currency.scalping import backtest as ubt
+    from markets.commodity.strategies.scalping import backtest as cbt
+    from markets.currency.strategies.scalping import backtest as ubt
     cases = [("SILVERMIC", "commodity", "SILVER", 7.9), ("CRUDEOILM", "commodity", "CRUDEOIL", 3.2), ("GOLDTEN", "commodity", "GOLD", 10.8), ("USDINR", "currency", "USDINR", 20.0)]
     total = {m: [] for m in MODES}
     for sym, market, stem, lev in cases:
@@ -148,7 +148,7 @@ def commodity_and_currency() -> None:
 def equity(start: str = "2026-05-12", end: str = "2026-10-01") -> None:
     from markets.equity.experiments import multi_strategy_study as ms
     from markets.equity.features import compute_equity_features
-    from markets.equity.scalping import backtest as eqbt
+    from markets.equity.strategies.scalping import backtest as eqbt
     from markets.equity.universe import NIFTY50_SYMBOLS
     per = {m: [] for m in MODES}
     for s in NIFTY50_SYMBOLS:

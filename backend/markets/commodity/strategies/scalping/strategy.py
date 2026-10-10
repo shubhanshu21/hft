@@ -10,7 +10,7 @@ from core import sessions
 from core.exits import fixed_tp_breakeven_trail_bars
 from core.strategy import EntryContext, ExitContext, ExitDecision, Signal, Strategy
 from markets.commodity.costs import COMMODITY_SPECS, compute_mcx_commodity_costs
-from markets.commodity.scalping.entry_signal import compute_entry_signal
+from markets.commodity.strategies.scalping.entry_signal import compute_entry_signal
 
 HOLD_SECONDS = 80 * 60          # timeout exit
 

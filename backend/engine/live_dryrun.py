@@ -3,8 +3,8 @@
 live_dryrun.py — Paper-trading dry run using LIVE Upstox 5-minute candles & SQLite DB.
 
 Runs 24/7 (MCX 09:00-23:30 IST, NSE currency 09:00-17:00 IST -- both handled
-internally) and fires the EXACT SAME strategy logic as markets/commodity/scalping/backtest.py
-/ markets/currency/scalping/backtest.py, but:
+internally) and fires the EXACT SAME strategy logic as markets/commodity/strategies/scalping/backtest.py
+/ markets/currency/strategies/scalping/backtest.py, but:
   - Places ZERO real orders in live broker (dry_run=True on Upstox broker)
   - Places & tracks VIRTUAL ORDERS in SQLite database (orders, positions, trades, snapshots)
   - Itemizes every fee (Brokerage, STT, Stamp Duty, Exchange Txn, SEBI, GST, Slippage)
@@ -54,8 +54,8 @@ from services.broker.upstox_broker import UpstoxBroker, token_invalid_event
 from engine.database import TradingDB
 from markets.commodity.costs import COMMODITY_SPECS
 from markets.currency.costs import CURRENCY_SPECS
-from markets.commodity.scalping.entry_signal import is_currency as _is_currency
-from markets.equity.scalping.entry_signal import is_equity as _is_equity
+from markets.commodity.strategies.scalping.entry_signal import is_currency as _is_currency
+from markets.equity.strategies.scalping.entry_signal import is_equity as _is_equity
 from core import entry_pullback
 from core import registry, sessions
 from core.risk import RiskGates
@@ -80,7 +80,7 @@ from core.sector_correlation import SectorCorrelationGate
 # for how much this symbol's edge swings by regime. risk-pct=3.0 with the
 # filter on was the best risk/DD tradeoff found: net +17.20%, PF 1.31, max DD
 # -37.96% (vs. +21.58%/-55.80% at 5%, +9.91%/-70.10% at 7%) -- see
-# markets/commodity/scalping/backtest.py --use-crude-regime-filter sweep in conversation
+# markets/commodity/strategies/scalping/backtest.py --use-crude-regime-filter sweep in conversation
 # history for the full risk-pct grid. Still not equally trusted as gold.
 # GBPINR intentionally NOT listed here (see _SYMBOL_LEVERAGE_OVERRIDE below
 # instead) -- a genuine train/test split couldn't be run on it (its full
@@ -421,7 +421,7 @@ class DryRunner(RiskGates):
         # Shared margin-pool caps (global + per market) -- see core/risk.py.
         self._init_margin_limits()
 
-        # Full-day vs evening-only trading window -- see markets/commodity/scalping/backtest.py's
+        # Full-day vs evening-only trading window -- see markets/commodity/strategies/scalping/backtest.py's
         # us_session_only for the matching backtest flag/comparison. Switched
         # to full-session by default 2026-09-17 per user decision: real
         # backtest on the full 2022-2026 archive showed full session more
@@ -443,7 +443,7 @@ class DryRunner(RiskGates):
         # Per-symbol daily-loss kill switch, same MAX_DAILY_LOSS_PCT threshold
         # but tracked per symbol against that symbol's own realized PnL today --
         # added 2026-09-18 so one symbol having a genuinely bad day (e.g. crude
-        # hitting a bad regime, see markets/commodity/scalping/backtest.py's ENTRY_THRESHOLDS
+        # hitting a bad regime, see markets/commodity/strategies/scalping/backtest.py's ENTRY_THRESHOLDS
         # comment) doesn't halt entries account-wide for symbols that are fine.
         # The existing account-wide switch above still exists as the final
         # backstop for a bad day across the whole book.
@@ -1478,7 +1478,7 @@ def main():
     default_symbols = ["CRUDEOILM", "NATGASMINI"]
     symbols = args.symbols or default_symbols
     # NSE equity intraday scalper wired in 2026-09-19 (see
-    # markets/equity/scalping/entry_signal.py's module docstring) -- opt-in via
+    # markets/equity/strategies/scalping/entry_signal.py's module docstring) -- opt-in via
     # DRYRUN_INCLUDE_EQUITY=true rather than folded into DRYRUN_SYMBOLS,
     # since the full validated universe is all 49 NIFTY50 names (see
     # markets/equity/universe.py) and hand-typing that into a symbols list

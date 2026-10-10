@@ -1,9 +1,9 @@
 """
-markets/equity/scalping/entry_signal.py -- shared "should we enter, and at what
+markets/equity/strategies/scalping/entry_signal.py -- shared "should we enter, and at what
 levels" decision logic for NSE equity intraday (MIS), used by live_dryrun.py's
-DryRunner. Mirrors markets/commodity/scalping/entry_signal.py's role for commodity/currency,
+DryRunner. Mirrors markets/commodity/strategies/scalping/entry_signal.py's role for commodity/currency,
 but kept as its OWN function rather than folded into that one, because
-equity's exit mechanics are structurally different (see markets/equity/scalping/backtest.py's
+equity's exit mechanics are structurally different (see markets/equity/strategies/scalping/backtest.py's
 module docstring): no fixed take-profit price at all, a dynamic ADX-scaled
 trailing exit instead. Forcing that into compute_entry_signal()'s fixed
 sl/tp/be return shape would have meant either breaking commodity/currency's
@@ -11,7 +11,7 @@ contract or silently giving equity a fake "tp" that's never actually used --
 a real footgun for someone reading that code later. Separate function, same
 spirit.
 
-Uses the ONE validated, universe-wide threshold set from markets/equity/scalping/backtest.py
+Uses the ONE validated, universe-wide threshold set from markets/equity/strategies/scalping/backtest.py
 (no per-stock tuning -- see markets/equity/universe.py's docstring for why),
 confirmed consistent across three independent out-of-sample periods
 (2026-09-19). Rule-based only: a pooled ML model (since removed) showed
@@ -34,7 +34,7 @@ from markets.equity.universe import NIFTY50_SYMBOLS
 EQUITY_SYMBOLS = set(NIFTY50_SYMBOLS)
 
 # Validated 2026-09-19 via a 144-combo sweep + 3-fold OOS check -- see
-# markets/equity/scalping/backtest.py's ENTRY_THRESHOLDS default and conversation history.
+# markets/equity/strategies/scalping/backtest.py's ENTRY_THRESHOLDS default and conversation history.
 #
 # min_ema_slope loosened 0.22 -> 0.18 on 2026-09-21, after a live session with
 # ZERO trades across all 55 symbols prompted a check of whether the momentum
@@ -59,7 +59,7 @@ EQUITY_SYMBOLS = set(NIFTY50_SYMBOLS)
 # marginal entries -- observed live as a same-day whipsaw chasing TATASTEEL
 # at RSI 87-91 (deep exhaustion), something the tighter validated
 # thresholds would have filtered out. Back to ONE shared set for both
-# directions, matching markets/equity/scalping/backtest.py's validated ENTRY_THRESHOLDS.
+# directions, matching markets/equity/strategies/scalping/backtest.py's validated ENTRY_THRESHOLDS.
 ENTRY_THRESHOLDS = {
     "min_adx": 22.0, "min_vol": 1.5, "min_orb": 0.10, "min_vwap": 0.10,
     "min_stop_pct": 0.005, "min_ema_slope": 0.18, "stop_mult": 1.4,
@@ -77,7 +77,7 @@ _ADX_SCALE_MAX = 1.8
 _ENTRY_GATE_MIN = 15
 _SQUAREOFF_MIN = sessions.EQUITY_SQUAREOFF_SINCE_OPEN      # static default only, for the historical backtest; live reads Upstox (core/sessions.py)
 
-MAX_CONCURRENT_EQUITY_POSITIONS = 3  # portfolio-concentration cap -- see markets/equity/scalping/backtest.py's finding on correlated same-day losses
+MAX_CONCURRENT_EQUITY_POSITIONS = 3  # portfolio-concentration cap -- see markets/equity/strategies/scalping/backtest.py's finding on correlated same-day losses
 
 
 def is_equity(sym: str) -> bool:

@@ -13,7 +13,7 @@ from core.exits import activation_trail_bars
 from core.strategy import EntryContext, ExitContext, ExitDecision, Signal, Strategy
 from markets.equity.costs import compute_nse_equity_costs
 from markets.equity.features import compute_equity_features
-from markets.equity.scalping.entry_signal import MAX_CONCURRENT_EQUITY_POSITIONS, compute_equity_entry_signal
+from markets.equity.strategies.scalping.entry_signal import MAX_CONCURRENT_EQUITY_POSITIONS, compute_equity_entry_signal
 
 HOLD_SECONDS = 80 * 60          # timeout exit
 DEFAULT_TRAIL_MULT = 0.30       # only used to rebuild a position restored from an older DB row

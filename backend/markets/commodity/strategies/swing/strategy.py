@@ -17,7 +17,7 @@ with these costs, a monthly roll and the heat cap, made +97k on GOLDTEN + SILVER
 nearly all of it from one 2024-26 gold trade; each contract alone lost or broke even in 2005-18).
 
 Data: the 252-day signal cannot come from Upstox (the current contract only has 1-4 months of daily history), so the
-direction and stop distance come from the proxy series in markets/commodity/swing/proxy.py; the trade itself is sized
+direction and stop distance come from the proxy series in markets/commodity/strategies/swing/proxy.py; the trade itself is sized
 and stopped on the real MCX price. If the proxy download fails, no new position is opened (an open one keeps its stop).
 """
 from __future__ import annotations
@@ -30,7 +30,7 @@ from core.exits import open_after_entry, post_entry_range, stop_fill
 from core.strategy import EntryContext, ExitContext, ExitDecision, Signal, Strategy
 from core.swing_engine import Rule, entry_signal, exit_signal, with_indicators
 from markets.commodity.costs import COMMODITY_SPECS, compute_mcx_commodity_costs, size_commodity_lots
-from markets.commodity.swing.proxy import has_proxy, inr_frame
+from markets.commodity.strategies.swing.proxy import has_proxy, inr_frame
 from services.broker.instruments import mcx_front_expiry
 
 RULE = Rule("tsmom", {"lookback": 252}, stop_mult=3.0)

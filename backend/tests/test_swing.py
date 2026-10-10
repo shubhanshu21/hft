@@ -115,7 +115,7 @@ class TestCommoditySwingStrategy(unittest.TestCase):
                             capital=cash, risk_pct=4.0, leverage=5.0, direction_filter="both", full_session=True)
 
     def _strategy(self, closes):
-        from markets.commodity.swing import strategy as mod
+        from markets.commodity.strategies.swing import strategy as mod
         frame = _frame(closes, start="2025-01-01")
         frame.index = pd.bdate_range(end="2026-09-23", periods=len(frame))
         s = mod.CommoditySwing()
@@ -161,12 +161,12 @@ class TestCommoditySwingStrategy(unittest.TestCase):
         self.assertFalse(s.due(datetime(2026, 9, 24, 14, 0, tzinfo=IST)))       # not re-evaluated all day
 
     def test_if_the_proxy_series_is_unavailable_it_does_not_trade(self):
-        from markets.commodity.swing import strategy as mod
+        from markets.commodity.strategies.swing import strategy as mod
         with patch.object(mod, "inr_frame", side_effect=RuntimeError("download failed")), patch.object(mod, "mcx_front_expiry", lambda sym: "2026-12-31"):
             self.assertIsNone(mod.CommoditySwing().entry(self._ctx()))
 
     def test_todays_forming_bar_is_never_used_for_the_signal(self):
-        from markets.commodity.swing import strategy as mod
+        from markets.commodity.strategies.swing import strategy as mod
         closes = list(np.linspace(100, 300, 400))
         frame = _frame(closes, start="2025-01-01")
         frame.index = pd.bdate_range(end="2026-09-24", periods=len(frame))     # last bar is dated TODAY
@@ -191,7 +191,7 @@ class TestCommoditySwingStrategy(unittest.TestCase):
         self.assertEqual((gap.reason, gap.price), ("initial_stop", 144000.0))         # opened below the stop: filled at the open
 
     def test_the_affordable_mini_contracts_use_their_underlyings_series(self):
-        from markets.commodity.swing.proxy import ALIASES, MCX_PROXY, has_proxy
+        from markets.commodity.strategies.swing.proxy import ALIASES, MCX_PROXY, has_proxy
         self.assertEqual(MCX_PROXY[ALIASES["GOLDTEN"]], "GC=F")
         self.assertEqual(MCX_PROXY[ALIASES["SILVERMIC"]], "SI=F")
         self.assertTrue(has_proxy("GOLDTEN") and has_proxy("SILVERMIC") and not has_proxy("USDINR"))
@@ -202,7 +202,7 @@ class TestCommoditySwingStrategy(unittest.TestCase):
 
     def test_it_rolls_out_before_expiry_and_waits_for_the_next_contract(self):
         from core.strategy import ExitContext
-        from markets.commodity.swing import strategy as mod
+        from markets.commodity.strategies.swing import strategy as mod
         s = self._strategy(np.linspace(100, 300, 400))
         now = datetime(2026, 9, 24, 9, 20, tzinfo=IST)
         with patch.object(mod, "mcx_front_expiry", lambda sym: "2026-09-30"):           # 6 days left: inside the roll window

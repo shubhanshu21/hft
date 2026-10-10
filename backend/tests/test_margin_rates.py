@@ -177,7 +177,7 @@ class TestSmallCapitalContracts(unittest.TestCase):
 
     def test_the_backtest_reads_the_gold_archive_for_goldten_and_the_silver_archive_for_silvermic(self):
         import inspect
-        from markets.commodity.scalping import backtest
+        from markets.commodity.strategies.scalping import backtest
         src = inspect.getsource(backtest.run_commodity_backtest)
         self.assertIn('"GOLDTEN": "GOLD"', src)
         self.assertIn('"SILVERMIC": "SILVER"', src)

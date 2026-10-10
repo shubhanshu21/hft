@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 
 from engine import crypto_paper as cp
-from markets.crypto import momentum as mo
+from markets.crypto.strategies import momentum as mo
 
 _ENV_KEYS = ("CRYPTO_LEVERAGE", "CRYPTO_EXECUTION", "BINANCE_DEMO_API_KEY", "BINANCE_DEMO_API_SECRET", "CRYPTO_STRATEGY", "CRYPTO_ROUTER_WEIGHT", "CRYPTO_REBALANCE_BAND")
 _saved_env: dict = {}
@@ -171,7 +171,7 @@ if __name__ == "__main__":
 
 class TestRouterTargets(unittest.TestCase):
     def test_bull_is_long_bear_is_short_and_a_coin_not_in_a_bear_stays_flat_while_btc_is_bear(self):
-        from markets.crypto import router
+        from markets.crypto.strategies import router
         up = _frame(drift=0.003, seed=1, noise=0.0004)
         down = _frame(drift=-0.003, seed=2, noise=0.0004)
         bull, regime = router.current_targets({"BTCUSDT": up, "ETHUSDT": up.copy(), "SOLUSDT": up.copy()})
@@ -187,8 +187,8 @@ class TestRouterTargets(unittest.TestCase):
 
 class TestBlend(unittest.TestCase):
     def test_blend_is_the_weighted_sum_of_the_router_and_the_trend_targets(self):
-        from markets.crypto import router
-        from markets.crypto.momentum import ensemble_position
+        from markets.crypto.strategies import router
+        from markets.crypto.strategies.momentum import ensemble_position
         up, down = _frame(drift=0.003, seed=1, noise=0.0004), _frame(drift=-0.003, seed=2, noise=0.0004)
         frames = {"BTCUSDT": down, "ETHUSDT": down.copy(), "SOLUSDT": up.copy()}
         routed = router.target_series(frames)

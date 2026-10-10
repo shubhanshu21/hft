@@ -9,7 +9,7 @@ from __future__ import annotations
 import contextlib
 import io
 
-from markets.equity.scalping import backtest as bt
+from markets.equity.strategies.scalping import backtest as bt
 
 SYMBOLS = ["RELIANCE", "HDFCBANK", "ICICIBANK", "INFY", "TCS", "SBIN", "TATASTEEL", "ITC", "LT", "AXISBANK", "BHARTIARTL", "MARUTI"]
 VARIANTS = [(360, "15:15 (current)"), (345, "15:00"), (340, "14:55"), (330, "14:45")]

@@ -329,6 +329,6 @@ def fixed_tp_breakeven_trail_bars(pos: dict, candles: list[dict], now: datetime,
 def activation_trail_bars(pos: dict, candles: list[dict], atr_of, now: datetime, *, close_at: tuple[int, int] | None,
                           max_hold_s: float | None, interval_s: int = BAR_SECONDS, lag_s: float | None = None) -> ExitDecision | None:
     """activation_trail over the candle list. `atr_of(candle)` returns that COMPLETED bar's ATR -- the trail distance for the next bar
-    comes from the bar that moved it, as in the equity backtest (markets/equity/scalping/backtest.py: cur_atr = atrs[i])."""
+    comes from the bar that moved it, as in the equity backtest (markets/equity/strategies/scalping/backtest.py: cur_atr = atrs[i])."""
     return _manage_bars(pos, candles, now, kind="activation", atr_of=atr_of, close_at=close_at, max_hold_s=max_hold_s,
                         interval_s=interval_s, lag_s=lag_s)

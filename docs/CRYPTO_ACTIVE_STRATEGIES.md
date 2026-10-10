@@ -17,7 +17,7 @@ on 2025-2026, with costs per side and 8-hourly funding (`markets/crypto/experime
 | 15-minute channel breakout + ATR trail | 4-9 | best +8% (9 bp) / +15% (5 bp), worst drop 20-28% |
 | **Daily volatility breakout, long-only, trend filter** | **~4** | **+5% (9 bp) / +9% (5 bp), worst drop 8-12%** |
 
-## The one adopted: daily volatility breakout (markets/crypto/breakout.py)
+## The one adopted: daily volatility breakout (markets/crypto/strategies/breakout.py)
 
 Long once a 15-minute bar closes above today's UTC open + 0.7 x yesterday's range, if yesterday's close is above its 20-day average; flat at
 the UTC day's end. At 6 bp/side, 1x: 2021 +37%, 2022 -3.5%, 2023 +42%, 2024 +19%, 2025 +5%, 2026 +12% (worst drops 7-13%). Neighbours hold

@@ -100,7 +100,7 @@ class TestBacktestNeverFillsAStopBetterThanTheMarket(unittest.TestCase):
         import pandas as pd
         from core.paths import ARCHIVE_ROOT
         from markets.equity.features import compute_equity_features
-        from markets.equity.scalping import backtest as eqbt
+        from markets.equity.strategies.scalping import backtest as eqbt
         path = ARCHIVE_ROOT / "equity" / "RELIANCE_5minute.csv"
         if not path.exists():
             self.skipTest("no equity archive")

@@ -1,7 +1,7 @@
 # Do the lessons from the losing trades fix anything? (run 2026-09-25, `loss_lessons_study.py`)
 
 Lessons (from docs in this folder and the crude/silver/gold loser analysis): (1) 64-79% of losers never reach 0.3R -- they reverse at once; (2) costs decide viability (crude gross Rs148/trade < fees Rs169).
-Tests, as opt-in parameters of markets/commodity/scalping/backtest.py (defaults = live behaviour, unchanged):
+Tests, as opt-in parameters of markets/commodity/strategies/scalping/backtest.py (defaults = live behaviour, unchanged):
 - `confirm_bars` 1 / 2: on a signal, wait and enter only if the breakout held (no bar back through half a stop distance; last close still beyond the signal close).
 - `max_cost_r` 0.10 / 0.15 / 0.20: skip a signal whose round-trip costs exceed that fraction of the risked amount.
 Judged on the real MCX archive in two halves and on the 2.7-year global-price proxy by calendar year (capital restarts each year); "improves" = beats baseline net in BOTH real halves AND >= 2 of 3 proxy years.

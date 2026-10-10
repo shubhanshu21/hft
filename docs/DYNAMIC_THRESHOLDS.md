@@ -7,7 +7,7 @@ Position size (equity x stop distance x Upstox's real margin, scaled down in a d
 margin, lot size, tick size, session hours, holidays, costs (measured spreads once sampled), token/API budget. Static: the ADX / volume-surge / EMA-slope / VWAP / ORB entry levels, the 80-minute time limit, the 0.6R break-even level, the risk % and the
 drawdown tiers (5 / 10 / 15% -> 10 / 25 / 50% smaller).
 
-## Test: entry thresholds that follow the market (opt-in `adaptive_window` in markets/commodity/scalping/backtest.py, off by default)
+## Test: entry thresholds that follow the market (opt-in `adaptive_window` in markets/commodity/strategies/scalping/backtest.py, off by default)
 ADX, volume surge and |EMA slope| each compared with their own rolling quantile over the previous 1 / 3 / 5 / 10 trading days, at the quantile the fixed number represents over the whole sample (same selectivity, moving level).
 Net Rs, real MCX first / second half | proxy 2024 / 2025 / 2026 (fixed vs the best-looking window):
 | Symbol | Fixed (live) | Dynamic (best window) |

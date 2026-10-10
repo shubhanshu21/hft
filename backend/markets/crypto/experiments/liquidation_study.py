@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 
 import markets.crypto.backtest as bt
-from markets.crypto import router
+from markets.crypto.strategies import router
 
 MM = 0.005
 

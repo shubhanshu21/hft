@@ -22,7 +22,7 @@ changes before ever touching that.
 live_dryrun.py WAS touched, once, on 2026-09-18: its entry-decision logic
 used to be duplicated here almost verbatim (the exact "keep two files in
 sync by hand" drift risk ENTRY_THRESHOLDS' own extraction eliminated one
-layer up). Both files now call the same shared markets.commodity.scalping.entry_signal.
+layer up). Both files now call the same shared markets.commodity.strategies.scalping.entry_signal.
 compute_entry_signal() instead. This changed live_dryrun.py's SOURCE, not
 its BEHAVIOR -- verified by running its DryRunner.scan() directly before and
 after and confirming identical output, plus the full test suite (23/23) and
@@ -111,8 +111,8 @@ from engine.config import UpstoxConfig
 from engine.database import TradingDB
 from markets.commodity.costs import COMMODITY_SPECS
 from markets.currency.costs import CURRENCY_SPECS
-from markets.commodity.scalping.entry_signal import is_currency as _is_currency
-from markets.equity.scalping.entry_signal import is_equity as _is_equity
+from markets.commodity.strategies.scalping.entry_signal import is_currency as _is_currency
+from markets.equity.strategies.scalping.entry_signal import is_equity as _is_equity
 from core import registry
 from core.risk import RiskGates
 from core.strategy import EntryContext, ExitContext

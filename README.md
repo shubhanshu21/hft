@@ -109,7 +109,7 @@ backend/
 
 ## Supported Instruments & Trading Profiles
 
-Every symbol below is calibrated with its **own** entry thresholds in `markets/commodity/scalping/backtest.py`'s `ENTRY_THRESHOLDS` dict (mirrored in `engine/live_dryrun.py`) — nothing is shared across symbols by assumption; each was validated independently on real data.
+Every symbol below is calibrated with its **own** entry thresholds in `markets/commodity/strategies/scalping/backtest.py`'s `ENTRY_THRESHOLDS` dict (mirrored in `engine/live_dryrun.py`) — nothing is shared across symbols by assumption; each was validated independently on real data.
 
 ### Live-traded (`DRYRUN_SYMBOLS` in `.env`)
 
@@ -129,7 +129,7 @@ Every symbol below is calibrated with its **own** entry thresholds in `markets/c
 
 Full session (10:00–22:30 IST) by default (`DRYRUN_FULL_SESSION=true`) — a real-data sweep found this **more than doubles total net PnL** versus the narrower evening-only US-overlap window (18:30–22:00 IST), at the cost of ~3x more trades, a ~5-point lower win rate, and higher fee drag. Toggle via `.env` if you'd rather trade the narrower, cleaner window.
 
-### NSE Currency Derivatives (`markets/currency/scalping/backtest.py`, `ENTRY_THRESHOLDS` per pair)
+### NSE Currency Derivatives (`markets/currency/strategies/scalping/backtest.py`, `ENTRY_THRESHOLDS` per pair)
 
 Same feature engine and entry-rule shape as commodities, with pair-specific thresholds calibrated from a 375-combo real-data sweep per pair (2026-09-18) — `strategy.currency_costs` swaps in the genuinely different NCD_FO fee schedule (no STT/CTT at all on currency derivatives; different stamp duty/exchange-fee rates). Session is 09:00–17:00 IST — no MCX-style evening/US-overlap window (a currency pair has no analogous "second session").
 
@@ -142,7 +142,7 @@ Same feature engine and entry-rule shape as commodities, with pair-specific thre
 
 **Important shape difference from commodities**: all three live pairs win *under 50%* of trades but are solidly profitable (profit factors 2.2–3.8x) — winners run 2-4x bigger than losers, the opposite payoff shape from crude/gold's 65-70%-win-rate/tight-R:R style. Don't judge these by win rate alone.
 
-### NSE Equity: NIFTY50 Intraday Scalping (`markets/equity/scalping/backtest.py`, ONE shared `ENTRY_THRESHOLDS`)
+### NSE Equity: NIFTY50 Intraday Scalping (`markets/equity/strategies/scalping/backtest.py`, ONE shared `ENTRY_THRESHOLDS`)
 
 Structurally different from commodity/currency in three ways, all deliberate:
 
@@ -206,7 +206,7 @@ Upstox keeps **one active access token per app**: a login from anywhere else inv
 
 ### Backtest Defaults (`cli.py backtest`, MCX commodity)
 
-NSE currency and equity are backtested standalone (`python3 -m markets.currency.scalping.backtest`, `python3 -m markets.equity.scalping.backtest`).
+NSE currency and equity are backtested standalone (`python3 -m markets.currency.strategies.scalping.backtest`, `python3 -m markets.equity.strategies.scalping.backtest`).
 
 | Variable | Built-in default | Description |
 |---|---|---|
@@ -281,7 +281,7 @@ Drawdown-scaled position sizing (5 / 10 / 15% drawdown → 10 / 25 / 50% smaller
 
 ## Adding a strategy
 
-A strategy is **one class in one file** — `markets/<market>/<name>/strategy.py` exposing `STRATEGY` (`python3 cli.py new-strategy --market equity --name swing` creates the template). You write the decisions (entry, sizing, exit, costs); the paper runner and the real-order runner both pick it up automatically and apply the same kill switches, cooldowns, heat/margin limits, sector cap and drawdown-scaled sizing, place orders with the right product type, persist the position across restarts, and tag every order and trade with the strategy name. Switch it on with `EQUITY_STRATEGIES=scalping,swing` (or the commodity / currency equivalent); a strategy that isn't named there never trades. Overnight/delivery strategies (`intraday = False`, `product = "D"`, `uses_leverage = False`) are supported. Full guide and a template: **[docs/ADDING_A_STRATEGY.md](docs/ADDING_A_STRATEGY.md)**. A swing-strategy research study across all three markets (documented rules, real-data train/test, costs) is in **[docs/SWING_RESEARCH.md](docs/SWING_RESEARCH.md)** — its result: no equity or currency swing rule survives out-of-sample, and one commodity rule (12-month momentum, `markets/commodity/swing`) is added as an unproven, off-by-default paper candidate. Since 2026-10-07 it is **on in paper trading** and commodity scalping is off (weak evidence and 30-60% drawdowns: see the re-test in that doc).
+A strategy is **one class in one file** — `markets/<market>/strategies/<name>/strategy.py` exposing `STRATEGY` (`python3 cli.py new-strategy --market equity --name swing` creates the template). You write the decisions (entry, sizing, exit, costs); the paper runner and the real-order runner both pick it up automatically and apply the same kill switches, cooldowns, heat/margin limits, sector cap and drawdown-scaled sizing, place orders with the right product type, persist the position across restarts, and tag every order and trade with the strategy name. Switch it on with `EQUITY_STRATEGIES=scalping,swing` (or the commodity / currency equivalent); a strategy that isn't named there never trades. Overnight/delivery strategies (`intraday = False`, `product = "D"`, `uses_leverage = False`) are supported. Full guide and a template: **[docs/ADDING_A_STRATEGY.md](docs/ADDING_A_STRATEGY.md)**. A swing-strategy research study across all three markets (documented rules, real-data train/test, costs) is in **[docs/SWING_RESEARCH.md](docs/SWING_RESEARCH.md)** — its result: no equity or currency swing rule survives out-of-sample, and one commodity rule (12-month momentum, `markets/commodity/strategies/swing`) is added as an unproven, off-by-default paper candidate. Since 2026-10-07 it is **on in paper trading** and commodity scalping is off (weak evidence and 30-60% drawdowns: see the re-test in that doc).
 
 ---
 
@@ -299,7 +299,7 @@ python3 cli.py backtest [--symbols SYM [SYM ...]]
 ```
 | Flag | Meaning |
 |---|---|
-| `--symbols` | Override the default MCX symbol list. NSE currency is backtested standalone via `markets/currency/scalping/backtest.py` (see #6 below) — not wired into this command. |
+| `--symbols` | Override the default MCX symbol list. NSE currency is backtested standalone via `markets/currency/strategies/scalping/backtest.py` (see #6 below) — not wired into this command. |
 | `--capital` | Starting capital in ₹. |
 | `--risk-pct` | Risk % of capital per trade. |
 | `--leverage` | MIS margin leverage multiplier. |
@@ -377,24 +377,24 @@ python3 -m engine.live_dryrun --report --account DRYRUN_ACCOUNT
 python3 -m engine.live_dryrun --reset-db --capital 100000
 ```
 
-### 6. Backtest scripts directly (`markets/commodity/scalping/backtest.py`, `markets/currency/scalping/backtest.py`, `markets/equity/scalping/backtest.py`)
+### 6. Backtest scripts directly (`markets/commodity/strategies/scalping/backtest.py`, `markets/currency/strategies/scalping/backtest.py`, `markets/equity/strategies/scalping/backtest.py`)
 
 Same engines `cli.py backtest` delegates to, callable directly when you want their full native flag set:
 
 ```bash
 # MCX Commodity Scalper
-python3 -m markets.commodity.scalping.backtest --symbols CRUDEOILM --capital 100000 --risk-pct 10.0 --leverage 7.0
-python3 -m markets.commodity.scalping.backtest --symbols CRUDEOILM GOLDM --capital 100000 --risk-pct 10.0 --leverage 7.0
-python3 -m markets.commodity.scalping.backtest --symbols CRUDEOILM --capital 100000 --risk-pct 10.0 --size-mode risk   # pure risk-budgeted, unconstrained by margin
+python3 -m markets.commodity.strategies.scalping.backtest --symbols CRUDEOILM --capital 100000 --risk-pct 10.0 --leverage 7.0
+python3 -m markets.commodity.strategies.scalping.backtest --symbols CRUDEOILM GOLDM --capital 100000 --risk-pct 10.0 --leverage 7.0
+python3 -m markets.commodity.strategies.scalping.backtest --symbols CRUDEOILM --capital 100000 --risk-pct 10.0 --size-mode risk   # pure risk-budgeted, unconstrained by margin
 
 # NSE Currency Derivatives Scalper
-python3 -m markets.currency.scalping.backtest --symbols USDINR --capital 100000 --risk-pct 10.0 --leverage 7.0
-python3 -m markets.currency.scalping.backtest --symbols USDINR EURINR GBPINR --capital 100000 --risk-pct 10.0 --leverage 7.0
+python3 -m markets.currency.strategies.scalping.backtest --symbols USDINR --capital 100000 --risk-pct 10.0 --leverage 7.0
+python3 -m markets.currency.strategies.scalping.backtest --symbols USDINR EURINR GBPINR --capital 100000 --risk-pct 10.0 --leverage 7.0
 
 # NSE Equity Intraday Scalper (full NIFTY50 universe if --symbols omitted)
-python3 -m markets.equity.scalping.backtest --capital 100000 --risk-pct 5.0 --leverage 5.0
-python3 -m markets.equity.scalping.backtest --symbols RELIANCE TCS HDFCBANK --capital 100000 --risk-pct 5.0 --leverage 5.0
-python3 -m markets.equity.scalping.backtest --capital 100000 --risk-pct 5.0 --leverage 5.0 --from 2025-07-01 --to 2026-09-18   # one of the 3 validated OOS folds
+python3 -m markets.equity.strategies.scalping.backtest --capital 100000 --risk-pct 5.0 --leverage 5.0
+python3 -m markets.equity.strategies.scalping.backtest --symbols RELIANCE TCS HDFCBANK --capital 100000 --risk-pct 5.0 --leverage 5.0
+python3 -m markets.equity.strategies.scalping.backtest --capital 100000 --risk-pct 5.0 --leverage 5.0 --from 2025-07-01 --to 2026-09-18   # one of the 3 validated OOS folds
 ```
 
 ---
@@ -537,7 +537,7 @@ Rather than relying on black-box ML models (which overfit and reduce profits dur
 
 `var/archive/commodity/*.csv` is populated from **genuine historical MCX candles**, fetched via `markets/commodity/data.py` using the same Upstox broker/account this bot already live-trades through — no separate data vendor or credentials needed. `markets/commodity/synthetic_data.py`'s earlier random-walk generator is no longer used for training or backtesting (see git history 2026-09-10 for why: everything validated against it — win rates, parameter tuning — was fit to synthetic patterns, not real market behavior).
 
-**Hard constraint**: MCX commodity futures are monthly-expiry contracts, not continuously-listed instruments. Upstox's real history for the *current* active contract only reaches back to that contract's own listing date — typically ~1 month, not years. Requesting further back returns zero candles, not a clipped result. Real history accumulates one genuine trading day at a time via the daily top-up job; there's no way to get more than ~1 month at once without a paid data vendor (TrueData, Global Data Feeds, PortaraCQG all carry real MCX intraday history, but pricing is quote-based, not self-serve). **Every backtest result quoted in this README reflects this real, currently ~32-day, window** — `markets/commodity/scalping/backtest.py` prints the actual archive date range it used on every run (never a hardcoded/stale label) specifically so this can't be silently misrepresented.
+**Hard constraint**: MCX commodity futures are monthly-expiry contracts, not continuously-listed instruments. Upstox's real history for the *current* active contract only reaches back to that contract's own listing date — typically ~1 month, not years. Requesting further back returns zero candles, not a clipped result. Real history accumulates one genuine trading day at a time via the daily top-up job; there's no way to get more than ~1 month at once without a paid data vendor (TrueData, Global Data Feeds, PortaraCQG all carry real MCX intraday history, but pricing is quote-based, not self-serve). **Every backtest result quoted in this README reflects this real, currently ~32-day, window** — `markets/commodity/strategies/scalping/backtest.py` prints the actual archive date range it used on every run (never a hardcoded/stale label) specifically so this can't be silently misrepresented.
 
 **Four intervals maintained per symbol**: 1-minute, 5-minute (the one the strategy/ML model actually consumes), 15-minute, and 1-day (which Upstox retains for noticeably longer than intraday — often several months back even when intraday is capped at ~1 month).
 
@@ -546,7 +546,7 @@ python3 -m markets.commodity.data           # full initial backfill, all tracked
 python3 -m markets.commodity.data --topup     # incremental: fetch only candles newer than what's archived (what the daily timer runs)
 ```
 
-Symbols covered: `CRUDEOILM`/`CRUDEOIL`, `GOLDM`/`GOLD`, `SILVERMIC`/`SILVER`, `COPPER` (base-symbol and mini-contract archive files are kept aligned — `train_commodity.py`/`markets/commodity/scalping/backtest.py` look up whichever name they're given via an alias map).
+Symbols covered: `CRUDEOILM`/`CRUDEOIL`, `GOLDM`/`GOLD`, `SILVERMIC`/`SILVER`, `COPPER` (base-symbol and mini-contract archive files are kept aligned — `train_commodity.py`/`markets/commodity/strategies/scalping/backtest.py` look up whichever name they're given via an alias map).
 
 **NSE currency derivatives** (`var/archive/currency/*.csv`, via `markets/currency/data.py`) hit the same real-data wall — same ~1-month-per-contract cap, verified the same way (a wide single-call request to Upstox's history API was found to silently truncate instead of erroring; `markets/currency/data.py` fetches in small chunks and unions the results rather than trusting one wide call). No free third-party dataset fills this gap either — checked GitHub and Kaggle directly (2026-09-18): `ShabbirHasan1/NSE-Data` has no currency segment at all, and `jugaad-data`'s official-NSE-bhavcopy library doesn't cover currency derivatives in its roadmap either. Real data here, same as MCX, only grows one real day at a time via the daily top-up job.
 
@@ -603,7 +603,7 @@ Currency derivatives carry the lightest friction of the three — no STT/CTT at 
 
 ### NSE Currency Derivatives (24-60 days depending on pair, per-pair calibrated thresholds)
 
-Same capital/risk/leverage as above; `markets/currency/scalping/backtest.py` (rule-based).
+Same capital/risk/leverage as above; `markets/currency/strategies/scalping/backtest.py` (rule-based).
 
 | Pair | Trades | Win Rate | Profit Factor | Net Realized | Max Drawdown |
 |---|---|---|---|---|---|
@@ -615,7 +615,7 @@ Note the win rates: all under 50%, yet all profitable with strong profit factors
 
 ### NSE Equity — full NIFTY50 universe (2022-08 to 2026-09, 3 independent train/test folds)
 
-Unlike commodity/currency, equity has a genuine multi-year real archive (NSE cash has no monthly-expiry cap), so this was validated with real out-of-sample folds rather than one short window. Capital ₹100,000, risk 5%, leverage 5x, max 3 concurrent positions, `markets/equity/scalping/backtest.py`, no ML filter (see [Equity's ML model](#equitys-ml-model-trained-but-deliberately-not-used-live) for why).
+Unlike commodity/currency, equity has a genuine multi-year real archive (NSE cash has no monthly-expiry cap), so this was validated with real out-of-sample folds rather than one short window. Capital ₹100,000, risk 5%, leverage 5x, max 3 concurrent positions, `markets/equity/strategies/scalping/backtest.py`, no ML filter (see [Equity's ML model](#equitys-ml-model-trained-but-deliberately-not-used-live) for why).
 
 | Fold | Test period | Trades | Win Rate | Profit Factor | Net Realized |
 |---|---|---|---|---|---|

@@ -2,7 +2,7 @@
 """
 backend/backtest_currency.py — 5-Minute NSE Currency Derivatives Scalping Backtest Engine
 
-Mirrors markets/commodity/scalping/backtest.py's proven structure exactly (same entry rules,
+Mirrors markets/commodity/strategies/scalping/backtest.py's proven structure exactly (same entry rules,
 same stop/target/trailing mechanics, same statutory-cost-aware simulation
 loop), pointed at USDINR/EURINR/GBPINR/JPYINR instead of MCX commodities.
 
@@ -22,8 +22,8 @@ Differences from the commodity path, both real and deliberate:
     tuned result.
 
 Usage:
-    python3 -m markets.currency.scalping.backtest --symbols USDINR
-    python3 -m markets.currency.scalping.backtest --symbols USDINR EURINR GBPINR JPYINR
+    python3 -m markets.currency.strategies.scalping.backtest --symbols USDINR
+    python3 -m markets.currency.strategies.scalping.backtest --symbols USDINR EURINR GBPINR JPYINR
 """
 from __future__ import annotations
 
@@ -134,13 +134,13 @@ def run_currency_backtest(
     pullback_bars: int = 3,
     pullback_through: float = 0.0,
     daily_regime_window: int = 0,    # opt-in research (2026-10-03, USDINR leverage review): core.regime.regime_ok on daily closes, same mechanism as
-    # CRUDEOILM's live gate (markets/commodity/scalping/backtest.py) -- but NOT assumed to have the same sign: USDINR's own train/test split showed the
+    # CRUDEOILM's live gate (markets/commodity/strategies/scalping/backtest.py) -- but NOT assumed to have the same sign: USDINR's own train/test split showed the
     # OPPOSITE relationship (profitable window had NEGATIVE daily autocorrelation, losing window near zero/positive), so `daily_regime_min_autocorr` and
     # `daily_regime_invert` are exposed separately rather than hard-coding crude's convention. 0 = off (live behaviour).
     daily_regime_min_autocorr: float = 0.0,
     daily_regime_invert: bool = False,  # True: block when autocorr >= min_autocorr instead of when it's below (see the sign note above)
     live_short_rules: bool = False,  # research (2026-10-05): reproduce entry_signal.py's live short rules (ADX +3, slope x1.2, ORB/VWAP x1.1, volume x1.25, TP x0.8 min 1.4, breakeven 0.4R) -- never in the backtests before
-    intraday_chop_window: int = 0,   # same idea as markets/commodity/scalping/backtest.py's param of the same name, on 5-min closes instead of daily
+    intraday_chop_window: int = 0,   # same idea as markets/commodity/strategies/scalping/backtest.py's param of the same name, on 5-min closes instead of daily
     intraday_chop_min_autocorr: float = 0.0,
     intraday_chop_invert: bool = False,
     minute_fills: bool = True,       # settle stop / target fills inside a 5-minute bar from the 1-minute archive where it exists (docs/FILL_MODEL_AUDIT.md); False = 5-minute bars only

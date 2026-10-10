@@ -1,6 +1,6 @@
 """Strategy discovery and selection.
 
-Every markets/<market>/<name>/strategy.py that exposes STRATEGY (a Strategy instance) or
+Every markets/<market>/strategies/<name>/strategy.py that exposes STRATEGY (a Strategy instance) or
 STRATEGIES (a list of them) is found automatically -- there is no list to edit. Which ones
 actually RUN is chosen per market in .env:
 
@@ -71,8 +71,8 @@ def active(market: str) -> list[Strategy]:
 
 def market_of(symbol: str) -> str:
     """"equity" | "currency" | "commodity" for a traded symbol."""
-    from markets.commodity.scalping.entry_signal import is_currency
-    from markets.equity.scalping.entry_signal import is_equity
+    from markets.commodity.strategies.scalping.entry_signal import is_currency
+    from markets.equity.strategies.scalping.entry_signal import is_equity
     return "equity" if is_equity(symbol) else "currency" if is_currency(symbol) else "commodity"
 
 

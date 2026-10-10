@@ -1,6 +1,6 @@
 """The strategy contract -- everything a new trading strategy needs to know.
 
-To add a strategy you write ONE file, markets/<market>/<name>/strategy.py, that
+To add a strategy you write ONE file, markets/<market>/strategies/<name>/strategy.py, that
 defines a Strategy subclass and exposes an instance called STRATEGY:
 
     class EquitySwing(Strategy):

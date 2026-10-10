@@ -87,7 +87,7 @@ def _load(key: str) -> dict[str, pd.DataFrame]:
             out[s] = g
         return out
     if key == "commodity":
-        from markets.commodity.swing.proxy import MCX_PROXY, inr_frame
+        from markets.commodity.strategies.swing.proxy import MCX_PROXY, inr_frame
         return {name: inr_frame(name) for name in MCX_PROXY}
     return {name: fetch_daily(t)[["open", "high", "low", "close"]].dropna() for t, name in CURRENCY.items()}
 

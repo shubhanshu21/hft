@@ -19,7 +19,7 @@ import io
 
 from markets.commodity.experiments import alt_strategy_study as alt
 from markets.commodity.experiments import global_proxy_study as gp
-from markets.commodity.scalping import backtest as bt
+from markets.commodity.strategies.scalping import backtest as bt
 
 DAY = 174
 VARIANTS = {
@@ -67,7 +67,7 @@ def commodity() -> None:
 
 def equity() -> None:
     from markets.equity.experiments import multi_strategy_study as ms
-    from markets.equity.scalping import backtest as eqbt
+    from markets.equity.strategies.scalping import backtest as eqbt
     from markets.equity.universe import NIFTY50_SYMBOLS
     EQ = {"static (live)": {}, "entry levels 3d": {"adaptive_window": 225}, "entry levels 10d": {"adaptive_window": 750}, "time limit x ADX": {"hold_mode": "adx"},
           "stop floor dynamic": {"stop_floor_mode": "dynamic"}, "EVERYTHING dynamic": {"adaptive_window": 375, "hold_mode": "adx", "stop_floor_mode": "dynamic"}}
@@ -93,7 +93,7 @@ def equity() -> None:
 
 
 def currency() -> None:
-    from markets.currency.scalping import backtest as cbt
+    from markets.currency.strategies.scalping import backtest as cbt
     CV = {"static (live)": {}, "entry levels 3d": {"adaptive_window": 288}, "entry levels 10d": {"adaptive_window": 960}, "dynamic exit": {"exit_mode": "dynamic"}, "TP x ADX scale": {"exit_mode": "tp_scaled"},
           "time limit x ADX": {"hold_mode": "adx"}, "stop floor dynamic": {"stop_floor_mode": "dynamic"},
           "EVERYTHING dynamic": {"adaptive_window": 480, "exit_mode": "dynamic", "hold_mode": "adx", "stop_floor_mode": "dynamic"}}

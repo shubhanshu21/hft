@@ -286,7 +286,7 @@ class TestScaffold(unittest.TestCase):
         ctx = EntryContext(symbol="X", candles=[_bar(100.0)], now=datetime.now(IST), instrument_key="K", capital=1e5,
                            risk_pct=4.0, leverage=5.0, direction_filter="both", full_session=True)
         self.assertIsNone(strat.entry(ctx))                     # inert until the author writes entry()
-        self.assertTrue((root / "equity" / "swing_trend" / "__init__.py").exists())
+        self.assertTrue((root / "equity" / "strategies" / "swing_trend" / "__init__.py").exists())
 
     def test_it_refuses_bad_names_unknown_markets_and_overwrites(self):
         from core import scaffold

@@ -32,7 +32,7 @@ HOLD_MIN = 80
 
 def _signals_for_day(sym: str, day_df: pd.DataFrame) -> list[dict | None]:
     """Per 1-minute bar: the signal the live scanner would see right after that minute closed (or None)."""
-    from markets.commodity.scalping.entry_signal import compute_entry_signal
+    from markets.commodity.strategies.scalping.entry_signal import compute_entry_signal
     ts = day_df["ts"].dt.floor("5min")
     o, h, l, c, v = (day_df[k].values for k in ("open", "high", "low", "close", "volume"))
     buckets = ts.values
@@ -95,8 +95,8 @@ PERMISSIVE = {"min_adx": 8.0, "min_vol": 0.6, "min_ema_slope": 0.002, "min_orb":
 
 def _loosen_thresholds() -> None:
     """Loosen entry thresholds (identically for both policies) so a 30-day window has enough events to compare."""
-    from markets.commodity.scalping import backtest as cbt
-    from markets.currency.scalping import backtest as ubt
+    from markets.commodity.strategies.scalping import backtest as cbt
+    from markets.currency.strategies.scalping import backtest as ubt
     for table in (cbt.ENTRY_THRESHOLDS, ubt.ENTRY_THRESHOLDS):
         for row in table.values():
             row.update({k: v for k, v in PERMISSIVE.items() if k in row})
