@@ -1,4 +1,4 @@
-"""Crypto breakout sleeve (markets/crypto/strategies/breakout.py + engine/crypto_breakout.py): the rule, the ledger, and the split of the shared demo position."""
+"""Crypto breakout sleeve (markets/crypto/strategies/tf_15min/breakout.py + engine/crypto_breakout.py): the rule, the ledger, and the split of the shared demo position."""
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 
 from engine import crypto_breakout as cb
-from markets.crypto.strategies import breakout
+from markets.crypto.strategies.tf_15min import breakout
 
 
 def setUpModule():

@@ -1,6 +1,6 @@
 """Strategy discovery and selection.
 
-Every markets/<market>/strategies/<name>/strategy.py that exposes STRATEGY (a Strategy instance) or
+Every markets/<market>/strategies/<timeframe>/<name>/strategy.py (timeframe folder: tf_5min, tf_15min, tf_1hour, tf_daily) that exposes STRATEGY (a Strategy instance) or
 STRATEGIES (a list of them) is found automatically -- there is no list to edit. Which ones
 actually RUN is chosen per market in .env:
 
@@ -22,6 +22,16 @@ import markets
 from core.strategy import Strategy
 
 MARKETS = ("commodity", "currency", "equity")
+
+
+TIMEFRAME_FOLDERS = {("minutes", 5): "tf_5min", ("minutes", 15): "tf_15min", ("hours", 1): "tf_1hour", ("minutes", 60): "tf_1hour",
+                     ("days", 1): "tf_daily"}
+
+
+def timeframe_folder(strategy: Strategy) -> str:
+    """The folder a strategy belongs in: markets/<market>/strategies/<this>/<name>/ (from its signal timeframe)."""
+    tf = tuple(strategy.signal_timeframe or strategy.timeframe)
+    return TIMEFRAME_FOLDERS.get(tf, f"tf_{tf[1]}{tf[0]}")
 
 
 @lru_cache(maxsize=1)
@@ -71,8 +81,8 @@ def active(market: str) -> list[Strategy]:
 
 def market_of(symbol: str) -> str:
     """"equity" | "currency" | "commodity" for a traded symbol."""
-    from markets.commodity.strategies.scalping.entry_signal import is_currency
-    from markets.equity.strategies.scalping.entry_signal import is_equity
+    from markets.commodity.strategies.tf_5min.scalping.entry_signal import is_currency
+    from markets.equity.strategies.tf_5min.scalping.entry_signal import is_equity
     return "equity" if is_equity(symbol) else "currency" if is_currency(symbol) else "commodity"
 
 

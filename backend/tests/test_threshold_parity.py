@@ -4,18 +4,18 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import markets.commodity.strategies.scalping.backtest as backtest_commodity
-import markets.currency.strategies.scalping.backtest as backtest_currency
-import markets.commodity.strategies.scalping.entry_signal as entry_signal
+import markets.commodity.strategies.tf_5min.scalping.backtest as backtest_commodity
+import markets.currency.strategies.tf_5min.scalping.backtest as backtest_currency
+import markets.commodity.strategies.tf_5min.scalping.entry_signal as entry_signal
 import engine.live_dryrun as live_dryrun
 import engine.live_trading as live_trading
 class TestThresholdParity(unittest.TestCase):
     """live_dryrun.py (and, since 2026-09-18, live_trading.py) used to duplicate
-    markets/commodity/strategies/scalping/backtest.py's/backtest_currency.py's ENTRY_THRESHOLDS as hand-copied
+    markets/commodity/strategies/tf_5min/scalping/backtest.py's/backtest_currency.py's ENTRY_THRESHOLDS as hand-copied
     literals, with only a comment ("keep these two/three in sync by hand") standing
     between them and silent drift -- exactly the kind of bug that let a currency
     EOD-squareoff mismatch and gold's own stale thresholds ship unnoticed earlier in
-    this project. Fixed by routing everything through markets.commodity.strategies.scalping.entry_signal, which
+    this project. Fixed by routing everything through markets.commodity.strategies.tf_5min.scalping.entry_signal, which
     imports the dicts directly rather than duplicating them, and is itself the one
     place both live_dryrun.py's DryRunner and live_trading.py's LiveTrader call for
     entry decisions. These are identity checks (`is`), not equality checks --
@@ -39,7 +39,7 @@ class TestThresholdParity(unittest.TestCase):
         self.assertIs(live_trading.registry, registry)
 
     def test_the_commodity_scalping_strategy_wraps_the_shared_entry_signal_function(self):
-        from markets.commodity.strategies.scalping import strategy as commodity_strategy
+        from markets.commodity.strategies.tf_5min.scalping import strategy as commodity_strategy
         self.assertIs(commodity_strategy.compute_entry_signal, entry_signal.compute_entry_signal)
 
     def test_all_live_traded_commodity_symbols_have_dedicated_thresholds(self):

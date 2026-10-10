@@ -14,7 +14,7 @@ class StatsTests(unittest.TestCase):
         self.assertFalse(s.credible(s.stats(trades[:14])))
 
     def test_every_candidate_has_a_threshold_row(self):
-        from markets.commodity.strategies.scalping import backtest as bt
+        from markets.commodity.strategies.tf_5min.scalping import backtest as bt
         for sym, key in s.CANDIDATES.items():
             self.assertIn(key, bt.ENTRY_THRESHOLDS, sym)
             for k in s.GRID:

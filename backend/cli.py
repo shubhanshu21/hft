@@ -17,7 +17,7 @@ Usage Examples:
     python3 cli.py backtest --asset futures --symbols CRUDEOILM NATGASMINI --from 2026-01-01 --to 2026-09-07
 
     # 2. Backtest NSE Currency Derivatives (standalone script, not wired into this CLI)
-    python3 -m markets.currency.strategies.scalping.backtest --symbols USDINR EURINR GBPINR
+    python3 -m markets.currency.strategies.tf_5min.scalping.backtest --symbols USDINR EURINR GBPINR
 
     # 3. Live Paper-Trading Dryrun (MCX Commodities + NSE Currency)
     python3 cli.py dryrun --capital 100000 --risk-pct 5.0 --interval 30
@@ -55,7 +55,7 @@ from engine.database import TradingDB
 
 
 def cmd_backtest(args):
-    from markets.commodity.strategies.scalping.backtest import run_commodity_backtest
+    from markets.commodity.strategies.tf_5min.scalping.backtest import run_commodity_backtest
     run_commodity_backtest(
         symbols=args.symbols,
         capital=args.capital,
@@ -94,7 +94,7 @@ def cmd_report(args):
 def cmd_new_strategy(args):
     from core import scaffold
     try:
-        path = scaffold.create(args.market, args.name)
+        path = scaffold.create(args.market, args.name, timeframe=args.timeframe)
     except (ValueError, FileExistsError) as exc:
         sys.exit(f"error: {exc}")
     print(f"Created {path.relative_to(Path(__file__).parent)}\n"
@@ -226,6 +226,8 @@ def main():
     p_new = subparsers.add_parser("new-strategy", help="Create a new strategy file from a template (see docs/ADDING_A_STRATEGY.md)")
     p_new.add_argument("--market", required=True, choices=["commodity", "currency", "equity"])
     p_new.add_argument("--name", required=True, help="strategy name, e.g. swing (lowercase, digits, underscores)")
+    p_new.add_argument("--timeframe", default="5min", choices=["5min", "15min", "1hour", "daily"],
+                       help="the bars its signal uses; decides the folder markets/<market>/strategies/tf_<timeframe>/ (default 5min)")
     p_new.set_defaults(func=cmd_new_strategy)
 
     args = parser.parse_args()

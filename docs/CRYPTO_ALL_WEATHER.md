@@ -45,7 +45,7 @@ Router by calendar year: 2021 +45%, 2022 +24%, 2023 +12%, 2024 +50%, 2025 +2%, 2
 
 ## What is deployed (paper): the BLEND (half router, half trend; `CRYPTO_STRATEGY=blend`, `CRYPTO_ROUTER_WEIGHT=0.5`; `router` and `trend` remain selectable)
 (The description below is the router half.)
-`markets/crypto/strategies/router.py`, run by `engine/crypto_paper.py` (`CRYPTO_STRATEGY=router`). Bull or sideways BTC regime: long spot, size from the slow-momentum ensemble; bear regime: short perpetuals (funding accrued every 8 hours), larger the fewer trend signals are on,
+`markets/crypto/strategies/tf_1hour/router.py`, run by `engine/crypto_paper.py` (`CRYPTO_STRATEGY=router`). Bull or sideways BTC regime: long spot, size from the slow-momentum ensemble; bear regime: short perpetuals (funding accrued every 8 hours), larger the fewer trend signals are on,
 only for coins that are themselves in a bear regime. Carry is NOT included (its yield has decayed to ~2%; add it later if funding recovers: 30-50% carry cut the drawdown to 11-15% for 2-11 points of return).
 Caveats: the short sleeve's evidence is thin (one deep bear market, 2022, plus 2025-26); regime labels lag turning points; perpetual shorts add liquidation / margin risk that the paper account does not model; funding is applied to the position held at each 8-hour mark; taxes not modelled.
 Today's regime: BULL for BTC, ETH and SOL (16-21 days in), so the router holds the same long positions as the trend-only trader (BTC 1.00, ETH 0.88, SOL 0.73).

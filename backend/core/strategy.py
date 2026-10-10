@@ -1,6 +1,6 @@
 """The strategy contract -- everything a new trading strategy needs to know.
 
-To add a strategy you write ONE file, markets/<market>/strategies/<name>/strategy.py, that
+To add a strategy you write ONE file, markets/<market>/strategies/<timeframe>/<name>/strategy.py, that
 defines a Strategy subclass and exposes an instance called STRATEGY:
 
     class EquitySwing(Strategy):
@@ -109,6 +109,8 @@ class Strategy:
     uses_leverage: bool = True          # False (delivery) = sized and margin-checked at 1x
     allow_short: bool = True            # False (delivery) = the runner never opens a short
     timeframe: tuple[str, int] = ("minutes", 5)   # (unit, interval) of the candles entry()/manage() read
+    signal_timeframe: tuple[str, int] | None = None   # the bars the SIGNAL is built on, when not `timeframe` (a daily signal that reads
+                                                      # today's 5-minute bars only for the live price); decides the strategy's folder
     lookback_days: int = 0              # >0 = fetch this many days of history (daily strategies); 0 = today's intraday candles
     default_enabled: bool = False       # True = runs without being named in <MARKET>_STRATEGIES
     max_positions: int | None = None    # cap on this strategy's concurrent open positions

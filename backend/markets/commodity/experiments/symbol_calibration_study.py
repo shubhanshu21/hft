@@ -22,7 +22,7 @@ from datetime import datetime
 
 from core.paths import CACHE_DIR
 from engine import margin_rates
-from markets.commodity.strategies.scalping import backtest as bt
+from markets.commodity.strategies.tf_5min.scalping import backtest as bt
 
 CAPITAL, RISK_PCT, CONFIGURED_LEVERAGE = 100000.0, 10.0, 10.0
 TRAIN = ("2026-05-18", "2026-07-31")

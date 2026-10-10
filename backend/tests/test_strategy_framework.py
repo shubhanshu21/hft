@@ -286,7 +286,28 @@ class TestScaffold(unittest.TestCase):
         ctx = EntryContext(symbol="X", candles=[_bar(100.0)], now=datetime.now(IST), instrument_key="K", capital=1e5,
                            risk_pct=4.0, leverage=5.0, direction_filter="both", full_session=True)
         self.assertIsNone(strat.entry(ctx))                     # inert until the author writes entry()
-        self.assertTrue((root / "equity" / "strategies" / "swing_trend" / "__init__.py").exists())
+        self.assertTrue((root / "equity" / "strategies" / "tf_5min" / "swing_trend" / "__init__.py").exists())
+
+    def test_strategies_of_one_market_and_timeframe_sit_side_by_side_by_timeframe(self):
+        from core import registry, scaffold
+        root = Path(tempfile.mkdtemp())
+        a = scaffold.create("commodity", "carry", root=root, timeframe="daily")
+        b = scaffold.create("commodity", "trend", root=root, timeframe="daily")
+        c = scaffold.create("commodity", "fade", root=root, timeframe="15min")
+        self.assertEqual(a.parent.parent, b.parent.parent)                     # two daily strategies in one tf_daily folder
+        self.assertEqual(a.parent.parent.name, "tf_daily")
+        self.assertEqual(c.parent.parent.name, "tf_15min")
+        self.assertIn('timeframe = ("days", 1)', a.read_text())
+        self.assertIn("lookback_days = 250", a.read_text())
+        with self.assertRaises(ValueError):
+            scaffold.create("commodity", "x", root=root, timeframe="3min")
+
+    def test_every_strategy_lives_in_the_folder_of_its_signal_timeframe(self):
+        from core import registry
+        for (market, name), strat in registry.discover().items():
+            parts = type(strat).__module__.split(".")
+            self.assertEqual(parts[:3], ["markets", market, "strategies"], type(strat).__module__)
+            self.assertEqual(parts[3], registry.timeframe_folder(strat), f"{market}/{name} is in {parts[3]}")
 
     def test_it_refuses_bad_names_unknown_markets_and_overwrites(self):
         from core import scaffold

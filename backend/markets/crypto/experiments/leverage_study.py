@@ -12,8 +12,8 @@ import numpy as np
 import pandas as pd
 
 import markets.crypto.backtest as bt
-import markets.crypto.strategies.momentum as mo
-from markets.crypto.strategies import router
+import markets.crypto.strategies.tf_1hour.momentum as mo
+from markets.crypto.strategies.tf_1hour import router
 
 BPY = bt.BPY
 

@@ -40,7 +40,7 @@ TRAIN_FRACTION = 0.60
 MIN_TEST_SURVIVAL = 0.40
 MIN_STOP_PCT = 0.0035
 MAX_ZERO_VOLUME_SHARE = 0.30                            # a contract whose 5-min bars are mostly zero-volume has no real price to trade at
-ENTRY_FROM, ENTRY_TO, SQUAREOFF = 60, 810, 825          # minutes since the 09:00 open, as markets/commodity/strategies/scalping/backtest.py
+ENTRY_FROM, ENTRY_TO, SQUAREOFF = 60, 810, 825          # minutes since the 09:00 open, as markets/commodity/strategies/tf_5min/scalping/backtest.py
 
 
 @dataclass

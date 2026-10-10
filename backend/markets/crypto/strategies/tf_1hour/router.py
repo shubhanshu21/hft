@@ -11,7 +11,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from markets.crypto.strategies.momentum import PARTS, ensemble_position, signal, vol_scale
+from markets.crypto.strategies.tf_1hour.momentum import PARTS, ensemble_position, signal, vol_scale
 
 BPD = 24
 

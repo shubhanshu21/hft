@@ -15,8 +15,8 @@ import pandas as pd
 from core.exits import activation_trail_bars
 from core.strategy import EntryContext, ExitContext, ExitDecision, Signal
 from markets.commodity.features import compute_commodity_features
-from markets.commodity.strategies.scalping.backtest import BE_ACTIVATION_MULT, TRAIL_DIST_MULT
-from markets.commodity.strategies.scalping.strategy import HOLD_SECONDS, McxScalping
+from markets.commodity.strategies.tf_5min.scalping.backtest import BE_ACTIVATION_MULT, TRAIL_DIST_MULT
+from markets.commodity.strategies.tf_5min.scalping.strategy import HOLD_SECONDS, McxScalping
 from markets.currency.costs import CURRENCY_SPECS, compute_ncd_currency_costs
 
 

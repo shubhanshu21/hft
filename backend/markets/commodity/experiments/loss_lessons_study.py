@@ -2,7 +2,7 @@
 
     python3 -m markets.commodity.experiments.loss_lessons_study
 
-Lessons tested (each is an opt-in parameter of markets/commodity/strategies/scalping/backtest.py, off by default = live behaviour):
+Lessons tested (each is an opt-in parameter of markets/commodity/strategies/tf_5min/scalping/backtest.py, off by default = live behaviour):
   1. Most losers reverse at once (64-79% never reach 0.3R)       -> CONFIRM: wait 1 or 2 bars and enter only if the breakout held (no bar back through half a stop; last close still beyond the signal close).
   2. Costs decide viability (crude: gross Rs148 < fees Rs169)     -> COST GATE: skip a signal whose round-trip costs exceed 0.10 / 0.15 / 0.20 of the risked amount.
 Judged on (a) the real MCX archive in two halves (first 2026-05-18..07-31, second 08-01..09-24) and (b) the 2.7-year global-price proxy, each calendar year restarting at Rs100,000.
@@ -17,7 +17,7 @@ import numpy as np
 
 from markets.commodity.experiments import alt_strategy_study as alt
 from markets.commodity.experiments import global_proxy_study as gp
-from markets.commodity.strategies.scalping import backtest as bt
+from markets.commodity.strategies.tf_5min.scalping import backtest as bt
 
 SYMBOLS = ["CRUDEOILM", "SILVERMIC", "GOLDTEN", "NATGASMINI"]
 VARIANTS = {"baseline": {}, "confirm 1 bar": {"confirm_bars": 1}, "confirm 2 bars": {"confirm_bars": 2},

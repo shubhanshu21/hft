@@ -58,7 +58,7 @@ def load_equity_upstox() -> dict[str, pd.DataFrame]:
 
 
 def load_commodity_proxy() -> dict[str, pd.DataFrame]:
-    from markets.commodity.strategies.swing.proxy import MCX_PROXY as PROXY, inr_frame
+    from markets.commodity.strategies.tf_daily.swing.proxy import MCX_PROXY as PROXY, inr_frame
     return {name: inr_frame(name) for name in PROXY}
 
 

@@ -7,7 +7,7 @@ rebuild context -- the original equity scalper was removed 2026-09-18 after
 failing to show a real OOS edge on the full NIFTY50, and its own universe
 selection was independently found to be circular/survivorship-biased).
 
-Mirrors markets/commodity/strategies/scalping/backtest.py/backtest_currency.py's proven walk-forward
+Mirrors markets/commodity/strategies/tf_5min/scalping/backtest.py/backtest_currency.py's proven walk-forward
 structure (same entry-rule shape, same stop/target/breakeven/trailing
 mechanics, same statutory-cost-aware simulation loop), pointed at the fixed
 NIFTY50 universe instead of MCX commodities or currency pairs.
@@ -26,8 +26,8 @@ calibration. Two reasons:
 
 SECOND deliberate difference, and an important one: trades across the 49
 symbols are simulated in TRUE CHRONOLOGICAL order, not symbol-by-symbol.
-Every other backtest in this codebase (markets/commodity/strategies/scalping/backtest.py,
-markets/currency/strategies/scalping/backtest.py) processes at most a handful of symbols and runs each
+Every other backtest in this codebase (markets/commodity/strategies/tf_5min/scalping/backtest.py,
+markets/currency/strategies/tf_5min/scalping/backtest.py) processes at most a handful of symbols and runs each
 one to completion before moving to the next -- fine at that scale, but for a
 49-stock universe that would mean fully simulating RELIANCE's entire
 2022-2026 history, THEN TCS's, THEN HDFCBANK's, etc., which makes the
@@ -44,8 +44,8 @@ docstring for how entries/exits are now interleaved.
 Entries are purely rule-based (no ML model).
 
 Usage:
-    python3 -m markets.equity.strategies.scalping.backtest --symbols RELIANCE TCS
-    python3 -m markets.equity.strategies.scalping.backtest                          # full NIFTY50 (49 names) universe
+    python3 -m markets.equity.strategies.tf_5min.scalping.backtest --symbols RELIANCE TCS
+    python3 -m markets.equity.strategies.tf_5min.scalping.backtest                          # full NIFTY50 (49 names) universe
 """
 from __future__ import annotations
 
@@ -111,9 +111,9 @@ def _dynamic_exit_scale(entry_adx: float) -> float:
 # via a 144-combo sweep + 3-fold OOS check, then min_ema_slope loosened
 # 0.22->0.18 on 2026-09-21 after re-validating on the same 3 folds (more
 # trades, equal-or-better drawdown on every fold -- see
-# markets/equity/strategies/scalping/entry_signal.py's ENTRY_THRESHOLDS comment for the full
+# markets/equity/strategies/tf_5min/scalping/entry_signal.py's ENTRY_THRESHOLDS comment for the full
 # story, which is the copy live_dryrun.py actually imports; this one is kept
-# in sync by hand so `python3 -m markets.equity.strategies.scalping.backtest` with no threshold override
+# in sync by hand so `python3 -m markets.equity.strategies.tf_5min.scalping.backtest` with no threshold override
 # reflects the same config that's actually live).
 ENTRY_THRESHOLDS = {
     "min_adx": 22.0, "min_vol": 1.5, "min_orb": 0.10, "min_vwap": 0.10,

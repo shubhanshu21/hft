@@ -6,7 +6,7 @@ Built 2026-09-18 after finding CRUDEOILM's intraday momentum thresholds
 were profitable on Aug17-Sep17 (+520%) but a clear net loser on the newly-
 revealed May18-Jul31 (-100%), on the EXACT SAME thresholds -- proving the
 edge is regime-dependent, not threshold-dependent (see
-markets/commodity/strategies/scalping/backtest.py's ENTRY_THRESHOLDS["crude"] comment for the full
+markets/commodity/strategies/tf_5min/scalping/backtest.py's ENTRY_THRESHOLDS["crude"] comment for the full
 finding). A daily ADX trend-strength gate was tried first and found
 BACKWARDS (the bad period actually had HIGHER daily ADX, 31.4 vs 21.6 --
 high intraday volatility without persistent direction, not the "choppy/low-
@@ -62,7 +62,7 @@ def regime_ok(daily_closes: list[float], window: int = 15, min_autocorr: float =
     # return numpy.bool_, and `numpy.bool_(False) is False` is False (a
     # different object from Python's own bool singleton) even though
     # `==` would agree. Every caller of this function checks the result
-    # with `is False`/`is True` (see markets/commodity/strategies/scalping/backtest.py, entry_signal.py)
+    # with `is False`/`is True` (see markets/commodity/strategies/tf_5min/scalping/backtest.py, entry_signal.py)
     # specifically to distinguish a real answer from None -- without this
     # cast, `is False` never matches and the gate silently never blocks
     # anything. Found 2026-09-18 by the gate producing zero effect at all

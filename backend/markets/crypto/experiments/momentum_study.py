@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 
 from core.paths import ARCHIVE_ROOT
-from markets.crypto.strategies.momentum import BARS_PER_DAY, COST_SIDE, TARGET_VOL, ema, signal, vol_scale     # noqa: F401 (shared with the paper trader)
+from markets.crypto.strategies.tf_1hour.momentum import BARS_PER_DAY, COST_SIDE, TARGET_VOL, ema, signal, vol_scale     # noqa: F401 (shared with the paper trader)
 
 ARCHIVE = ARCHIVE_ROOT / "crypto"
 SYMBOLS = ("BTCUSDT", "ETHUSDT", "SOLUSDT")

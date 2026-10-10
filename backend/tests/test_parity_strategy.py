@@ -1,4 +1,4 @@
-"""markets/currency/strategies/parity: the gap, one decision per completed bar, bid/ask fills, the 30-minute exit, the stop, fees-only costs,
+"""markets/currency/strategies/tf_5min/parity: the gap, one decision per completed bar, bid/ask fills, the 30-minute exit, the stop, fees-only costs,
 the per-strategy symbol filter."""
 import os
 import unittest
@@ -10,8 +10,8 @@ import numpy as np
 import pandas as pd
 
 from core.strategy import EntryContext, ExitContext, MarketData
-from markets.currency.strategies.parity import signal as sg
-from markets.currency.strategies.parity.strategy import CurrencyParity
+from markets.currency.strategies.tf_5min.parity import signal as sg
+from markets.currency.strategies.tf_5min.parity.strategy import CurrencyParity
 
 IST = ZoneInfo("Asia/Kolkata")
 
@@ -76,7 +76,7 @@ class TestStrategy(unittest.TestCase):
 
     def test_rich_cross_is_sold_at_the_bid_once_per_bar(self):
         q = {"bid": 110.5700, "ask": 110.5900, "bid_qty": 10, "ask_qty": 10, "ltp": 110.58}
-        with patch.object(sg, "yahoo_fx_5m", return_value=self.fx), patch("markets.currency.strategies.parity.strategy.yahoo_fx_5m", return_value=self.fx):
+        with patch.object(sg, "yahoo_fx_5m", return_value=self.fx), patch("markets.currency.strategies.tf_5min.parity.strategy.yahoo_fx_5m", return_value=self.fx):
             s = self.st.entry(self.ctx(q))
             self.assertIsNotNone(s)
             self.assertEqual(s.direction, "short")
@@ -86,7 +86,7 @@ class TestStrategy(unittest.TestCase):
             self.assertIsNone(self.st.entry(self.ctx(q)))     # same completed bar: no second decision
 
     def test_no_trade_without_a_quote_or_with_a_wide_book_or_outside_hours(self):
-        with patch("markets.currency.strategies.parity.strategy.yahoo_fx_5m", return_value=self.fx):
+        with patch("markets.currency.strategies.tf_5min.parity.strategy.yahoo_fx_5m", return_value=self.fx):
             self.assertIsNone(CurrencyParity().entry(self.ctx(None)))
             wide = {"bid": 110.40, "ask": 110.70, "bid_qty": 1, "ask_qty": 1, "ltp": 110.5}       # 27 bp
             self.assertIsNone(CurrencyParity().entry(self.ctx(wide)))
@@ -95,7 +95,7 @@ class TestStrategy(unittest.TestCase):
 
     def test_a_thin_book_fills_at_the_average_of_its_levels_and_only_what_it_shows(self):
         q = {"bid": 110.57, "ask": 110.59, "bids": [(110.57, 2), (110.56, 1), (110.55, 1)], "asks": [(110.59, 3)]}
-        with patch("markets.currency.strategies.parity.strategy.yahoo_fx_5m", return_value=self.fx):
+        with patch("markets.currency.strategies.tf_5min.parity.strategy.yahoo_fx_5m", return_value=self.fx):
             s = CurrencyParity().entry(self.ctx(q))
         self.assertEqual(s.qty, 4)                                 # the book shows 4 of the 5 lots wanted
         self.assertAlmostEqual(s.entry_price, round((2 * 110.57 + 110.56 + 110.55) / 4, 4))
@@ -108,7 +108,7 @@ class TestStrategy(unittest.TestCase):
 
     def test_lots_follow_the_env_setting(self):
         q = {"bid": 110.5700, "ask": 110.5900}
-        with patch("markets.currency.strategies.parity.strategy.yahoo_fx_5m", return_value=self.fx), patch.dict(os.environ, {"CURRENCY_PARITY_LOTS": "3"}):
+        with patch("markets.currency.strategies.tf_5min.parity.strategy.yahoo_fx_5m", return_value=self.fx), patch.dict(os.environ, {"CURRENCY_PARITY_LOTS": "3"}):
             self.assertEqual(CurrencyParity().entry(self.ctx(q)).qty, 3)
 
     def pos(self, direction="short", entry=110.57):
@@ -139,7 +139,7 @@ class TestStrategy(unittest.TestCase):
 
 class TestSymbolFilter(unittest.TestCase):
     def test_strategies_trade_only_their_listed_symbols(self):
-        from markets.currency.strategies.scalping.strategy import STRATEGY as scalping
+        from markets.currency.strategies.tf_5min.scalping.strategy import STRATEGY as scalping
         with patch.dict(os.environ, {"CURRENCY_SCALPING_SYMBOLS": "USDINR"}):
             self.assertTrue(scalping.trades("USDINR"))
             self.assertFalse(scalping.trades("EURINR"))

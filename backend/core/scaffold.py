@@ -11,11 +11,12 @@ from pathlib import Path
 from core.paths import BACKEND_ROOT
 
 MARKETS = ("commodity", "currency", "equity")
+TIMEFRAMES = {"5min": (("minutes", 5), 0), "15min": (("minutes", 15), 0), "1hour": (("hours", 1), 0), "daily": (("days", 1), 250)}
 
 _TEMPLATE = '''"""{market} / {name} -- TODO: one line on what this strategy does and why it should have an edge.
 
 Not switched on until it is named in .env:   {MARKET}_STRATEGIES=scalping,{name}
-Guide: docs/ADDING_A_STRATEGY.md.  Worked examples: markets/*/strategies/scalping/strategy.py
+Guide: docs/ADDING_A_STRATEGY.md.  Worked examples: markets/*/strategies/tf_5min/scalping/strategy.py
 """
 from __future__ import annotations
 
@@ -30,8 +31,8 @@ class {Class}(Strategy):
     product = "I"                 # real orders: "I" intraday, "D" delivery
     uses_leverage = True          # False = sized and margin-checked at 1x (delivery)
     allow_short = True            # False = the runner refuses a short signal
-    timeframe = ("minutes", 5)    # the candles entry()/manage() receive, e.g. ("days", 1)
-    lookback_days = 0             # >0 = fetch that many days of history (needed for daily bars)
+    timeframe = {timeframe}  # the candles entry()/manage() receive; keep it matching the folder (tf_...)
+    lookback_days = {lookback}             # >0 = fetch that many days of history (needed for daily bars)
     max_positions = None          # cap on this strategy's concurrent positions
     sector_cap = False            # True = apply the per-sector position cap (equity)
     id_prefix = "{PREFIX}"        # order / position ids
@@ -59,20 +60,24 @@ STRATEGY = {Class}()
 '''
 
 
-def create(market: str, name: str, root: Path | None = None) -> Path:
+def create(market: str, name: str, root: Path | None = None, timeframe: str = "5min") -> Path:
+    """markets/<market>/strategies/tf_<timeframe>/<name>/strategy.py from the template; several strategies may share a market and timeframe."""
     if market not in MARKETS:
         raise ValueError(f"market must be one of {MARKETS}")
+    if timeframe not in TIMEFRAMES:
+        raise ValueError(f"timeframe must be one of {tuple(TIMEFRAMES)}")
     if not re.fullmatch(r"[a-z][a-z0-9_]*", name):
         raise ValueError("name must be lowercase letters, digits and underscores, starting with a letter")
-    folder = (root or BACKEND_ROOT / "markets") / market / "strategies" / name
+    folder = (root or BACKEND_ROOT / "markets") / market / "strategies" / f"tf_{timeframe}" / name
     target = folder / "strategy.py"
     if target.exists():
         raise FileExistsError(f"{target} already exists")
     folder.mkdir(parents=True, exist_ok=True)
+    (folder.parent.parent / "__init__.py").touch(exist_ok=True)
     (folder.parent / "__init__.py").touch(exist_ok=True)
     (folder / "__init__.py").touch(exist_ok=True)
     target.write_text(_TEMPLATE.format(
-        market=market, name=name, MARKET=market.upper(), Class="".join(p.capitalize() for p in name.split("_")) + market.capitalize(),
+        market=market, name=name, MARKET=market.upper(), timeframe='("{}", {})'.format(*TIMEFRAMES[timeframe][0]), lookback=TIMEFRAMES[timeframe][1], Class="".join(p.capitalize() for p in name.split("_")) + market.capitalize(),
         PREFIX=name[:3].upper(),
     ))
     return target

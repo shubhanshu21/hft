@@ -13,7 +13,7 @@ import numpy as np
 from markets.commodity.experiments import alt_strategy_study as alt
 from markets.commodity.experiments import global_proxy_study as gp
 from markets.commodity.experiments import regime_switch_study as rss
-from markets.commodity.strategies.scalping import backtest as bt
+from markets.commodity.strategies.tf_5min.scalping import backtest as bt
 
 WINDOWS, THRESHOLDS = (10, 20), (0.25, 0.35, 0.45)
 

@@ -4,7 +4,7 @@
     python3 -m engine.crypto_breakout --once        # one cycle (the daemon runs it from engine/crypto_paper.py's loop)
     python3 -m engine.crypto_breakout --reset [--capital 500]
 
-Rule: markets/crypto/strategies/breakout.py (the same function the backtest uses). Each coin gets an equal share of this sleeve's equity at 1x; a coin that
+Rule: markets/crypto/strategies/tf_15min/breakout.py (the same function the backtest uses). Each coin gets an equal share of this sleeve's equity at 1x; a coin that
 breaks out goes long until the UTC day ends. The sleeve runs INSIDE the crypto daemon, right after the slow blend's cycle, on the same demo account:
 the exchange holds ONE perpetual position per coin, so the blend subtracts this sleeve's open quantity and funding from what it reads back
 (open_qty / funding_total) -- running in one process, in turn, keeps the two books consistent without locks.
@@ -24,7 +24,7 @@ from pathlib import Path
 import pandas as pd
 
 from core.paths import DB_DIR
-from markets.crypto.strategies import breakout
+from markets.crypto.strategies.tf_15min import breakout
 from services.broker.binance_demo import floor_step
 from services.data import binance
 from services.utils import telegram

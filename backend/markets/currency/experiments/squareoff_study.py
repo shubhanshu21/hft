@@ -12,7 +12,7 @@ import io
 
 from core import sessions
 from engine import margin_rates
-from markets.currency.strategies.scalping.backtest import run_currency_backtest
+from markets.currency.strategies.tf_5min.scalping.backtest import run_currency_backtest
 
 HALVES = {"first": ("2026-05-18", "2026-07-19"), "second": ("2026-07-20", "2026-09-23"), "all": ("2026-05-18", "2026-09-23")}
 # (last entry minute, forced exit minute): 460/470 = 16:40/16:50 (current), then variants inside 16:30

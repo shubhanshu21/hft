@@ -35,7 +35,7 @@ only 12-month momentum showed a weak edge (paper since 2026-10-08).
 
 ## Same-commodity pairs: mini vs full, and next month vs this month (2026-10-10)
 
-The currency recipe (`markets/currency/strategies/parity`: a thin contract lags the liquid prices it is built from) applied inside MCX. Real
+The currency recipe (`markets/currency/strategies/tf_5min/parity`: a thin contract lags the liquid prices it is built from) applied inside MCX. Real
 1-minute history of 42 contracts downloaded from Upstox (`var/archive/mcx_contracts/`; Upstox serves only listed contracts, so ~2-5
 months each). Gap = log(thin) - log(sibling) minus its 60-bar median; fade it on the thin leg for 30 minutes; threshold chosen on the
 first 60% of days, tested on the last 40%. Costs: CTT 0.01% sell side, exchange, stamp, SEBI, GST (~1.8 bp) + Rs70.8 brokerage at

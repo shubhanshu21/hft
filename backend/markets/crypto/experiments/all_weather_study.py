@@ -7,7 +7,7 @@ Regimes are labelled from PAST data only, per coin and at every hourly bar:
     BEAR     close below the 200-day EMA and the 50-day EMA below the 200-day EMA
     SIDEWAYS everything else (transitions and ranges)
 Sleeves (hourly returns, three coins equal weight, costs charged, TRAIN 2020-09..2023-12 / TEST 2024-01..now):
-    TREND      the spot long/flat ensemble (markets/crypto/strategies/momentum.py) with the live 10% rebalance band
+    TREND      the spot long/flat ensemble (markets/crypto/strategies/tf_1hour/momentum.py) with the live 10% rebalance band
     SHORT      perp short, only in a BEAR regime, sized (1 - trend signals on) x volatility scale; earns/pays funding; 0.09% per side (fee 0.05% + slippage)
     CARRY      long spot + short perpetual of the same notional: earns the perpetual FUNDING RATE every 8 hours, direction-neutral; capital = 1.25x the notional (25% margin for the short leg);
                0.4% round trip once, "gated" = only while the trailing 30-day funding is above 3% a year
@@ -21,7 +21,7 @@ import pandas as pd
 
 from core.paths import ARCHIVE_ROOT
 from markets.crypto.experiments.momentum_study import SYMBOLS, load
-from markets.crypto.strategies.momentum import COST_SIDE, TARGET_VOL, ensemble_position, signal, vol_scale
+from markets.crypto.strategies.tf_1hour.momentum import COST_SIDE, TARGET_VOL, ensemble_position, signal, vol_scale
 from engine.crypto_paper import plan_trades  # noqa: F401  (keeps the live rebalance rule next to the research)
 
 BPD = 24
@@ -45,7 +45,7 @@ def funding_series(sym: str, idx: pd.DatetimeIndex) -> pd.Series:
     return f.reindex(idx).fillna(0.0)
 
 
-from markets.crypto.strategies.router import regimes  # noqa: E402  (shared with the live router)
+from markets.crypto.strategies.tf_1hour.router import regimes  # noqa: E402  (shared with the live router)
 
 
 def sleeve_returns(sym: str, df: pd.DataFrame) -> dict[str, pd.Series]:

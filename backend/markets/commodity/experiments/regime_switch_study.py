@@ -29,7 +29,7 @@ import numpy as np
 
 from markets.commodity.experiments.alt_strategy_study import (
     CAPITAL, CONFIGURED_LEVERAGE, RISK_PCT, Bars, bars_15min, bars_5min, liquidity, MAX_ZERO_VOLUME_SHARE, real_rates, signal_channel, signal_meanrev, simulate)
-from markets.commodity.strategies.scalping import backtest as bt
+from markets.commodity.strategies.tf_5min.scalping import backtest as bt
 
 SYMBOLS = ["CRUDEOILM", "NATGASMINI", "SILVERMIC", "GOLDTEN"]
 FULL = ("2026-05-18", "2026-09-24")

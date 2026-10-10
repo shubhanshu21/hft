@@ -26,7 +26,7 @@ Result: no re-tuned threshold beat what a symbol already has. SILVERMIC and GOLD
 show no edge with these rules. The base metals only have 2-3 months of history (MCX serves ~1 month per contract): re-run once each has ~4 months
 (ALUMINI/ZINCMINI ~late Oct 2026, LEADMINI ~Nov, NICKEL ~Dec).
 
-Known gap: the LIVE entry rule (`markets/commodity/strategies/scalping/entry_signal.py`) only has keys crude/natgas/gold/silver, so ALUMINI/LEADMINI/ZINCMINI/NICKEL would
+Known gap: the LIVE entry rule (`markets/commodity/strategies/tf_5min/scalping/entry_signal.py`) only has keys crude/natgas/gold/silver, so ALUMINI/LEADMINI/ZINCMINI/NICKEL would
 silently trade at crude's thresholds if put in DRYRUN_SYMBOLS, whereas the backtest gives them their own (uncalibrated, currently crude-equal) rows.
 Do not add them to DRYRUN_SYMBOLS until they pass this study.
 

@@ -7,10 +7,10 @@ sizing, order placement and fill handling, DB records, alerts, and restoring the
 
 ## The 3 steps
 
-1. **Create** `backend/markets/<market>/strategies/<name>/strategy.py` (`<market>` is `commodity`, `currency` or `equity`). The quickest way:
+1. **Create** `backend/markets/<market>/strategies/<timeframe>/<name>/strategy.py` (`<market>` is `commodity`, `currency` or `equity`; `<timeframe>` is `tf_5min`, `tf_15min`, `tf_1hour` or `tf_daily`, the bars its signal uses -- several strategies can share one). The quickest way:
 
    ```
-   cd backend && python3 cli.py new-strategy --market equity --name swing
+   cd backend && python3 cli.py new-strategy --market equity --timeframe daily --name swing
    ```
 
    which writes an inert template (its `entry()` never signals) for you to fill in.
@@ -72,11 +72,11 @@ STRATEGY = EquitySwing()
 `ctx` gives you the candles, the time, `capital` (the whole account, or less once other positions hold margin),
 `risk_pct` (already scaled down by the drawdown rule), `leverage` (1.0 when `uses_leverage = False`),
 `direction_filter` and the regime flags.
-`ctx.data` (also on the exit context) reads other symbols' 5-minute candles (`ctx.data.candles("USDINR")`) and the live 5-level book (`ctx.data.quote(sym)`); it is None in backtests that do not provide one, so a strategy must then not trade. `<MARKET>_<NAME>_SYMBOLS` in `.env` limits a strategy to some of its market's symbols (override `trades()` for a fixed rule); `markets/currency/strategies/parity/strategy.py` uses both.
+`ctx.data` (also on the exit context) reads other symbols' 5-minute candles (`ctx.data.candles("USDINR")`) and the live 5-level book (`ctx.data.quote(sym)`); it is None in backtests that do not provide one, so a strategy must then not trade. `<MARKET>_<NAME>_SYMBOLS` in `.env` limits a strategy to some of its market's symbols (override `trades()` for a fixed rule); `markets/currency/strategies/tf_5min/parity/strategy.py` uses both.
 
 Size the position from `ctx.capital` and `ctx.risk_pct` — see `size_equity_shares` / `size_commodity_lots` for the
 two existing sizing rules. Reusable exit managers live in `core/exits.py`; the three existing strategies
-(`markets/*/strategies/scalping/strategy.py`) are complete worked examples.
+(`markets/*/strategies/tf_5min/scalping/strategy.py`) are complete worked examples.
 
 **Writing your own `manage()`?** Do not read the current bar's raw high/low to decide a stop or target. That bar may contain prices from
 *before* your entry (a breakout signal fires on a wide bar, so the bar's low is often already past the stop) and the position would be
@@ -97,7 +97,7 @@ stopped out on the very next scan by a price it never traded at. Use `core.exits
 ## Before it trades
 
 This project's rule applies: a strategy is not switched on until it has a credible backtest (≥15 trades) **and** a
-genuine held-out test window. Put the backtest next to it (`markets/<market>/strategies/<name>/backtest.py`), reuse the same
+genuine held-out test window. Put the backtest next to it (`markets/<market>/strategies/<timeframe>/<name>/backtest.py`), reuse the same
 `entry()` logic so backtest and live cannot drift, and paper-trade it before `ALLOW_LIVE_TRADING` is even considered.
 
 ## Tests

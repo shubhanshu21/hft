@@ -19,7 +19,7 @@ import pandas as pd
 from core.paths import ARCHIVE_ROOT, CACHE_DIR
 from markets.commodity.experiments import alt_strategy_study as alt
 from markets.commodity.experiments import regime_switch_study as rss
-from markets.commodity.strategies.scalping import backtest as bt
+from markets.commodity.strategies.tf_5min.scalping import backtest as bt
 from services.data.yahoo import fetch_daily
 
 GLOBAL_DIR = ARCHIVE_ROOT / "global"

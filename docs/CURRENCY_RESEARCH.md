@@ -130,7 +130,7 @@ Open risks, all answerable only live: the spread at the moment of a signal (a ga
 5 lots fill at the touch in a ~1,800-contract-a-day market, and a live EUR/USD price. Next step: shadow-trade EURINR/GBPINR from
 2026-10-12 (signals logged live, filled against the recorded bid/ask), decide on paper trading after ~3 weeks.
 
-## Deployed to paper trading: `markets/currency/strategies/parity` (from 2026-10-12)
+## Deployed to paper trading: `markets/currency/strategies/tf_5min/parity` (from 2026-10-12)
 
 Rule (no ML -- the plain gap did as well as the models): on each completed 5-minute bar, gap = log(cross) - log(EUR/USD or GBP/USD,
 Yahoo) - log(NSE USDINR), minus its median over the last 60 bars (restarted after an overnight jump > 25 bp, i.e. a contract roll on one
@@ -138,7 +138,7 @@ leg). EURINR |gap| > 10 bp, GBPINR > 12 bp: fade it, 5 lots, hold 30 minutes, pr
 chosen on 2026-08-21..09-16 only. Paper fills walk the live 5-level book (the crosses often show 1-3 lots at the best price), so the
 paper P&L pays the real spread; costs() adds brokerage, exchange, SEBI, stamp duty and GST.
 
-Backtest of that exact code on the raw archives (`python3 -m markets.currency.strategies.parity.backtest`; entry next open + half the Roll spread,
+Backtest of that exact code on the raw archives (`python3 -m markets.currency.strategies.tf_5min.parity.backtest`; entry next open + half the Roll spread,
 exit 30 min later - half spread):
 
 | 5 lots | trades | win % | net bp a trade | net Rs | t |

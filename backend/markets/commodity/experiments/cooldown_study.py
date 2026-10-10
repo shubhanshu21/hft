@@ -7,7 +7,7 @@ from __future__ import annotations
 import contextlib
 import io
 
-from markets.commodity.strategies.scalping.backtest import run_commodity_backtest
+from markets.commodity.strategies.tf_5min.scalping.backtest import run_commodity_backtest
 
 HALVES = {"first (May18-Jul19)": ("2026-05-18", "2026-07-19"), "second (Jul20-Sep23)": ("2026-07-20", "2026-09-23")}
 SYMBOLS = ["CRUDEOILM", "GOLDM", "SILVER"]

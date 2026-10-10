@@ -1,4 +1,4 @@
-"""Backtest of the LIVE crypto router (markets/crypto/strategies/router.py + the trader's rebalance band + its costs and funding).  Run:  python3 -m markets.crypto.backtest
+"""Backtest of the LIVE crypto router (markets/crypto/strategies/tf_1hour/router.py + the trader's rebalance band + its costs and funding).  Run:  python3 -m markets.crypto.backtest
 
 Same signals as engine/crypto_paper.py: BTC regime picks long spot (bull / sideways) or short perpetuals (bear); the position of each coin moves only when the target differs by >= 10% of its share (or the target is zero);
 spot costs 0.12% (SOL 0.15%) and perp costs 0.09% per side on the leg that changes; shorts earn / pay the perpetual funding every 8 hours. Equal thirds, rebalanced each bar (the live trader rebalances inside its band).
@@ -9,9 +9,9 @@ import numpy as np
 import pandas as pd
 
 from core.paths import ARCHIVE_ROOT
-from markets.crypto.strategies import router
+from markets.crypto.strategies.tf_1hour import router
 from markets.crypto.experiments.momentum_study import SYMBOLS, load
-from markets.crypto.strategies.momentum import COST_SIDE, ensemble_position
+from markets.crypto.strategies.tf_1hour.momentum import COST_SIDE, ensemble_position
 
 PERP_SIDE = 0.0009
 BAND = 0.10
