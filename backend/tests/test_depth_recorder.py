@@ -60,25 +60,68 @@ class TestFiles(unittest.TestCase):
 class TestRecorderRouting(unittest.TestCase):
     def test_updates_are_routed_by_instrument_key_and_unknown_keys_dropped(self):
         rec = dr.Recorder(["USDINR"])
-        rec.keys = {"NCD_FO|1284": "USDINR"}
+        rec.keys = {"NCD_FO|1284": ("USDINR", None)}
         rec.on_message({"type": "live_feed", "feeds": {"NCD_FO|1284": FEED, "NSE_FO|1": FEED}})
         rec.on_message({"type": "market_info", "marketInfo": {}})
         self.assertEqual(list(rec.buf), ["USDINR"])
         self.assertEqual(rec.counts, {"USDINR": 1})
 
 
-if __name__ == "__main__":
-    unittest.main()
 
+class TestSampling(unittest.TestCase):
+    def _feed(self, ltp):
+        return {"fullFeed": {"marketFF": {**FEED["fullFeed"]["marketFF"], "ltpc": {"ltp": ltp}}}}
 
-class TestThrottle(unittest.TestCase):
-    def test_updates_within_one_second_keep_only_the_newest(self):
+    def _send(self, rec, key, ms, ltp):
         import time as _t
         from unittest.mock import patch
+        with patch.object(_t, "time", lambda: ms / 1000):
+            rec.on_message({"feeds": {key: self._feed(ltp)}})
+
+    def test_contracts_keep_every_update(self):
         rec = dr.Recorder(["USDINR"])
-        rec.keys = {"NCD_FO|1284": "USDINR"}
+        rec.keys = {"NCD_FO|1284": ("USDINR", None)}
         for ms, ltp in ((1_000_100, 96.1), (1_000_900, 96.2), (1_001_050, 96.3)):
-            with patch.object(_t, "time", lambda ms=ms: ms / 1000):
-                feed = {"fullFeed": {"marketFF": {**FEED["fullFeed"]["marketFF"], "ltpc": {"ltp": ltp}}}}
-                rec.on_message({"feeds": {"NCD_FO|1284": feed}})
-        self.assertEqual([r["ltp"] for r in rec.buf["USDINR"]], [96.2, 96.3])      # second 1000: newest only; second 1001: its own row
+            self._send(rec, "NCD_FO|1284", ms, ltp)
+        self.assertEqual([r["ltp"] for r in rec.buf["USDINR"]], [96.1, 96.2, 96.3])
+
+    def test_the_option_chain_is_sampled_per_option(self):
+        rec = dr.Recorder(["NIFTYOPT"], option_every_s=15)
+        rec.keys = {"NSE_FO|1": ("NIFTYOPT", "NIFTY 22500 CE"), "NSE_FO|2": ("NIFTYOPT", "NIFTY 22500 PE")}
+        for ms, key, ltp in ((1_000_000, "NSE_FO|1", 10), (1_005_000, "NSE_FO|1", 11), (1_006_000, "NSE_FO|2", 20), (1_016_000, "NSE_FO|1", 12)):
+            self._send(rec, key, ms, ltp)
+        rows = rec.buf["NIFTYOPT"]
+        self.assertEqual([(r["instrument"], r["ltp"]) for r in rows], [("NIFTY 22500 CE", 10), ("NIFTY 22500 PE", 20), ("NIFTY 22500 CE", 12)])
+        self.assertEqual((rows[0]["iv"], rows[0]["delta"]), (None, None))       # FEED has no greeks; option feeds fill them
+
+
+class TestOptionChain(unittest.TestCase):
+    def test_nearest_expiry_and_atm_plus_minus_n_strikes(self):
+        rows = []
+        for exp in ("2026-10-13", "2026-10-20"):
+            for k in range(21000, 24001, 50):
+                for t in ("CE", "PE"):
+                    rows.append({"exchange": "NSE_FO", "name": "NIFTY", "instrument_type": "OPTIDX", "option_type": t, "expiry": exp,
+                                 "strike": f"{k}.0", "instrument_key": f"K{exp}{k}{t}", "tradingsymbol": f"NIFTY {exp} {k} {t}"})
+        chain = dr.option_chain(rows, "NIFTY", 22512.0, 50, 2, "2026-10-12")
+        strikes = sorted({int(v.split()[2]) for v in chain.values()})
+        self.assertEqual(strikes, [22400, 22450, 22500, 22550, 22600])
+        self.assertTrue(all("2026-10-13" in v for v in chain.values()))
+        self.assertEqual(len(chain), 10)
+        self.assertEqual(dr.option_chain(rows, "NIFTY", 22512.0, 50, 2, "2026-10-14"), {k: v for k, v in dr.option_chain(rows, "NIFTY", 22512.0, 50, 2, "2026-10-20").items()})
+
+
+class TestFormatChange(unittest.TestCase):
+    def test_a_file_begun_with_another_column_layout_is_not_appended_to(self):
+        root = Path(tempfile.mkdtemp())
+        (root / "USDINR").mkdir()
+        (root / "USDINR" / "2026-10-12.csv").write_text("recv_ms,ltt_ms,ltp\n1,2,3\n")
+        files = dr.DayFiles(root)
+        files.write("USDINR", "2026-10-12", [dr.parse_feed(FEED, 9, None)])
+        files.close_all()
+        self.assertEqual((root / "USDINR" / "2026-10-12.csv").read_text(), "recv_ms,ltt_ms,ltp\n1,2,3\n")
+        self.assertTrue((root / "USDINR" / "2026-10-12-2.csv").read_text().startswith(dr.DayFiles.HEADER))
+
+
+if __name__ == "__main__":
+    unittest.main()
