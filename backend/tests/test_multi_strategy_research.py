@@ -24,27 +24,6 @@ class DukascopyDecodeTests(unittest.TestCase):
         self.assertEqual(len(d.decode(b"", date(2025, 3, 15), 1e3)), 0)
 
 
-class EquityPoolTests(unittest.TestCase):
-    def test_pool_respects_the_concurrency_cap_and_one_position_per_symbol(self):
-        from markets.equity.experiments import multi_strategy_study as m
-        base = {"exit_price": 101.0, "stop_dist": 1.0, "direction": "long", "entry_price": 100.0}
-        cands = [{**base, "symbol": s, "entry_time": "2026-01-05T10:00:00", "exit_time": "2026-01-05T11:00:00"} for s in ("A", "B", "C", "D")]
-        cands.append({**base, "symbol": "A", "entry_time": "2026-01-05T10:30:00", "exit_time": "2026-01-05T11:30:00"})      # A is already open
-        cands.append({**base, "symbol": "E", "entry_time": "2026-01-05T11:00:00", "exit_time": "2026-01-05T12:00:00"})      # slots freed at 11:00
-        got = [t["symbol"] for t in m.pool(cands)]
-        self.assertEqual(got, ["A", "B", "C", "E"])
-
-    def test_orb_fires_once_per_day_and_fade_is_the_opposite(self):
-        from markets.equity.experiments import multi_strategy_study as m
-        n = 20
-        ts = [f"2026-01-05T{9 + (15 + 5 * i) // 60:02d}:{(15 + 5 * i) % 60:02d}:00+05:30" for i in range(n)]
-        close = np.array([100.0] * 6 + [100.1, 100.2, 101.0, 101.5] + [101.0] * 10)      # breaks the 6-bar range upward once
-        f = pd.DataFrame({"timestamp": ts, "high": close + 0.05, "low": close - 0.05, "close": close, "minutes_since_open": [5 * i for i in range(n)]})
-        brk, fade = m.sig_orb(f, False), m.sig_orb(f, True)
-        self.assertEqual(int((brk != 0).sum()), 1)
-        self.assertEqual(int(brk.sum()), 1)
-        self.assertEqual(int(fade.sum()), -1)
-
 
 if __name__ == "__main__":
     unittest.main()

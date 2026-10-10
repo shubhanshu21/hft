@@ -4,9 +4,8 @@ Every markets/<market>/strategies/<timeframe>/<name>/strategy.py (timeframe fold
 STRATEGIES (a list of them) is found automatically -- there is no list to edit. Which ones
 actually RUN is chosen per market in .env:
 
-    COMMODITY_STRATEGIES=scalping
-    CURRENCY_STRATEGIES=scalping
-    EQUITY_STRATEGIES=scalping,swing
+    COMMODITY_STRATEGIES=swing
+    CURRENCY_STRATEGIES=parity
 
 If the variable is absent, only strategies with default_enabled = True run (the existing
 scalpers), so dropping in a new strategy file never starts trading by itself.
@@ -81,11 +80,16 @@ def active(market: str) -> list[Strategy]:
 
 def market_of(symbol: str) -> str:
     """"equity" | "currency" | "commodity" for a traded symbol."""
-    from markets.commodity.strategies.tf_5min.scalping.entry_signal import is_currency
-    from markets.equity.strategies.tf_5min.scalping.entry_signal import is_equity
-    return "equity" if is_equity(symbol) else "currency" if is_currency(symbol) else "commodity"
+    from core.symbols import market_of as _market_of
+    return _market_of(symbol)
 
 
 def default_strategy(market: str) -> Strategy:
-    """The strategy assumed for legacy positions / rows saved before strategies were tagged."""
-    return get(market, "scalping")
+    """The strategy assumed for a position saved without a strategy name: the market's first active strategy, else its first one."""
+    act = active(market)
+    if act:
+        return act[0]
+    known = [s for (m, _), s in sorted(discover().items()) if m == market]
+    if not known:
+        raise KeyError(f"no strategy exists for market {market}")
+    return known[0]

@@ -53,15 +53,6 @@ class TestDefaultsAreInsideUpstoxsAutoSquareOff(unittest.TestCase):
         self.assertEqual(sessions.squareoff_since_open("equity"), 340)            # 14:55 in minutes after 09:15
         self.assertEqual(sessions.last_entry_since_open("equity"), 330)           # 14:45
 
-    def test_strategies_and_the_backtest_use_the_same_source(self):
-        from markets.commodity.strategies.tf_5min.scalping.strategy import STRATEGY as mcx
-        from markets.currency.strategies.tf_5min.scalping.strategy import STRATEGY as ncd
-        from markets.equity.strategies.tf_5min.scalping.strategy import STRATEGY as eq
-        self.assertEqual((mcx.close_at, ncd.close_at, eq.close_at), ((22, 45), (16, 25), (14, 55)))
-        import inspect
-        from markets.currency.strategies.tf_5min.scalping import backtest
-        self.assertIn("sessions.CURRENCY_SQUAREOFF_MIN", inspect.getsource(backtest.run_currency_backtest))
-
 
 class TestHoursAreReadFromUpstox(unittest.TestCase):
     def setUp(self):

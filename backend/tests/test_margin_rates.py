@@ -175,12 +175,6 @@ class TestSmallCapitalContracts(unittest.TestCase):
         self.assertEqual(size_commodity_lots(100_000, 150_970, 300, 10.0, "GOLDM", leverage=10.8), 0)          # Rs140k/lot -> cannot trade
         self.assertEqual(size_commodity_lots(100_000, 7_011_000 / 30, 800, 10.0, "SILVER", leverage=7.8), 0)   # Rs901k/lot -> cannot trade
 
-    def test_the_backtest_reads_the_gold_archive_for_goldten_and_the_silver_archive_for_silvermic(self):
-        import inspect
-        from markets.commodity.strategies.tf_5min.scalping import backtest
-        src = inspect.getsource(backtest.run_commodity_backtest)
-        self.assertIn('"GOLDTEN": "GOLD"', src)
-        self.assertIn('"SILVERMIC": "SILVER"', src)
 
     def test_the_gold_prefix_does_not_swallow_the_smaller_gold_contracts(self):
         from pathlib import Path

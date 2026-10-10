@@ -75,8 +75,8 @@ STRATEGY = EquitySwing()
 `ctx.data` (also on the exit context) reads other symbols' 5-minute candles (`ctx.data.candles("USDINR")`) and the live 5-level book (`ctx.data.quote(sym)`); it is None in backtests that do not provide one, so a strategy must then not trade. `<MARKET>_<NAME>_SYMBOLS` in `.env` limits a strategy to some of its market's symbols (override `trades()` for a fixed rule); `markets/currency/strategies/tf_5min/parity/strategy.py` uses both.
 
 Size the position from `ctx.capital` and `ctx.risk_pct` — see `size_equity_shares` / `size_commodity_lots` for the
-two existing sizing rules. Reusable exit managers live in `core/exits.py`; the three existing strategies
-(`markets/*/strategies/tf_5min/scalping/strategy.py`) are complete worked examples.
+two existing sizing rules. Reusable exit managers live in `core/exits.py`; the existing strategies
+(`markets/currency/strategies/tf_5min/parity/strategy.py`, `markets/commodity/strategies/tf_daily/swing/strategy.py`) are complete worked examples.
 
 **Writing your own `manage()`?** Do not read the current bar's raw high/low to decide a stop or target. That bar may contain prices from
 *before* your entry (a breakout signal fires on a wide bar, so the bar's low is often already past the stop) and the position would be

@@ -12,7 +12,20 @@ from unittest.mock import MagicMock, patch
 
 from core import registry
 from core.strategy import EntryContext, ExitDecision, Signal, Strategy
-from tests.replay_harness import ENV
+
+# Pinned runner settings, so these tests never read the operator's .env.
+ENV = {
+    "USE_COMMODITY_REGIME_FILTER": "false", "USE_CRUDE_REGIME_FILTER": "false", "USE_EQUITY_REGIME_FILTER": "false",
+    "ENABLE_MEAN_REVERSION": "false", "DRYRUN_INCLUDE_EQUITY": "true", "DRYRUN_FULL_SESSION": "true",
+    "ENABLE_COMMODITY_TRADING": "true", "ENABLE_CURRENCY_TRADING": "true", "ENABLE_EQUITY_TRADING": "true",
+    "COMMODITY_RISK_PCT": "4.0", "COMMODITY_LEVERAGE": "5.0", "CURRENCY_RISK_PCT": "4.0", "CURRENCY_LEVERAGE": "5.0",
+    "EQUITY_RISK_PCT": "4.0", "EQUITY_LEVERAGE": "5.0", "CRUDEOILM_RISK_PCT": "3.0", "SILVER_RISK_PCT": "5.0",
+    "MAX_PORTFOLIO_HEAT_PCT": "12.0", "MAX_DAILY_LOSS_PCT": "5.0",
+    "MAX_MARKET_DAILY_LOSS_PCT": "3.0", "MARKET_COOLDOWN_MINUTES": "60", "MAX_MARGIN_UTILIZATION_PCT": "1000.0",
+    "MAX_MARKET_MARGIN_UTILIZATION_PCT": "1000.0", "MAX_POSITIONS_PER_SECTOR": "1", "MARGIN_VERIFY": "off",
+    "EQUITY_PULLBACK_FRAC": "0", "COMMODITY_PULLBACK_FRAC": "0", "CURRENCY_PULLBACK_FRAC": "0", "CRUDEOILM_PULLBACK_FRAC": "0",
+    "LIVE_BAR_COMPLETE_LAG_S": "0", "COMMODITY_STRATEGIES": "", "CURRENCY_STRATEGIES": "", "EQUITY_STRATEGIES": "",
+}
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
@@ -63,16 +76,14 @@ def _table(*extra):
 
 
 class TestRegistry(unittest.TestCase):
-    def test_the_three_existing_scalpers_are_discovered_without_any_list(self):
+    def test_the_existing_strategies_are_discovered_without_any_list(self):
         found = set(registry.discover())
-        self.assertTrue({("commodity", "scalping"), ("currency", "scalping"), ("equity", "scalping")} <= found)
+        self.assertTrue({("commodity", "swing"), ("currency", "parity")} <= found)
 
     def test_new_strategies_stay_off_until_named_in_env(self):
         with patch.object(registry, "discover", lambda: _table(ToySwing())), patch.dict(os.environ, {}, clear=False):
             os.environ.pop("EQUITY_STRATEGIES", None)
-            self.assertEqual([s.name for s in registry.active("equity")], ["scalping"])
-            with patch.dict(os.environ, {"EQUITY_STRATEGIES": "scalping, toy_swing"}):
-                self.assertEqual([s.name for s in registry.active("equity")], ["scalping", "toy_swing"])
+            self.assertEqual([s.name for s in registry.active("equity")], [])            # nothing runs by default
             with patch.dict(os.environ, {"EQUITY_STRATEGIES": "toy_swing"}):
                 self.assertEqual([s.name for s in registry.active("equity")], ["toy_swing"])
 
@@ -100,7 +111,7 @@ def _dry_runner(*strategies, symbols=("TATASTEEL",), db_path=None, clock=None, c
 
     with ExitStack() as st:
         st.enter_context(patch.object(registry, "discover", lambda: _table(*strategies)))
-        for k, v in {**ENV, "EQUITY_STRATEGIES": ",".join(s.name for s in strategies) or "scalping"}.items():
+        for k, v in {**ENV, "EQUITY_STRATEGIES": ",".join(s.name for s in strategies)}.items():
             st.enter_context(patch.dict(os.environ, {k: v}))
         st.enter_context(patch.object(live_dryrun, "datetime", SimDatetime))
         st.enter_context(patch.object(live_dryrun, "_fetch_candles", lambda b, s, t: list(bars.get(s, []))))
@@ -182,28 +193,6 @@ class TestOvernightStrategyInDryRunner(unittest.TestCase):
             self.assertIn("entry_bar_ts", _rows(path, "SELECT state FROM positions")[0]["state"])
             self.assertEqual(make().positions["TATASTEEL"]["entry_bar_ts"], "2026-09-10T11:00:00+05:30")
 
-    def test_a_restart_keeps_the_armed_flag_the_position_really_had(self):
-        # The entry-time state saved armed_trail=False; the stop was armed later (armed_be column = 1). Before 2026-10-05 the entry state won
-        # on restore, so a restarted position stopped trailing and a later re-arm could pull its stop back down to the breakeven lock.
-        import json as _json
-        with _dry_runner() as (make, sim, bars, alerts, path):
-            from engine.database import TradingDB
-            db = TradingDB(path)
-            db.open_position(position_id="EQ1", symbol="TATASTEEL", direction="long", qty=100, entry_price=200.0, current_stop=198.0,
-                             target_price=201.2, breakeven_price=201.2, account_id="FW", instrument_key="K", entry_order_id="O", strategy="scalping",
-                             state=_json.dumps({"armed_trail": False, "activation_price": 201.2, "trail_mult": 0.3, "entry_bar_ts": "2026-09-10T10:55:00+05:30"}))
-            db.update_position_stop(position_id="EQ1", current_stop=200.4, best_price=201.5, armed_be=True,
-                                    state_updates={"armed_trail": True, "trail_bar_ts": "2026-09-10T11:05:00+05:30"})
-            pos = make().positions["TATASTEEL"]
-            self.assertTrue(pos["armed_trail"])
-            self.assertEqual((pos["current_stop"], pos["trail_bar_ts"]), (200.4, "2026-09-10T11:05:00+05:30"))
-            # and a row whose state never got the update (saved before state_updates existed) still restores armed from the column
-            db.update_position_stop(position_id="EQ1", current_stop=200.4, best_price=201.5, armed_be=True)
-            con = sqlite3.connect(path)
-            con.execute("UPDATE positions SET state = ? WHERE position_id = 'EQ1'", (_json.dumps({"armed_trail": False, "activation_price": 201.2, "trail_mult": 0.3}),))
-            con.commit(); con.close()
-            self.assertTrue(make().positions["TATASTEEL"]["armed_trail"])
-
     def test_a_long_only_strategy_can_never_open_a_short(self):
         with _dry_runner(ToyShort()) as (make, sim, bars, alerts, path):
             bars["TATASTEEL"] = [_bar(200.0)]
@@ -222,7 +211,7 @@ class TestOvernightStrategyInDryRunner(unittest.TestCase):
         with _dry_runner(ToySwing(), symbols=("TATASTEEL",)) as (make, sim, bars, alerts, path):
             bars["TATASTEEL"] = [_bar(200.0)]
             runner = make()
-            runner.strategies["equity"] = [ToySwing(), registry.get("equity", "scalping")]
+            runner.strategies["equity"] = [ToySwing(), type("ToySwing2", (ToySwing,), {"name": "toy_swing2"})()]
             runner.scan()
             self.assertEqual(len(runner.positions), 1)
             self.assertEqual(runner.positions["TATASTEEL"]["strategy"], "toy_swing")

@@ -130,7 +130,7 @@ class TestCommoditySwingStrategy(unittest.TestCase):
         self.assertIn(("commodity", "swing"), registry.discover())
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("COMMODITY_STRATEGIES", None)
-            self.assertEqual([x.name for x in registry.active("commodity")], ["scalping"])
+            self.assertEqual([x.name for x in registry.active("commodity")], [])                 # nothing runs unless named
 
     def test_long_signal_in_an_uptrend_is_sized_and_stopped_from_the_atr(self):
         s = self._strategy(np.linspace(100, 300, 400))

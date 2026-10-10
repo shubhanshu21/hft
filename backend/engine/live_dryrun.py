@@ -54,8 +54,7 @@ from services.broker.upstox_broker import UpstoxBroker, token_invalid_event
 from engine.database import TradingDB
 from markets.commodity.costs import COMMODITY_SPECS
 from markets.currency.costs import CURRENCY_SPECS
-from markets.commodity.strategies.tf_5min.scalping.entry_signal import is_currency as _is_currency
-from markets.equity.strategies.tf_5min.scalping.entry_signal import is_equity as _is_equity
+from core.symbols import is_currency as _is_currency, is_equity as _is_equity
 from core import entry_pullback
 from core import registry, sessions
 from core.risk import RiskGates
@@ -352,11 +351,11 @@ class DryRunner(RiskGates):
         log.info("Strategies: %s", {m: [x.name for x in v] for m, v in self.strategies.items()})
 
         # Restore open positions from DB if any. Each is handed back to the strategy that opened it
-        # (rows saved before strategies existed read as that market's "scalping").
+        # (a row saved without one goes to that market's first active strategy).
         self.pending_entries = entry_pullback.PendingBook()      # resting limit entries waiting for a pullback (core/entry_pullback.py; off unless <MARKET|SYMBOL>_PULLBACK_FRAC is set)
         self.positions: dict[str, dict] = {}
         for p in self.db.get_open_positions(self.account_id):
-            strat_name = p.get("strategy") or "scalping"
+            strat_name = p.get("strategy") or registry.default_strategy(_get_market(p["symbol"])).name
             pos = {
                 "position_id": p["position_id"],
                 "symbol": p["symbol"],
@@ -821,7 +820,8 @@ class DryRunner(RiskGates):
         return {"equity_regime_ok": self.equity_regime_ok if self.use_equity_regime_filter else True}
 
     def _strategy_of(self, pos: dict, sym: str | None = None):
-        return registry.get(_get_market(sym or pos["symbol"]), pos.get("strategy", "scalping"))
+        m = _get_market(sym or pos["symbol"])
+        return registry.get(m, pos.get("strategy") or registry.default_strategy(m).name)
 
     def _market_data(self):
         """Other symbols' bars and live quotes for a strategy that needs them (core.strategy.MarketData)."""
@@ -868,7 +868,7 @@ class DryRunner(RiskGates):
             return False
         if strat.max_positions is not None:
             open_n = sum(1 for p in self.positions.values()
-                         if p.get("strategy", "scalping") == strat.name and _get_market(p["symbol"]) == market)
+                         if p.get("strategy") == strat.name and _get_market(p["symbol"]) == market)
             if open_n >= strat.max_positions:
                 return False
         if strat.sector_cap:

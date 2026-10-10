@@ -95,27 +95,6 @@ class TestLiveBarSequenceExitsFillAtTheOpen(unittest.TestCase):
         self.assertEqual((dec.reason, dec.price), ("be_stop", 99.5))
 
 
-class TestBacktestNeverFillsAStopBetterThanTheMarket(unittest.TestCase):
-    def test_equity_stop_exits_are_never_better_than_their_bar_open(self):
-        import pandas as pd
-        from core.paths import ARCHIVE_ROOT
-        from markets.equity.features import compute_equity_features
-        from markets.equity.strategies.tf_5min.scalping import backtest as eqbt
-        path = ARCHIVE_ROOT / "equity" / "RELIANCE_5minute.csv"
-        if not path.exists():
-            self.skipTest("no equity archive")
-        cands = eqbt._simulate_symbol_candidates("RELIANCE", "2025-01-01", "2025-06-30", False, eqbt.ENTRY_THRESHOLDS,
-                                                 pullback_frac=0.15, pullback_through=0.02)
-        f = compute_equity_features(pd.read_csv(path))
-        open_at = dict(zip(f["timestamp"].astype(str), f["open"].astype(float)))
-        stops = [c for c in cands if c["reason"] in ("initial_stop", "trail_stop") and not c.get("stopped_on_fill")]
-        self.assertTrue(stops)
-        for c in stops:
-            o, d = open_at[str(c["exit_time"])], 1 if c["direction"] == "long" else -1
-            self.assertLessEqual(d * (c["exit_price"] - o), 1e-9, c)
-        for c in (c for c in cands if c.get("stopped_on_fill")):
-            self.assertAlmostEqual(abs(c["entry_price"] - c["exit_price"]), c["stop_dist"], places=3)   # a full one-stop loss
-
 
 if __name__ == "__main__":
     unittest.main()

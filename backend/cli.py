@@ -1,32 +1,23 @@
 #!/usr/bin/env python3
 """
-cli.py — Master Unified CLI for Multi-Asset Quantitative Trading Framework.
+cli.py — Master CLI for the paper-trading framework (MCX commodity, NSE currency; crypto runs on its own engine).
 
-Supports:
-  - Futures (MCX Commodity Scalper)
-  - NSE Currency Derivatives (USDINR/EURINR/GBPINR/JPYINR)
-
-Equity intraday scalping was removed 2026-09-18: even with the full NIFTY50
-universe (50 symbols, real 2022-2026 Upstox data) and disciplined
-train/test-split validation, no threshold/meta-labeling/symbol-selection
-combination survived out-of-sample -- every apparent edge was overfitting
-to the selection window. See git history for the full sweep.
+Strategies live in markets/<market>/strategies/<timeframe>/<name>/ (markets/README.md lists them). The 5-minute scalpers
+(commodity, currency, equity) were deleted on 2026-10-10 after losing money once costs and real fills were counted -- see git history.
 
 Usage Examples:
-    # 1. Backtest MCX Commodities
-    python3 cli.py backtest --asset futures --symbols CRUDEOILM NATGASMINI --from 2026-01-01 --to 2026-09-07
+    # 1. Backtest a strategy (each has its own backtest next to it)
+    python3 -m markets.currency.strategies.tf_5min.parity.backtest
 
-    # 2. Backtest NSE Currency Derivatives (standalone script, not wired into this CLI)
-    python3 -m markets.currency.strategies.tf_5min.scalping.backtest --symbols USDINR EURINR GBPINR
+    # 2. Live paper-trading daemon (systemd: hft-dryrun.service)
+    python3 cli.py dryrun --interval 30
 
-    # 3. Live Paper-Trading Dryrun (MCX Commodities + NSE Currency)
-    python3 cli.py dryrun --capital 100000 --risk-pct 5.0 --interval 30
-
-    # 4. View SQLite Trade Dashboard & PnL Report
+    # 3. Report / reset the paper-trading database
     python3 cli.py report
-
-    # 5. Reset Paper-Trading SQLite Database
     python3 cli.py reset-db --capital 100000
+
+    # 4. New strategy from a template
+    python3 cli.py new-strategy --market commodity --timeframe 15min --name my_idea
 """
 from __future__ import annotations
 
@@ -52,19 +43,6 @@ def _env(key: str, default: str) -> str:
 sys.path.insert(0, str(Path(__file__).parent))
 
 from engine.database import TradingDB
-
-
-def cmd_backtest(args):
-    from markets.commodity.strategies.tf_5min.scalping.backtest import run_commodity_backtest
-    run_commodity_backtest(
-        symbols=args.symbols,
-        capital=args.capital,
-        risk_pct=args.risk_pct,
-        leverage=args.leverage,
-        from_date=args.from_date,
-        to_date=args.to_date,
-        us_session_only=not args.full_session,
-    )
 
 
 def cmd_dryrun(args):
@@ -142,28 +120,6 @@ def cmd_restore_db(args):
 def main():
     parser = argparse.ArgumentParser(description="Multi-Asset Quantitative Trading Framework Master CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
-
-    # Backtest Subcommand -- defaults come from backend/.env (BACKTEST_* /
-    # TRADING_* vars) so `python3 cli.py backtest` needs no flags at all;
-    # passing a flag still overrides the .env value for that one run.
-    p_bt = subparsers.add_parser("backtest", help="Run walk-forward backtest on historical MCX commodity data")
-    p_bt.add_argument("--symbols", nargs="+", default=_env("BACKTEST_SYMBOLS", "").split() or None,
-                       help="Symbols to backtest")
-    p_bt.add_argument("--capital", type=float, default=float(_env("TRADING_CAPITAL", "100000.0")),
-                       help="Initial capital in INR")
-    p_bt.add_argument("--risk-pct", type=float, default=float(_env("BACKTEST_RISK_PCT", "5.0")),
-                       help="Risk %% per trade")
-    p_bt.add_argument("--leverage", type=float,
-                       default=float(_env("BACKTEST_LEVERAGE", "") or _env("INTRADAY_LEVERAGE", "4.0")),
-                       help="Margin leverage")
-    p_bt.add_argument("--from", "--from-date", dest="from_date", default=_env("BACKTEST_FROM", "") or None,
-                       help="Start date YYYY-MM-DD")
-    p_bt.add_argument("--to", "--to-date", dest="to_date", default=_env("BACKTEST_TO", "") or None,
-                       help="End date YYYY-MM-DD")
-    p_bt.add_argument("--full-session", action="store_true",
-                       default=_env("BACKTEST_FULL_SESSION", "false").lower() in ("1", "true", "yes"),
-                       help="Include full session bars (or set BACKTEST_FULL_SESSION=true in .env)")
-    p_bt.set_defaults(func=cmd_backtest)
 
     # Dryrun Subcommand -- defaults come from backend/.env (DRYRUN_* / TRADING_*
     # vars) so `python3 cli.py dryrun` needs no flags at all; passing a flag

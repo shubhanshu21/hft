@@ -16,7 +16,7 @@ TIMEFRAMES = {"5min": (("minutes", 5), 0), "15min": (("minutes", 15), 0), "1hour
 _TEMPLATE = '''"""{market} / {name} -- TODO: one line on what this strategy does and why it should have an edge.
 
 Not switched on until it is named in .env:   {MARKET}_STRATEGIES=scalping,{name}
-Guide: docs/ADDING_A_STRATEGY.md.  Worked examples: markets/*/strategies/tf_5min/scalping/strategy.py
+Guide: docs/ADDING_A_STRATEGY.md.  Worked examples: markets/currency/strategies/tf_5min/parity/strategy.py, markets/commodity/strategies/tf_daily/swing/strategy.py
 """
 from __future__ import annotations
 

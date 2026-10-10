@@ -139,15 +139,14 @@ class TestStrategy(unittest.TestCase):
 
 class TestSymbolFilter(unittest.TestCase):
     def test_strategies_trade_only_their_listed_symbols(self):
-        from markets.currency.strategies.tf_5min.scalping.strategy import STRATEGY as scalping
-        with patch.dict(os.environ, {"CURRENCY_SCALPING_SYMBOLS": "USDINR"}):
-            self.assertTrue(scalping.trades("USDINR"))
-            self.assertFalse(scalping.trades("EURINR"))
+        st = CurrencyParity()
+        with patch.dict(os.environ, {"CURRENCY_PARITY_SYMBOLS": "EURINR"}):
+            self.assertTrue(st.trades("EURINR"))
+            self.assertFalse(st.trades("GBPINR"))
         with patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("CURRENCY_SCALPING_SYMBOLS", None)
-            self.assertTrue(scalping.trades("EURINR"))          # unset = every symbol, as before
-        self.assertFalse(CurrencyParity().trades("USDINR"))      # the parity strategy never touches USDINR
-
+            os.environ.pop("CURRENCY_PARITY_SYMBOLS", None)
+            self.assertTrue(st.trades("GBPINR"))                 # unset = every symbol it can trade
+        self.assertFalse(st.trades("USDINR"))                    # the parity strategy never touches USDINR
 
 if __name__ == "__main__":
     unittest.main()

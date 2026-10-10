@@ -67,12 +67,12 @@ class TestMarketCooldownLogic(unittest.TestCase):
         pos_commodity = {
             "position_id": "POS_1", "direction": "long", "entry_price": 6000.0,
             "lots": 1, "qty": 1, "entry_time": now - timedelta(minutes=30),
-            "current_stop": 5900.0, "tp": 6200.0, "be": 6050.0, "best_price": 6000.0, "armed_be": False
+            "current_stop": 5900.0, "tp": 6200.0, "be": 6050.0, "best_price": 6000.0, "armed_be": False, "strategy": "swing"
         }
         runner.positions["CRUDEOILM"] = pos_commodity
 
         # Simulate closing a commodity position with a Rs 3,500 loss (3.5% of 100k capital)
-        with patch("markets.commodity.strategies.tf_5min.scalping.strategy.McxScalping.costs", return_value={"net": -3500.0, "gross": -3400.0, "total": 100.0}), \
+        with patch("markets.commodity.strategies.tf_daily.swing.strategy.CommoditySwing.costs", return_value={"net": -3500.0, "gross": -3400.0, "total": 100.0}), \
              patch("services.utils.telegram.send"), \
              patch("services.utils.telegram.alert_exit"):
             runner._close_position("CRUDEOILM", pos_commodity, 5900.0, "stop_loss", now)

@@ -111,8 +111,7 @@ from engine.config import UpstoxConfig
 from engine.database import TradingDB
 from markets.commodity.costs import COMMODITY_SPECS
 from markets.currency.costs import CURRENCY_SPECS
-from markets.commodity.strategies.tf_5min.scalping.entry_signal import is_currency as _is_currency
-from markets.equity.strategies.tf_5min.scalping.entry_signal import is_equity as _is_equity
+from core.symbols import is_currency as _is_currency, is_equity as _is_equity
 from core import registry
 from core.risk import RiskGates
 from core.strategy import EntryContext, ExitContext
@@ -341,7 +340,7 @@ class LiveTrader(RiskGates):
 
         self.positions: dict[str, dict] = {}
         for p in self.db.get_open_positions(self.account_id):
-            strat_name = p.get("strategy") or "scalping"
+            strat_name = p.get("strategy") or registry.default_strategy(_get_market(p["symbol"])).name
             strat = registry.get(_get_market(p["symbol"]), strat_name)
             pos = {
                 "position_id": p["position_id"], "symbol": p["symbol"], "strategy": strat_name,
@@ -479,7 +478,8 @@ class LiveTrader(RiskGates):
     # shared by all of them: funds backstop, order placement with the strategy's product type,
     # fill confirmation, re-anchoring the levels to the real fill, and the DB / alert bookkeeping.
     def _strategy_of(self, pos: dict, sym: str | None = None):
-        return registry.get(_get_market(sym or pos["symbol"]), pos.get("strategy", "scalping"))
+        m = _get_market(sym or pos["symbol"])
+        return registry.get(m, pos.get("strategy") or registry.default_strategy(m).name)
 
     def _market_data(self):
         """Other symbols' bars and live quotes for a strategy that needs them (core.strategy.MarketData)."""
@@ -503,7 +503,7 @@ class LiveTrader(RiskGates):
             return False
         if strat.max_positions is not None:
             open_n = sum(1 for p in self.positions.values()
-                         if p.get("strategy", "scalping") == strat.name and _get_market(p["symbol"]) == market)
+                         if p.get("strategy") == strat.name and _get_market(p["symbol"]) == market)
             if open_n >= strat.max_positions:
                 return False
         if strat.sector_cap:
