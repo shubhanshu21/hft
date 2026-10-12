@@ -31,29 +31,13 @@ from __future__ import annotations
 # list's reference point) and no confident replacement ticker was available.
 # Dropped BEFORE any backtest was run, for a data-availability reason, not a
 # performance one -- 49 names, not 50.
-# Top 20 proven performers for the Fibonacci Retracement strategy
 NIFTY50_SYMBOLS: list[str] = [
-    # Core Top 10 high-beta performers
-    "APOLLOHOSP",
-    "TATASTEEL",
-    "MARUTI",
-    "BAJAJ-AUTO",
-    "HINDALCO",
-    "JSWSTEEL",
-    "ADANIPORTS",
-    "EICHERMOT",
-    "BHARTIARTL",
-    "SUNPHARMA",
-    # Sector leader expansion
-    "IOC",
-    "SBIN",
-    "ULTRACEMCO",
-    "SBILIFE",
-    "ASIANPAINT",
-    "COALINDIA",
-    "HEROMOTOCO",
-    "ONGC",
-    "LT",
-    "GRASIM",
+    "RELIANCE", "TCS", "HDFCBANK", "ICICIBANK", "INFY", "HINDUNILVR", "ITC", "SBIN",
+    "BHARTIARTL", "KOTAKBANK", "LT", "AXISBANK", "BAJFINANCE", "ASIANPAINT", "MARUTI",
+    "HCLTECH", "SUNPHARMA", "TITAN", "ULTRACEMCO", "NESTLEIND", "WIPRO", "ONGC", "NTPC",
+    "POWERGRID", "M&M", "TATASTEEL", "ADANIENT", "ADANIPORTS", "JSWSTEEL",
+    "BAJAJFINSV", "HDFCLIFE", "SBILIFE", "DRREDDY", "CIPLA", "DIVISLAB", "GRASIM",
+    "BRITANNIA", "EICHERMOT", "HEROMOTOCO", "BAJAJ-AUTO", "COALINDIA", "INDUSINDBK",
+    "TECHM", "UPL", "APOLLOHOSP", "BPCL", "HINDALCO", "SHREECEM", "IOC",
 ]
 
