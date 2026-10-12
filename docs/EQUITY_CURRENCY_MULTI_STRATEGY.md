@@ -1,6 +1,6 @@
 # Equity and currency: several strategies picked by phase (run 2026-09-25)
 
-Question (from the user): every symbol has phases, so should a market run several strategies and switch? Same library and pickers as docs/COMMODITY_ALT_STRATEGIES.md round 2:
+Question (from the user): every symbol has phases, so should a market run several strategies and switch? Same library and pickers as docs/COMMODITY_ALT_STRATEGIES.md round 2 (that doc and the commodity scripts were deleted 2026-10-12; git history):
 TREND (the live rule), MR-A / MR-B (VWAP + RSI mean reversion), ORB / ORB-FADE (first-30-minute range, broken / faded), plus channel break/fade for currency. Pickers, strictly walk-forward:
 performance switch (best trailing-L-day P&L, must be > 0) and regime map (trend/range from the prior 10 sessions' efficiency ratio, strategy per regime learned on the first half).
 

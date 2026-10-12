@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-live_trading.py — REAL-MONEY execution engine for MCX commodities + NSE
-currency derivatives. Mirrors live_dryrun.py's DryRunner signal logic
+live_trading.py — REAL-MONEY execution engine for NSE currency derivatives
+and NSE equity (MCX commodity was removed 2026-10-12). Mirrors live_dryrun.py's DryRunner signal logic
 exactly (same ENTRY_THRESHOLDS, same features, same session windows, same
 TP/SL/breakeven/trailing/timeout/EOD-squareoff mechanics) but places actual
 orders through UpstoxBroker instead of writing simulated fills straight to
@@ -22,8 +22,8 @@ changes before ever touching that.
 live_dryrun.py WAS touched, once, on 2026-09-18: its entry-decision logic
 used to be duplicated here almost verbatim (the exact "keep two files in
 sync by hand" drift risk ENTRY_THRESHOLDS' own extraction eliminated one
-layer up). Both files now call the same shared markets.commodity.strategies.tf_5min.scalping.entry_signal.
-compute_entry_signal() instead. This changed live_dryrun.py's SOURCE, not
+layer up). Both files now run the same Strategy classes discovered by
+core/registry.py instead. This changed live_dryrun.py's SOURCE, not
 its BEHAVIOR -- verified by running its DryRunner.scan() directly before and
 after and confirming identical output, plus the full test suite (23/23) and
 a live service restart, before trusting the change. The paper daemon is
@@ -63,8 +63,7 @@ Real-order specifics live_dryrun.py's simulation never had to deal with:
     log) rather than the process assuming it's flat when it might not be.
   - Every entry checks REAL available funds (broker.get_available_funds())
     against the required margin immediately before placing the order --
-    independent of and in addition to size_commodity_lots'/
-    size_currency_lots' own margin cap, which only sizes against this
+    independent of and in addition to size_currency_lots' own margin cap, which only sizes against this
     process's locally-tracked capital ledger (seeded from the DB), not the
     account's actual current balance. The two can drift; this is the final
     authoritative check against real money. Fails safe: if the funds API
@@ -109,15 +108,14 @@ from services.broker.order_manager import SmartOrderManager
 from services.broker.upstox_broker import UpstoxBroker, token_invalid_event
 from engine.config import UpstoxConfig
 from engine.database import TradingDB
-from markets.commodity.costs import COMMODITY_SPECS
 from markets.currency.costs import CURRENCY_SPECS
-from core.symbols import is_currency as _is_currency, is_equity as _is_equity
+from core.symbols import is_currency as _is_currency, is_equity as _is_equity, market_of
 from core import registry
 from core.risk import RiskGates
 from core.strategy import EntryContext, ExitContext
 from markets.equity.universe import NIFTY50_SYMBOLS
 from core.sector_correlation import SectorCorrelationGate
-from services.broker.instruments import build_mcx_commodity_map, build_currency_map, get_instrument_key
+from services.broker.instruments import build_currency_map, get_instrument_key
 import pandas as pd
 from services.utils.logger import get_logger, setup_logger
 from services.utils import telegram
@@ -126,16 +124,8 @@ IST = ZoneInfo("Asia/Kolkata")
 log = get_logger("live_trading")
 
 
-# Same per-symbol risk override as live_dryrun.py -- see that file's comment
-# (SILVER re-added 2026-09-18 at half risk pending more live experience;
-# CRUDEOILM cut to 3.0 on 2026-09-19 after the full real archive showed the
-# deployed thresholds are a net loser overall at full risk -- mirrored here
-# 2026-09-19 to keep this file in sync, though it stays fully unwired
-# regardless). The CRUDEOILM regime filter (_refresh_crude_regime) IS wired
-# into both __init__ and scan()'s day-rollover block (added 2026-09-21),
-# same as live_dryrun.py -- the reduced risk_pct + regime filter together
-# reproduce the backtested +17.20% / -37.96% DD result.
-_SYMBOL_RISK_PCT_OVERRIDE = {"SILVER": 5.0, "CRUDEOILM": 3.0}
+# Per-symbol risk override (none since the commodity scalpers were removed); <SYMBOL>_RISK_PCT in .env still wins.
+_SYMBOL_RISK_PCT_OVERRIDE: dict[str, float] = {}
 
 # Same per-symbol leverage override as live_dryrun.py -- see that file's
 # comment. Added 2026-09-19: GBPINR's under-proven-sample sizing fix has to
@@ -147,16 +137,12 @@ _SYMBOL_LEVERAGE_OVERRIDE = {"GBPINR": 3.5}
 
 
 def _get_market(sym: str) -> str:
-    """Classify a trading symbol into its asset class: 'equity', 'currency', or 'commodity'."""
-    if _is_equity(sym):
-        return "equity"
-    elif _is_currency(sym):
-        return "currency"
-    return "commodity"
+    """Classify a trading symbol into its asset class: 'equity' or 'currency' (ValueError for anything else)."""
+    return market_of(sym)
 
 
 # How long to wait for a real order to reach 'complete' before attempting to
-# cancel it (see _wait_for_fill). Market orders on liquid MCX/NCD_FO
+# cancel it (see _wait_for_fill). Market orders on liquid NCD_FO
 # contracts should fill in well under this; a slower fill is itself a signal
 # something's off.
 ORDER_FILL_TIMEOUT_SEC = 30
@@ -182,7 +168,7 @@ def _build_symbol_map() -> dict[str, str]:
         if key:
             equity_map[sym] = key
     try:
-        return {**build_mcx_commodity_map(), **build_currency_map(), **equity_map}
+        return {**build_currency_map(), **equity_map}
     except Exception as exc:
         log.warning("Could not build symbol map: %s", exc)
         return equity_map
@@ -274,7 +260,6 @@ class LiveTrader(RiskGates):
         self.leverage = leverage
         self.account_id = account_id
         self.direction_filter = direction_filter.lower()
-        self.full_session = os.environ.get("DRYRUN_FULL_SESSION", "true").lower() in ("1", "true", "yes")
         self.max_daily_loss_pct = float(os.environ.get("MAX_DAILY_LOSS_PCT", "5.0"))
 
         self.symbol_map = _build_symbol_map()
@@ -289,23 +274,8 @@ class LiveTrader(RiskGates):
         # Market-specific daily loss limits & cooldown timers (added 2026-09-22):
         self.max_market_daily_loss_pct = float(os.environ.get("MAX_MARKET_DAILY_LOSS_PCT", "3.0"))
         self.market_cooldown_minutes = int(os.environ.get("MARKET_COOLDOWN_MINUTES", "60"))
-        self.market_daily_pnl: dict[str, float] = {"commodity": 0.0, "currency": 0.0, "equity": 0.0}
-        self.market_cooldown_until: dict[str, datetime | None] = {"commodity": None, "currency": None, "equity": None}
-
-        # CRUDEOILM regime gate -- mirrors live_dryrun.py's DryRunner exactly
-        # (see that file's __init__ and _refresh_crude_regime for the full
-        # finding/rationale). Added 2026-09-19, the same day as this file's
-        # _SYMBOL_RISK_PCT_OVERRIDE CRUDEOILM entry -- without this, that
-        # risk_pct cut alone does NOT reproduce the validated backtest result
-        # (net +17.20%/-37.96% DD requires BOTH the reduced risk_pct AND this
-        # filter together; risk_pct alone leaves the pre-fix, net-losing-
-        # overall entry logic in place). This module stays fully unwired
-        # regardless of this fix -- see module docstring.
-        self.use_commodity_regime_filter = os.environ.get("USE_COMMODITY_REGIME_FILTER",
-            os.environ.get("USE_CRUDE_REGIME_FILTER", "true")).lower() in ("1", "true", "yes")
-        self.commodity_regime_ok: dict[str, bool | None] = {}
-        if self.use_commodity_regime_filter:
-            self._refresh_commodity_regimes()
+        self.market_daily_pnl: dict[str, float] = {m: 0.0 for m in registry.MARKETS}
+        self.market_cooldown_until: dict[str, datetime | None] = {m: None for m in registry.MARKETS}
 
         self.use_equity_regime_filter = os.environ.get("USE_EQUITY_REGIME_FILTER", "false").lower() in ("1", "true", "yes")
         self.equity_regime_ok: bool | None = True
@@ -314,7 +284,6 @@ class LiveTrader(RiskGates):
 
         # Market Segment Trading Toggles (added 2026-09-22)
         self.segment_enabled: dict[str, bool] = {
-            "commodity": os.environ.get("ENABLE_COMMODITY_TRADING", "true").lower() in ("1", "true", "yes"),
             "currency": os.environ.get("ENABLE_CURRENCY_TRADING", "true").lower() in ("1", "true", "yes"),
             "equity": os.environ.get("ENABLE_EQUITY_TRADING", os.environ.get("DRYRUN_INCLUDE_EQUITY", "true")).lower() in ("1", "true", "yes"),
         }
@@ -366,7 +335,7 @@ class LiveTrader(RiskGates):
                         p["symbol"], p["direction"], p["qty"])
 
     def _is_market_on_cooldown(self, market: str, now: datetime) -> bool:
-        """Checks whether the given market ('commodity', 'currency', 'equity')
+        """Checks whether the given market ('currency', 'equity')
         is currently on a loss-triggered cooldown. Automatically clears expired cooldowns."""
         expiry = self.market_cooldown_until.get(market)
         if expiry is None:
@@ -387,10 +356,8 @@ class LiveTrader(RiskGates):
             sdist = abs(p["entry_price"] - p["current_stop"])
             if _is_equity(s):
                 units = p.get("qty", 1)
-            elif _is_currency(s):
-                units = p.get("lots", 1) * CURRENCY_SPECS.get(s.upper(), {}).get("lot_size", 1000)
             else:
-                units = p.get("lots", 1) * COMMODITY_SPECS.get(s, {}).get("lot_size", 1)
+                units = p.get("lots", 1) * CURRENCY_SPECS.get(s.upper(), {}).get("lot_size", 1000)
             total_risk_rupees += sdist * units
         return (total_risk_rupees / self.capital) * 100.0
 
@@ -408,10 +375,7 @@ class LiveTrader(RiskGates):
 
     def _get_segment_risk_and_leverage(self, sym: str) -> tuple[float, float]:
         market = _get_market(sym)
-        if market == "commodity":
-            r = float(os.environ.get("COMMODITY_RISK_PCT", self.risk_pct))
-            l = float(os.environ.get("COMMODITY_LEVERAGE", self.leverage))
-        elif market == "currency":
+        if market == "currency":
             r = float(os.environ.get("CURRENCY_RISK_PCT", self.risk_pct))
             l = float(os.environ.get("CURRENCY_LEVERAGE", self.leverage))
         else:
@@ -439,25 +403,6 @@ class LiveTrader(RiskGates):
         )
         log.info(msg)
         telegram.send(msg)
-
-    def _refresh_commodity_regimes(self) -> None:
-        from core.regime import regime_ok as _regime_ok
-        yesterday = (datetime.now(IST) - timedelta(days=1)).strftime("%Y-%m-%d")
-        for sym in ["CRUDEOILM", "GOLDM", "GOLDTEN", "SILVER", "SILVERMIC", "NATGASMINI"]:
-            ikey = self.symbol_map.get(sym)
-            if not ikey:
-                continue
-            try:
-                candles = self.broker.get_historical_candles(ikey, unit="days", interval=1, to_date=yesterday)
-                if not candles:
-                    continue
-                closes = [float(c["close"]) for c in sorted(candles, key=lambda c: c["timestamp"])]
-                res = _regime_ok(closes, window=15, min_autocorr=0.0)
-                self.commodity_regime_ok[sym.upper()] = res
-                if res is False:
-                    log.warning("%s regime gate: BLOCKED for today (autocorr < 0).", sym)
-            except Exception as exc:
-                log.warning("Could not fetch daily candles for %s regime gate: %s", sym, exc)
 
     def _refresh_equity_regime(self) -> None:
         from core.regime import regime_ok as _regime_ok
@@ -533,7 +478,6 @@ class LiveTrader(RiskGates):
         if override:
             base_risk_pct = float(override)
         leverage = sym_leverage if strat.uses_leverage else 1.0
-        regime_ok = self.commodity_regime_ok.get(sym.upper(), None) if self.use_commodity_regime_filter else True
         sizing_capital = self._sizing_capital(market)
         if sizing_capital <= 0:
             return False                      # no margin left in the pool -- nothing to size an entry against
@@ -541,8 +485,8 @@ class LiveTrader(RiskGates):
         signal = strat.entry(EntryContext(
             symbol=sym, candles=entry_candles, now=now, instrument_key=ikey, capital=sizing_capital,
             risk_pct=base_risk_pct * self._drawdown_risk_scale(), leverage=leverage,
-            direction_filter=self.direction_filter, full_session=self.full_session,
-            regime_ok=regime_ok, equity_regime_ok=self.equity_regime_ok if self.use_equity_regime_filter else True,
+            direction_filter=self.direction_filter,
+            equity_regime_ok=self.equity_regime_ok if self.use_equity_regime_filter else True,
             data=self._market_data(),
         ))
         if not signal or (signal.direction == "short" and not strat.allow_short):
@@ -559,7 +503,7 @@ class LiveTrader(RiskGates):
         """Place the real entry order. Returns True only if a position is now open."""
         sym = signal.symbol
         # `units` = shares / contract units (notional and margin maths); `quantity` = what Upstox expects in the order (engine/order_units.py):
-        # LOTS for commodity, units for the rest. Confusing the two once would have sent a 5-lot crude order as 50 lots.
+        # units x lot size for currency, shares for equity (Upstox's commodity-only LOTS rule no longer applies here).
         units = signal.qty * signal.lot_size
         from engine.order_units import broker_quantity
         quantity = broker_quantity(strat.market, signal.qty, signal.lot_size)
@@ -856,11 +800,11 @@ class LiveTrader(RiskGates):
             self.kill_switch_active = False
             self.symbol_daily_pnl = {s: 0.0 for s in self.symbols}
             self.symbol_kill_switch = {s: False for s in self.symbols}
-            self.market_daily_pnl = {"commodity": 0.0, "currency": 0.0, "equity": 0.0}
-            self.market_cooldown_until = {"commodity": None, "currency": None, "equity": None}
+            self.market_daily_pnl = {m: 0.0 for m in registry.MARKETS}
+            self.market_cooldown_until = {m: None for m in registry.MARKETS}
 
             # Refresh instrument_key resolution once per trading-day rollover
-            # -- MCX/NCD_FO contracts are monthly-expiry, and self.symbol_map
+            # -- NCD_FO contracts are monthly-expiry, and self.symbol_map
             # was otherwise only ever built once at __init__ (fixed 2026-09-18,
             # same bug live_dryrun.py's SYMBOL_MAP had before its own
             # rollover fix). This only affects NEW entries going forward --
@@ -875,18 +819,6 @@ class LiveTrader(RiskGates):
                               f"{', '.join(changed.keys())}")
             self.symbol_map = fresh_map
 
-            # Pre-rollover contract expiry alert (MCX contracts expire ~20th of month)
-            day_of_month = datetime.now(IST).day
-            if 18 <= day_of_month <= 20:
-                mcx_syms = [s for s in self.symbols if not _is_currency(s) and not _is_equity(s)]
-                if mcx_syms:
-                    telegram.send(
-                        f"⚠️ <b>MCX CONTRACT EXPIRY WARNING (LIVE)</b> — Today is day {day_of_month} of month.\n"
-                        f"MCX contracts for {', '.join(mcx_syms)} expire around 20th. Verify positions & instrument keys."
-                    )
-
-            if self.use_commodity_regime_filter:
-                self._refresh_commodity_regimes()
             if self.use_equity_regime_filter:
                 self._refresh_equity_regime()
             self._midday_summary_sent = False
@@ -945,7 +877,7 @@ def _acquire_process_lock(account_id: str):
 def main() -> None:
     setup_logger("", log_file=str(LOG_DIR / "live_trading.log"))
 
-    ap = argparse.ArgumentParser(description="REAL-MONEY live trading engine (MCX commodities + NSE currency). NOT wired into cli.py -- run directly, and see this file's module docstring before ever doing so.")
+    ap = argparse.ArgumentParser(description="REAL-MONEY live trading engine (NSE currency + NSE equity). NOT wired into cli.py -- run directly, and see this file's module docstring before ever doing so.")
     ap.add_argument("--capital", type=float, default=100_000, help="Starting capital tracked in the LIVE_ACCOUNT ledger row (informational -- real capital lives at the broker, not here)")
     ap.add_argument("--risk-pct", type=float, default=float(os.environ.get("DRYRUN_RISK_PCT", "5.0")))
     ap.add_argument("--leverage", type=float, default=float(os.environ.get("DRYRUN_LEVERAGE", "4.0")))
@@ -974,7 +906,11 @@ def main() -> None:
 
     broker = UpstoxBroker(access_token=token, dry_run=False)  # only actually live if all 3 gates passed above
     db = TradingDB(args.db)
-    symbols = args.symbols or ["CRUDEOILM", "GOLDM", "USDINR", "EURINR", "GBPINR"]
+    symbols = args.symbols or ["USDINR"]
+    unknown = [s for s in symbols if not (_is_currency(s) or _is_equity(s))]
+    if unknown:
+        print(f"Refusing to start: not an NSE currency pair or NIFTY50 stock: {', '.join(unknown)}.")
+        sys.exit(1)
     # Same opt-in equity extension as live_dryrun.py -- see that file's main()
     # comment. Kept as an explicit opt-in here too (not on by default even
     # with the flag unset) given this module places REAL orders.

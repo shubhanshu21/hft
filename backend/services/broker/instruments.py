@@ -38,7 +38,6 @@ _MCX_META_FILE  = _CACHE_DIR / "upstox_instruments_mcx_meta.json"
 _SYMBOL_KEY_MAP: dict[str, str] = {}
 # In-memory cache: {commodity_base_symbol: instrument_key} for nearest active MCX futures
 _MCX_KEY_MAP: dict[str, str] = {}
-_MCX_EXPIRY: dict[str, str] = {}          # base -> expiry (YYYY-MM-DD) of the contract in _MCX_KEY_MAP
 _CURRENCY_KEY_MAP: dict[str, str] = {}
 _INDEX_FUT_KEY_MAP: dict[str, str] = {}
 # Calendar date (isoformat) this PROCESS last parsed the cache files into the maps above --
@@ -199,18 +198,16 @@ def _load_mcx_master() -> None:
                     # the real SILVER contract, nearest-expiry selection below
                     # picked it instead -- silently trading a contract with a
                     # ~100x different price scale and a real lot_size (100) that
-                    # doesn't match markets/commodity/costs.py's COMMODITY_SPECS
-                    # assumption (30), corrupting both price and every
-                    # size/margin/P&L calculation for "SILVER". Must be excluded
+                    # doesn't match the real SILVER contract's (30), corrupting
+                    # every recorded price for "SILVER". Must be excluded
                     # explicitly, the same way SILVERMIC/SILVERM are disambiguated
                     # below -- it is never a valid match for base "SILVER".
                     if tsym.startswith("SILVER100"):
                         continue
                     # Match base symbols -- extended 2026-09-17 to survey other MCX
-                    # commodities beyond crude/natgas (Gold Mini, Silver Mini/Micro,
-                    # Copper already have cost-model support in markets/commodity/costs.py's
-                    # get_contract_multiplier fallbacks; this was the actual blocker,
-                    # not data availability -- Upstox's MCX master already lists these.
+                    # commodities beyond crude/natgas (Upstox's MCX master lists them all).
+                    # MCX is recorded only (markets/commodity/data.py, engine/depth_recorder.py);
+                    # nothing trades it since 2026-10-12.
                     # Order matters: startswith() means a more specific prefix (SILVERMIC,
                     # SILVERM) must be checked before the shorter prefix it also matches
                     # (SILVER) would otherwise steal the match. ALUMINIUM/ALUMINI, LEAD/
@@ -228,11 +225,9 @@ def _load_mcx_master() -> None:
     
     # Select nearest expiry for each commodity base
     _MCX_KEY_MAP = {}
-    _MCX_EXPIRY.clear()
     for base, rows in candidates.items():
         rows.sort(key=lambda r: r.get("expiry", ""))
         _MCX_KEY_MAP[base] = rows[0]["instrument_key"]
-        _MCX_EXPIRY[base] = str(rows[0].get("expiry", ""))[:10]
         log.info("Resolved MCX %s -> %s (%s, Expiry: %s)", base, rows[0]["instrument_key"], rows[0]["tradingsymbol"], rows[0].get("expiry"))
 
 
@@ -345,14 +340,6 @@ def build_index_futures_map() -> dict[str, str]:
     if _INDEX_FUT_KEY_MAP:
         return _INDEX_FUT_KEY_MAP
     return {}
-
-
-def mcx_front_expiry(base: str) -> str | None:
-    """Expiry date (YYYY-MM-DD) of the MCX contract build_mcx_commodity_map() currently resolves for `base`, or None if unknown.
-    A position carried overnight needs it: the map moves to the next contract the day after expiry, and a position must be
-    closed (rolled) on its own contract before then."""
-    ensure_master()
-    return _MCX_EXPIRY.get(base) or None
 
 
 def build_mcx_commodity_map() -> dict[str, str]:

@@ -5,7 +5,8 @@
 Discipline (same as the rest of this project): parameters are a small fixed grid taken from the literature; the
 best set per rule is chosen on the TRAIN period only, and the untouched TEST period is what counts. A rule is only
 credible with >=15 trades in the period judged. Data: see services/data/yahoo.py (long public history; a PROXY for
-MCX / NSE-currency contracts) and the real Upstox 5-minute archive resampled to daily for a second equity check.
+NSE-currency contracts) and the real Upstox 5-minute archive resampled to daily for a second equity check. (The
+commodity part was removed with the commodity market on 2026-10-12.)
 """
 from __future__ import annotations
 
@@ -57,34 +58,23 @@ def load_equity_upstox() -> dict[str, pd.DataFrame]:
     return out
 
 
-def load_commodity_proxy() -> dict[str, pd.DataFrame]:
-    from markets.commodity.strategies.tf_daily.swing.proxy import MCX_PROXY as PROXY, inr_frame
-    return {name: inr_frame(name) for name in PROXY}
-
-
 def load_currency() -> dict[str, pd.DataFrame]:
     return {name: fetch_daily(t)[["open", "high", "low", "close"]].dropna() for t, name in CURRENCY.items()}
 
 
 def round_trip_costs() -> dict[str, float]:
     """Round-trip cost as a fraction of notional, from this project's own cost models (plus explicit slippage)."""
-    from markets.commodity.costs import compute_mcx_commodity_costs, COMMODITY_SPECS
     from markets.currency.costs import compute_ncd_currency_costs, CURRENCY_SPECS
     from markets.equity.costs import compute_nse_equity_delivery_costs
     px, q = 500.0, 200                                            # Rs100k position
     eq = compute_nse_equity_delivery_costs("long", px, px, q)["total"] / (px * q) + 0.0010     # + 5 bps/side slippage
-    com = []
-    for sym, price, lots in (("GOLDM", 150000.0, 2), ("CRUDEOILM", 8600.0, 5)):
-        r = compute_mcx_commodity_costs(sym, "long", price, price, lots)
-        com.append(r["total"] / (lots * COMMODITY_SPECS[sym]["lot_size"] * price))
     cur = compute_ncd_currency_costs("USDINR", "long", 95.0, 95.0, 4)["total"] / (4 * CURRENCY_SPECS["USDINR"]["lot_size"] * 95.0)
-    return {"equity": eq, "commodity": float(np.mean(com)) + 0.0004, "currency": cur + 0.0002}   # + extra overnight slippage
+    return {"equity": eq, "currency": cur + 0.0002}   # + extra overnight slippage
 
 
 MARKETS = {                       # name -> (loader, allow_short, train_end, test_start, description)
     "equity (Yahoo NSE, 2005-26)":   ("equity_yahoo", False, "2018-12-31", "2019-01-01"),
     "equity (real Upstox, 2022-26)": ("equity_upstox", False, "2024-06-30", "2024-07-01"),
-    "commodity (USD futures x INR)": ("commodity", True, "2018-12-31", "2019-01-01"),
     "currency (INR pairs)":          ("currency", True, "2018-12-31", "2019-01-01"),
 }
 
@@ -125,8 +115,7 @@ def main() -> None:
     args = ap.parse_args()
     costs = round_trip_costs()
     print("round-trip cost assumptions:", {k: f"{v * 100:.3f}%" for k, v in costs.items()})
-    loaders = {"equity_yahoo": load_equity_yahoo, "equity_upstox": load_equity_upstox,
-               "commodity": load_commodity_proxy, "currency": load_currency}
+    loaders = {"equity_yahoo": load_equity_yahoo, "equity_upstox": load_equity_upstox, "currency": load_currency}
     results = []
     for market, (key, allow_short, train_end, test_start) in MARKETS.items():
         cost = costs["equity" if key.startswith("equity") else key]

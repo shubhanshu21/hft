@@ -10,13 +10,13 @@ from pathlib import Path
 
 from core.paths import BACKEND_ROOT
 
-MARKETS = ("commodity", "currency", "equity")
+MARKETS = ("currency", "equity")
 TIMEFRAMES = {"5min": (("minutes", 5), 0), "15min": (("minutes", 15), 0), "1hour": (("hours", 1), 0), "daily": (("days", 1), 250)}
 
 _TEMPLATE = '''"""{market} / {name} -- TODO: one line on what this strategy does and why it should have an edge.
 
 Not switched on until it is named in .env:   {MARKET}_STRATEGIES=scalping,{name}
-Guide: docs/ADDING_A_STRATEGY.md.  Worked example: markets/commodity/strategies/tf_daily/swing/strategy.py
+Guide: docs/ADDING_A_STRATEGY.md.  Contract: core/strategy.py
 """
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ class {Class}(Strategy):
     # ---- decide ---------------------------------------------------------------------------
     def entry(self, ctx: EntryContext) -> Signal | None:
         """Return a Signal to enter, or None. ctx.candles is chronological OHLCV; size the position from
-        ctx.capital and ctx.risk_pct (see size_equity_shares / size_commodity_lots)."""
+        ctx.capital and ctx.risk_pct (see size_equity_shares / size_currency_lots)."""
         return None               # TODO -- until this returns a Signal the strategy never trades
 
     def manage(self, pos: dict, ctx: ExitContext) -> ExitDecision | None:

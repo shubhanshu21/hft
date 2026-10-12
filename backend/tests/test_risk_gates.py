@@ -41,11 +41,11 @@ class TestMarginRoom(unittest.TestCase):
 
     def test_a_second_position_is_sized_to_the_margin_left_not_the_whole_account(self):
         r = _Runner(positions={"USDINR": {"margin_used": 76_000.0}})
-        self.assertAlmostEqual(r._sizing_capital("commodity"), 24_000.0)
+        self.assertAlmostEqual(r._sizing_capital("equity"), 24_000.0)
 
     def test_no_margin_left_means_no_entry_is_even_evaluated(self):
         r = _Runner(positions={"USDINR": {"margin_used": 100_000.0}})
-        self.assertEqual(r._sizing_capital("commodity"), 0.0)
+        self.assertEqual(r._sizing_capital("equity"), 0.0)
 
     def test_per_market_cap_limits_that_market_only(self):
         with patch.dict(os.environ, {"MAX_MARKET_MARGIN_UTILIZATION_PCT": "40"}):
@@ -57,7 +57,7 @@ class TestMarginRoom(unittest.TestCase):
 
     def test_backstop_rejects_a_signal_that_still_does_not_fit(self):
         r = _Runner(positions={"USDINR": {"margin_used": 90_000.0}})
-        reason = r._entry_gate_rejection("GOLDM", "commodity", _signal(qty=1, lot_size=10, price=15000.0), leverage=5.0)
+        reason = r._entry_gate_rejection("RELIANCE", "equity", _signal(qty=150, lot_size=1, price=1000.0), leverage=5.0)
         self.assertIn("margin", reason)
 
     def test_heat_cap_still_applies(self):

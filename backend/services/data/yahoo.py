@@ -1,9 +1,9 @@
-"""Long daily price history from Yahoo Finance's public chart API, for swing-strategy research.
+"""Long daily price history from Yahoo Finance's public chart API, for swing-strategy research (NIFTY50 stocks, currency pairs).
 
-Upstox history is capped at roughly one contract's life for MCX / NSE-currency futures (1-4 months), far too short to
+Upstox history is capped at roughly one contract's life for NSE-currency futures (1-4 months), far too short to
 validate a strategy that holds for days. This gives 15+ years. It is research data only -- never used for trading --
-and it is a PROXY: global futures in USD (GC=F, CL=F, ...) converted with USDINR stand in for MCX contracts, and
-Yahoo's continuous futures are not roll-adjusted. Cached under var/cache/yahoo/ and refreshed once a day.
+and for futures it is a PROXY (Yahoo's continuous futures are not roll-adjusted). Cached under var/cache/yahoo/ and
+refreshed once a day.
 """
 from __future__ import annotations
 

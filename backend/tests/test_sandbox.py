@@ -110,18 +110,18 @@ class TestRehearsal(unittest.TestCase):
 
     def test_it_is_off_without_a_token(self):
         with patch.dict(os.environ, {"UPSTOX_SANDBOX_TOKEN": ""}):
-            self.assertIsNone(sandbox_rehearsal.submit("entry", "CRUDEOILM", "commodity", "MCX_FO|1", "BUY", 3, 10, place=self._place(), path=self.path))
+            self.assertIsNone(sandbox_rehearsal.submit("entry", "USDINR", "currency", "NCD_FO|1", "BUY", 4, 1000, place=self._place(), path=self.path))
         self.assertEqual(self.calls, [])
 
     def test_it_sends_the_quantity_the_live_path_would_send(self):
-        for market, sym, key, lots, mult in (("commodity", "CRUDEOILM", "MCX_FO|1", 3, 10), ("currency", "USDINR", "NCD_FO|2", 4, 1000), ("equity", "TATASTEEL", "NSE_EQ|3", 2500, 1)):
+        for market, sym, key, lots, mult in (("currency", "USDINR", "NCD_FO|2", 4, 1000), ("equity", "TATASTEEL", "NSE_EQ|3", 2500, 1)):
             sandbox_rehearsal.submit("entry", sym, market, key, "BUY", lots, mult, place=self._place(), path=self.path, wait=True)
-        self.assertEqual([c[1] for c in self.calls], [3, 4000, 2500])                    # lots for MCX, units for currency and equity: engine/order_units.py
+        self.assertEqual([c[1] for c in self.calls], [4000, 2500])                       # units for currency and equity: engine/order_units.py
         self.assertTrue(all(c[3] == "I" and c[4] == "MARKET" for c in self.calls))
 
     def test_every_verdict_is_recorded_and_summarised(self):
-        sandbox_rehearsal.submit("entry", "CRUDEOILM", "commodity", "MCX_FO|1", "BUY", 3, 10, "P1", place=self._place(True), path=self.path, wait=True)
-        sandbox_rehearsal.submit("exit", "CRUDEOILM", "commodity", "MCX_FO|1", "SELL", 3, 10, "P1", place=self._place(False), path=self.path, wait=True)
+        sandbox_rehearsal.submit("entry", "USDINR", "currency", "NCD_FO|1", "BUY", 4, 1000, "P1", place=self._place(True), path=self.path, wait=True)
+        sandbox_rehearsal.submit("exit", "USDINR", "currency", "NCD_FO|1", "SELL", 4, 1000, "P1", place=self._place(False), path=self.path, wait=True)
         rows = sandbox_rehearsal.read(path=self.path)
         self.assertEqual([(r["kind"], r["ok"]) for r in rows], [("entry", True), ("exit", False)])
         s = sandbox_rehearsal.summarize(rows)
@@ -129,14 +129,14 @@ class TestRehearsal(unittest.TestCase):
         self.assertIn("E1: nope", s["by_reason"][0]["reason"])
 
     def test_a_missing_instrument_key_or_zero_quantity_sends_nothing(self):
-        self.assertIsNone(sandbox_rehearsal.submit("entry", "X", "commodity", None, "BUY", 3, 10, place=self._place(), path=self.path))
-        self.assertIsNone(sandbox_rehearsal.submit("entry", "X", "commodity", "K", "BUY", 0, 10, place=self._place(), path=self.path))
+        self.assertIsNone(sandbox_rehearsal.submit("entry", "X", "currency", None, "BUY", 3, 1000, place=self._place(), path=self.path))
+        self.assertIsNone(sandbox_rehearsal.submit("entry", "X", "currency", "K", "BUY", 0, 1000, place=self._place(), path=self.path))
         self.assertEqual(self.calls, [])
 
     def test_a_crashing_sandbox_call_is_recorded_not_raised(self):
         def boom(*a, **k):
             raise RuntimeError("sandbox exploded")
-        r = sandbox_rehearsal.submit("entry", "X", "commodity", "K", "BUY", 3, 10, place=boom, path=self.path, wait=True)
+        r = sandbox_rehearsal.submit("entry", "X", "currency", "K", "BUY", 3, 1000, place=boom, path=self.path, wait=True)
         self.assertFalse(r["ok"])
         self.assertEqual(sandbox_rehearsal.read(path=self.path)[0]["error_code"], "RuntimeError")
 
@@ -148,10 +148,10 @@ class TestProbe(unittest.TestCase):
             seen.setdefault(key, set()).add(qty)
             ok = not (key == "NCD_FO|1" and qty == 4000)                       # pretend Upstox rejects one shape
             return {"ok": ok, "order_id": "X", "http_status": 200 if ok else 400, "error_code": None if ok else "UDAPI1", "message": "accepted" if ok else "bad qty"}
-        keys = {"RELIANCE": "NSE_EQ|1", "USDINR": "NCD_FO|1", "CRUDEOILM": "MCX_FO|1", "SILVERMIC": "MCX_FO|2", "GOLDM": "MCX_FO|3"}
+        keys = {"RELIANCE": "NSE_EQ|1", "USDINR": "NCD_FO|1"}
         rows = sandbox_probe.run(place=place, keys=keys)
         self.assertEqual(seen["NCD_FO|1"], {1, 1000, 4000})                    # lots AND units, per market
-        self.assertEqual(seen["MCX_FO|1"], {1, 10, 100})
+        self.assertEqual(seen["NSE_EQ|1"], {1, 100})
         text = sandbox_probe.format_rows(rows)
         self.assertIn("REJECTED [UDAPI1] bad qty", text)
         self.assertIn("qty  4000  MARKET", text)
@@ -159,29 +159,6 @@ class TestProbe(unittest.TestCase):
     def test_an_unresolved_instrument_is_reported_not_crashed(self):
         rows = sandbox_probe.run(place=lambda *a, **k: {}, keys={})
         self.assertTrue(all(r["quantity"] is None for r in rows))
-
-
-@unittest.skipUnless(os.environ.get("RUN_REPLAY"), "slow: real scan loop; set RUN_REPLAY=1")
-class TestASandboxThatFailsCannotChangePaperTrading(unittest.TestCase):
-    def test_paper_trades_are_identical_with_a_rejecting_and_a_raising_sandbox(self):
-        import tests.replay_harness as h
-        golden = json.loads((Path(__file__).parent / "golden" / "replay_quick.json").read_text())["trades"]
-        key = lambda t: (t["symbol"], t["direction"], t["entry_dt"], t["exit_dt"], t["exit_reason"], t["qty"], t["net_pnl"])
-        calls = []
-        n = {"i": 0}
-
-        def flaky(k, qty, side, product, order_type, price, tag=""):
-            calls.append((k, qty, side))
-            n["i"] += 1
-            if n["i"] % 3 == 0:
-                raise RuntimeError("sandbox down")
-            return {"ok": n["i"] % 3 != 1, "order_id": None, "http_status": 400, "error_code": "E", "message": "rejected"}
-        with patch.dict(os.environ, {"UPSTOX_SANDBOX_TOKEN": "tok", "SANDBOX_REHEARSAL": "true"}), patch.object(sandbox_client, "place", flaky), \
-                patch.object(sandbox_rehearsal, "PATH", Path(tempfile.mkdtemp()) / "s.jsonl"):
-            out = h.run_replay(days=h.QUICK_DAYS, instruments=h.QUICK_INSTRUMENTS)
-            sandbox_rehearsal._executor().submit(lambda: None).result(timeout=30)          # drain the background worker
-        self.assertEqual([key(t) for t in out["trades"]], [key(t) for t in golden])         # not one paper trade changed
-        self.assertGreaterEqual(len(calls), 2 * len(out["trades"]))                          # every entry and exit was rehearsed
 
 
 if __name__ == "__main__":

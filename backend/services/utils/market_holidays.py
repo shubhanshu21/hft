@@ -40,12 +40,12 @@ log = logging.getLogger("market_holidays")
 _HOLIDAYS_URL = "https://api.upstox.com/v2/market/holidays"
 _CACHE_PATH = CACHE_DIR / "market_holidays.json"
 
-# Exchanges relevant to this project's live-traded instruments (MCX commodities,
-# NSE currency derivatives via CDS, NSE equities) -- a day counts as a holiday
-# here if ANY of these three closes, which is the safe/conservative direction
+# Exchanges relevant to this project's live-traded instruments (NSE currency
+# derivatives via CDS, NSE equities) -- a day counts as a holiday here if
+# EITHER closes, which is the safe/conservative direction
 # (worst case: skips a day one of the OTHER segments would've actually traded,
 # never the reverse of trying to trade on a day that's actually closed).
-_RELEVANT_EXCHANGES = {"NSE", "CDS", "MCX"}
+_RELEVANT_EXCHANGES = {"NSE", "CDS"}
 
 
 def _fetch_from_upstox() -> list[dict] | None:
@@ -62,7 +62,7 @@ def _fetch_from_upstox() -> list[dict] | None:
 
 
 def get_trading_holidays(force_refresh: bool = False) -> set[date]:
-    """Returns the set of dates where at least one of NSE/CDS/MCX has a full
+    """Returns the set of dates where NSE or CDS has a full
     TRADING_HOLIDAY closure, for whatever year "today" currently is. Never
     takes or hardcodes a year -- always reflects the live current year.
     Falls back to the cached copy (even if stale) on a fetch failure, and to
@@ -118,6 +118,6 @@ def _save_cache(data: list[dict]) -> None:
 
 if __name__ == "__main__":
     holidays = get_trading_holidays(force_refresh=True)
-    print(f"{len(holidays)} trading holidays for {date.today().year} (NSE/CDS/MCX, any one closing counts):")
+    print(f"{len(holidays)} trading holidays for {date.today().year} (NSE/CDS, either closing counts):")
     for d in sorted(holidays):
         print(f"  {d}")

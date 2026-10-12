@@ -97,12 +97,10 @@ class SectorCorrelationGate:
 
     @staticmethod
     def get_sector(symbol: str) -> str:
-        """Returns the sector for a symbol, or 'OTHER' / 'COMMODITY' / 'CURRENCY' if not mapped."""
+        """Returns the sector for a symbol, or 'OTHER' / 'CURRENCY' / 'INDEX_DERIVATIVES' if not mapped."""
         sym_clean = symbol.upper().strip()
         if sym_clean in NIFTY_SECTOR_MAP:
             return NIFTY_SECTOR_MAP[sym_clean]
-        if any(c in sym_clean for c in ["CRUDE", "GOLD", "SILVER", "NATURALGAS", "COPPER", "ZINC", "ALUMINIUM", "LEAD"]):
-            return "COMMODITY"
         if any(cur in sym_clean for cur in ["USDINR", "EURINR", "GBPINR", "JPYINR"]):
             return "CURRENCY"
         if any(idx in sym_clean for idx in ["NIFTY", "BANKNIFTY", "FINNIFTY"]):

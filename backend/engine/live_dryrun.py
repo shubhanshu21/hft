@@ -2,9 +2,8 @@
 """
 live_dryrun.py — Paper-trading dry run using LIVE Upstox 5-minute candles & SQLite DB.
 
-Runs 24/7 (MCX 09:00-23:30 IST, NSE currency 09:00-17:00 IST -- both handled
-internally) and fires the EXACT SAME strategy logic as markets/commodity/strategies/tf_5min/scalping/backtest.py
-/ markets/currency/strategies/tf_5min/scalping/backtest.py, but:
+Runs 24/7 (NSE currency 09:00-17:00 IST, NSE equity 09:15-15:30 IST -- both handled
+internally) and runs the strategies switched on in .env (core/registry.py; none are on now), but:
   - Places ZERO real orders in live broker (dry_run=True on Upstox broker)
   - Places & tracks VIRTUAL ORDERS in SQLite database (orders, positions, trades, snapshots)
   - Itemizes every fee (Brokerage, STT, Stamp Duty, Exchange Txn, SEBI, GST, Slippage)
@@ -52,9 +51,8 @@ import pandas as pd
 from services.broker.feed_streamer import UpstoxFeedStreamer
 from services.broker.upstox_broker import UpstoxBroker, token_invalid_event
 from engine.database import TradingDB
-from markets.commodity.costs import COMMODITY_SPECS
 from markets.currency.costs import CURRENCY_SPECS
-from core.symbols import is_currency as _is_currency, is_equity as _is_equity
+from core.symbols import is_currency as _is_currency, is_equity as _is_equity, market_of
 from core import entry_pullback
 from core import registry, sessions
 from core.risk import RiskGates
@@ -62,44 +60,12 @@ from core.strategy import EntryContext, ExitContext
 from markets.equity.universe import NIFTY50_SYMBOLS
 from core.sector_correlation import SectorCorrelationGate
 
-# Per-symbol risk-per-trade override (falls back to --risk-pct/DRYRUN_RISK_PCT
-# for anything not listed). SILVER re-added 2026-09-18 at half the account
-# default: its recalibrated thresholds passed a real train/test OOS split
-# but only on a single split with a meaningfully higher test-window drawdown
-# (35.1%) than gold's (~7%) -- sized down until it has real live experience
-# behind it, not treated as equally trusted as gold/crude yet.
-# CRUDEOILM cut to 3.0 on 2026-09-19: the full ~4-month real archive (not
-# just the recent favorable window) showed the deployed thresholds are a net
-# loser overall -- at the account-default 10% risk-per-trade with the regime
-# filter OFF (both matching the config that was actually live), the backtest
-# wipes the account out completely (-100.03%, max DD -100%). Turning
-# use_crude_regime_filter on (see below) improves every metric at once (win
-# rate 46.1%->56.5%, PF 0.79->1.17) but is still net -16.17% at 10% risk --
-# the position sizing itself, not just the entry filter, was too aggressive
-# for how much this symbol's edge swings by regime. risk-pct=3.0 with the
-# filter on was the best risk/DD tradeoff found: net +17.20%, PF 1.31, max DD
-# -37.96% (vs. +21.58%/-55.80% at 5%, +9.91%/-70.10% at 7%) -- see
-# markets/commodity/strategies/tf_5min/scalping/backtest.py --use-crude-regime-filter sweep in conversation
-# history for the full risk-pct grid. Still not equally trusted as gold.
-# GBPINR intentionally NOT listed here (see _SYMBOL_LEVERAGE_OVERRIDE below
-# instead) -- a genuine train/test split couldn't be run on it (its full
-# ~28-day archive is only 17 trades, so splitting leaves 10/7, both below the
-# 15-trade credibility bar), so it needed the same "under-proven, size it
-# down" treatment as SILVER's single-fold case. But confirmed 2026-09-19 via
-# the real backtest engine (not just a formula read) that a risk-pct override
-# is a complete no-op for it: identical trades/net/DD at risk_pct=2 through
-# 20 (size_currency_lots' margin-derived cap, not the risk-derived one, binds
-# for every single one of its 17 trades at this account's capital/leverage --
-# unlike CRUDEOILM/SILVER above, confirmed by the SAME method to move real
-# lot counts here). A risk_pct entry was tried first and silently did
-# nothing; caught only because CRUDEOILM's risk_pct fix was re-verified the
-# same way and produced genuinely different backtest numbers, which GBPINR's
-# didn't. Leverage is what actually binds GBPINR's size -- see below.
-_SYMBOL_RISK_PCT_OVERRIDE = {"SILVER": 5.0, "CRUDEOILM": 3.0}
+# Per-symbol risk-per-trade override (falls back to the market's value; <SYMBOL>_RISK_PCT in .env wins).
+_SYMBOL_RISK_PCT_OVERRIDE: dict[str, float] = {}
 
 # Per-symbol leverage override (falls back to --leverage/DRYRUN_LEVERAGE for
 # anything not listed). Added 2026-09-19 specifically because
-# _SYMBOL_RISK_PCT_OVERRIDE has no effect on GBPINR (see comment above) --
+# a risk-pct override has no effect on GBPINR (its margin-derived cap binds) --
 # margin sizing there is driven by capital/entry_price/leverage, not
 # risk_pct, so leverage is the only lever that actually shrinks its lot
 # count. 3.5 (half the account default of 7.0) cuts its real backtested lot
@@ -109,19 +75,15 @@ _SYMBOL_LEVERAGE_OVERRIDE = {"GBPINR": 3.5}
 
 
 def _get_market(sym: str) -> str:
-    """Classify a trading symbol into its asset class: 'equity', 'currency', or 'commodity'."""
-    if _is_equity(sym):
-        return "equity"
-    elif _is_currency(sym):
-        return "currency"
-    return "commodity"
+    """Classify a trading symbol into its asset class: 'equity' or 'currency' (ValueError for anything else)."""
+    return market_of(sym)
 
 
 def _is_market_session_open(sym: str, now: datetime) -> bool:
     return sessions.is_open(_get_market(sym), now)
 
 
-from services.broker.instruments import build_mcx_commodity_map, build_currency_map, get_instrument_key
+from services.broker.instruments import build_currency_map, get_instrument_key
 from services.utils.logger import get_logger, setup_logger
 from services.utils import telegram
 from services.utils.market_holidays import get_trading_holidays
@@ -135,13 +97,11 @@ DEFAULT_RISK_PCT = 5.0
 DEFAULT_LEVERAGE = 4.0
 
 def _build_symbol_map() -> dict[str, str]:
-    """Resolves the current nearest-expiry instrument_key for every MCX
-    commodity + NSE currency base symbol. MCX/currency contracts are
-    monthly-expiry (see markets/commodity/data.py/real_currency_data.py
-    docstrings) -- calling this again after a contract has rolled picks up
-    the new one automatically, since build_mcx_commodity_map()/
-    build_currency_map() always select whichever expiry is nearest >=
-    today at call time. Must be re-called periodically (see main()'s
+    """Resolves the current nearest-expiry instrument_key for every NSE
+    currency base symbol (plus the NIFTY50 equity keys). Currency contracts
+    are monthly-expiry -- calling this again after a contract has rolled
+    picks up the new one automatically, since build_currency_map() always
+    selects whichever expiry is nearest >= today at call time. Must be re-called periodically (see main()'s
     day-rollover loop) -- a value cached once at process startup would
     silently keep resolving an expired instrument_key for as long as the
     process runs without restarting."""
@@ -151,11 +111,10 @@ def _build_symbol_map() -> dict[str, str]:
         if key:
             equity_map[sym] = key
     try:
-        return {**build_mcx_commodity_map(), **build_currency_map(), **equity_map}
+        return {**build_currency_map(), **equity_map}
     except Exception as _e:
         log.warning("Could not load Upstox master; falling back to hardcoded keys: %s", _e)
         return {
-            **build_mcx_commodity_map(),
             **build_currency_map(),
             **equity_map,
         }
@@ -346,7 +305,7 @@ class DryRunner(RiskGates):
             self.capital = acct["current_capital"]
 
 
-        # Strategies switched on per market (COMMODITY_/CURRENCY_/EQUITY_STRATEGIES in .env).
+        # Strategies switched on per market (CURRENCY_/EQUITY_STRATEGIES in .env).
         self.strategies = {m: registry.active(m) for m in registry.MARKETS}
         log.info("Strategies: %s", {m: [x.name for x in v] for m, v in self.strategies.items()})
 
@@ -407,7 +366,7 @@ class DryRunner(RiskGates):
         except Exception as exc:
             log.warning("Could not load historical peak capital from snapshots (starting from current capital): %s", exc)
         # Portfolio heat cap: total open risk (sum of stop-distance-based Rs
-        # risk across EVERY open position, commodity+currency+equity combined)
+        # risk across EVERY open position, currency+equity combined)
         # must never exceed this % of capital. Researched convention: swing
         # traders commonly cap at 4-8%, short-term scalpers with tight stops
         # up to ~10% (Alexander Elder's widely-cited 6% rule is the canonical
@@ -420,17 +379,6 @@ class DryRunner(RiskGates):
         # Shared margin-pool caps (global + per market) -- see core/risk.py.
         self._init_margin_limits()
 
-        # Full-day vs evening-only trading window -- see markets/commodity/strategies/tf_5min/scalping/backtest.py's
-        # us_session_only for the matching backtest flag/comparison. Switched
-        # to full-session by default 2026-09-17 per user decision: real
-        # backtest on the full 2022-2026 archive showed full session more
-        # than doubles net PnL (+Rs68,097 vs +Rs30,248) at the cost of a
-        # lower win rate (65.8% vs 70.6%) and higher max DD (8.51% vs 6.51%)
-        # from 3x more (noisier, more expensive) daytime trades. Toggle via
-        # DRYRUN_FULL_SESSION in .env -- keep BACKTEST_FULL_SESSION in sync
-        # so backtest and live dryrun match.
-        self.full_session = os.environ.get("DRYRUN_FULL_SESSION", "true").lower() in ("1", "true", "yes")
-
         # Daily-loss kill switch: halts new entries (existing positions are
         # still managed/exited normally) once today's realized loss hits
         # MAX_DAILY_LOSS_PCT of the capital this process started the day with.
@@ -441,9 +389,8 @@ class DryRunner(RiskGates):
 
         # Per-symbol daily-loss kill switch, same MAX_DAILY_LOSS_PCT threshold
         # but tracked per symbol against that symbol's own realized PnL today --
-        # added 2026-09-18 so one symbol having a genuinely bad day (e.g. crude
-        # hitting a bad regime, see markets/commodity/strategies/tf_5min/scalping/backtest.py's ENTRY_THRESHOLDS
-        # comment) doesn't halt entries account-wide for symbols that are fine.
+        # added 2026-09-18 so one symbol having a genuinely bad day doesn't halt
+        # entries account-wide for symbols that are fine.
         # The existing account-wide switch above still exists as the final
         # backstop for a bad day across the whole book.
         self.symbol_daily_pnl: dict[str, float] = {s: 0.0 for s in self.symbols}
@@ -451,28 +398,13 @@ class DryRunner(RiskGates):
 
         # Market-specific daily loss limits & cooldown timers (added 2026-09-22):
         # Instead of shutting down all trading for the day across decoupled markets,
-        # each market (commodity, currency, equity) tracks its own daily loss.
+        # each market (currency, equity) tracks its own daily loss.
         # When a market crosses MAX_MARKET_DAILY_LOSS_PCT, that specific market
         # enters a MARKET_COOLDOWN_MINUTES pause, while other markets continue trading.
         self.max_market_daily_loss_pct = float(os.environ.get("MAX_MARKET_DAILY_LOSS_PCT", "3.0"))
         self.market_cooldown_minutes = int(os.environ.get("MARKET_COOLDOWN_MINUTES", "60"))
-        self.market_daily_pnl: dict[str, float] = {"commodity": 0.0, "currency": 0.0, "equity": 0.0}
-        self.market_cooldown_until: dict[str, datetime | None] = {"commodity": None, "currency": None, "equity": None}
-
-        # Commodity regime gate — extended 2026-09-22 from CRUDEOILM-only to
-        # all MCX momentum symbols (CRUDEOILM, GOLDM, SILVER, NATGASMINI).
-        # Reads USE_COMMODITY_REGIME_FILTER; falls back to USE_CRUDE_REGIME_FILTER
-        # for backward-compatibility with any existing .env that hasn't been updated.
-        self.use_commodity_regime_filter = os.environ.get(
-            "USE_COMMODITY_REGIME_FILTER",
-            os.environ.get("USE_CRUDE_REGIME_FILTER", "false")
-        ).lower() in ("1", "true", "yes")
-        # Per-symbol dict: True = OK to enter, False = regime blocked, None = no data yet.
-        # None is treated as fail-open (let trades through) -- a broker hiccup
-        # should never silently block every symbol for the day.
-        self.commodity_regime_ok: dict[str, bool | None] = {}
-        if self.use_commodity_regime_filter:
-            self._refresh_commodity_regimes()
+        self.market_daily_pnl: dict[str, float] = {m: 0.0 for m in registry.MARKETS}
+        self.market_cooldown_until: dict[str, datetime | None] = {m: None for m in registry.MARKETS}
 
         # NSE equity index-level regime gate (added 2026-09-22). Gates ALL new
         # equity entries using NIFTY50's own daily-return autocorrelation.
@@ -484,7 +416,6 @@ class DryRunner(RiskGates):
 
         # Market Segment Trading Toggles (added 2026-09-22)
         self.segment_enabled: dict[str, bool] = {
-            "commodity": os.environ.get("ENABLE_COMMODITY_TRADING", "true").lower() in ("1", "true", "yes"),
             "currency": os.environ.get("ENABLE_CURRENCY_TRADING", "true").lower() in ("1", "true", "yes"),
             "equity": os.environ.get("ENABLE_EQUITY_TRADING", os.environ.get("DRYRUN_INCLUDE_EQUITY", "true")).lower() in ("1", "true", "yes"),
         }
@@ -499,8 +430,7 @@ class DryRunner(RiskGates):
         # this project assumes a flat half-tick-per-leg slippage guess, never
         # measured against a real order book. A one-off check found real
         # spreads running 2x-29x wider than that assumption across every live
-        # symbol at that moment (CRUDEOILM 4x, GOLDM 25x, USDINR 3x, EURINR 2x,
-        # GBPINR 29x) -- consistent enough across symbols to be a real signal,
+        # symbol at that moment (USDINR 3x, EURINR 2x, GBPINR 29x) -- consistent enough across symbols to be a real signal,
         # not a fluke, but one snapshot isn't a distribution. This logs a real
         # sample (throttled to once per SPREAD_SAMPLE_INTERVAL_MIN per symbol,
         # not every scan, to stay well under API rate limits) to
@@ -529,10 +459,7 @@ class DryRunner(RiskGates):
 
     def _get_segment_risk_and_leverage(self, sym: str) -> tuple[float, float]:
         market = _get_market(sym)
-        if market == "commodity":
-            r = float(os.environ.get("COMMODITY_RISK_PCT", self.risk_pct))
-            l = float(os.environ.get("COMMODITY_LEVERAGE", self.leverage))
-        elif market == "currency":
+        if market == "currency":
             r = float(os.environ.get("CURRENCY_RISK_PCT", self.risk_pct))
             l = float(os.environ.get("CURRENCY_LEVERAGE", self.leverage))
         else:
@@ -550,8 +477,8 @@ class DryRunner(RiskGates):
         """Total open risk across every currently-open position (all asset
         classes combined), as a % of current capital -- if every stop hit at
         once, this is roughly how much of the account would be lost. Equity
-        positions store share qty directly; commodity/currency store lot qty
-        needing their own contract multiplier."""
+        positions store share qty directly; currency stores lot qty needing
+        its contract multiplier."""
         if self.capital <= 0:
             return 0.0
         total_risk_rupees = 0.0
@@ -559,10 +486,8 @@ class DryRunner(RiskGates):
             stop_dist = abs(pos["entry_price"] - pos.get("sl", pos["current_stop"]))
             if _is_equity(sym):
                 multiplier = 1  # shares, no lot multiplier
-            elif _is_currency(sym):
-                multiplier = CURRENCY_SPECS.get(sym.upper(), {}).get("lot_size", 1000)
             else:
-                multiplier = COMMODITY_SPECS.get(sym, {}).get("lot_size", 1)
+                multiplier = CURRENCY_SPECS.get(sym.upper(), {}).get("lot_size", 1000)
             total_risk_rupees += stop_dist * pos["qty"] * multiplier
         return total_risk_rupees / self.capital * 100
 
@@ -587,7 +512,7 @@ class DryRunner(RiskGates):
         return 1.0
 
     def _is_market_on_cooldown(self, market: str, now: datetime) -> bool:
-        """Checks whether the given market ('commodity', 'currency', 'equity')
+        """Checks whether the given market ('currency', 'equity')
         is currently on a loss-triggered cooldown. Automatically clears expired cooldowns."""
         expiry = self.market_cooldown_until.get(market)
         if expiry is None:
@@ -604,49 +529,7 @@ class DryRunner(RiskGates):
         )
         return False
 
-    # ---- Commodity & Equity regime gates (see __init__'s comment) -------------
-    def _refresh_commodity_regimes(self) -> None:
-        """Fetches real daily candles through YESTERDAY for each MCX momentum
-        symbol and recomputes self.commodity_regime_ok. Fails open per symbol
-        (leaves previous value or None) if the fetch fails -- a broker hiccup
-        should never silently block entries for the day.
-        Extended 2026-09-22 from CRUDEOILM-only to cover GOLDM, SILVER,
-        NATGASMINI, then REVERTED 2026-09-23 back to CRUDEOILM-only after
-        train/test validation: the autocorrelation regime signal was derived
-        from and only ever validated against CRUDEOILM's own two known
-        regimes (see core/regime.py's docstring). Testing the extension
-        found it clearly harmful for SILVER (TEST net Rs482k -> Rs68k, PF
-        2.67 -> 1.71, trades 62 -> 17) and merely trade-count-reducing for
-        GOLDM with no net benefit (TEST trades 39 -> 20, net roughly flat)
-        -- i.e. it generalizes to neither. Only CRUDEOILM showed the actual
-        regime-dependent failure mode this gate exists to catch.
-        """
-        from core.regime import regime_ok as _regime_ok
-        mcx_symbols = [s for s in self.symbols if s.upper() == "CRUDEOILM"]
-        yesterday = (datetime.now(IST) - timedelta(days=1)).strftime("%Y-%m-%d")
-        for sym in mcx_symbols:
-            ikey = SYMBOL_MAP.get(sym)
-            if not ikey:
-                continue
-            try:
-                candles = self.broker.get_historical_candles(ikey, unit="days", interval=1, to_date=yesterday)
-            except Exception as exc:
-                log.warning("Could not fetch daily candles for %s regime gate: %s", sym, exc)
-                continue
-            if not candles:
-                continue
-            closes = [float(c["close"]) for c in sorted(candles, key=lambda c: c["timestamp"])]
-            result = _regime_ok(closes, window=15, min_autocorr=0.0)
-            self.commodity_regime_ok[sym.upper()] = result
-            if result is False:
-                log.warning("%s regime gate: BLOCKED (daily-return autocorrelation < 0).", sym)
-                telegram.send(
-                    f"⚠️ <b>{sym} REGIME GATE: BLOCKED</b> — recent daily price action looks "
-                    f"mean-reverting, not trending. New {sym} entries held back today (existing positions unaffected)."
-                )
-            elif result is True:
-                log.info("%s regime gate: OK (autocorrelation >= 0).", sym)
-
+    # ---- Equity regime gate (see __init__'s comment) --------------------------
     def _refresh_equity_regime(self) -> None:
         """Fetches NIFTY50 index daily candles through YESTERDAY and recomputes
         self.equity_regime_ok. Fails open (True) if the fetch fails.
@@ -738,10 +621,8 @@ class DryRunner(RiskGates):
             self.kill_switch_active = False
             self.symbol_daily_pnl = {s: 0.0 for s in self.symbols}
             self.symbol_kill_switch = {s: False for s in self.symbols}
-            self.market_daily_pnl = {"commodity": 0.0, "currency": 0.0, "equity": 0.0}
-            self.market_cooldown_until = {"commodity": None, "currency": None, "equity": None}
-            if self.use_commodity_regime_filter:
-                self._refresh_commodity_regimes()
+            self.market_daily_pnl = {m: 0.0 for m in registry.MARKETS}
+            self.market_cooldown_until = {m: None for m in registry.MARKETS}
             if self.use_equity_regime_filter:
                 self._refresh_equity_regime()
             self._midday_summary_sent = False  # reset for new trading day (attr exists from __init__)
@@ -778,7 +659,7 @@ class DryRunner(RiskGates):
                 continue
             if self._is_market_on_cooldown(market, now):
                 continue
-            # Upstox allows 2,000 standard-API calls per 30 minutes (engine/api_budget.py). Commodity and currency (a handful of symbols) are essential;
+            # Upstox allows 2,000 standard-API calls per 30 minutes (engine/api_budget.py). Currency (a handful of symbols) is essential;
             # the 49-name equity universe spends what is left, so it is scanned less often only when the budget binds.
             if not api_budget.allow("essential" if market != "equity" else "entry"):
                 throttled += 1
@@ -791,7 +672,7 @@ class DryRunner(RiskGates):
         return signals
 
     def _scan_order(self) -> list[str]:
-        """Symbols in scan order: commodity and currency first, then equity starting at a rotating offset, so that when the API budget stops a pass part-way
+        """Symbols in scan order: currency first, then equity starting at a rotating offset, so that when the API budget stops a pass part-way
         it is a different set of equity names each time instead of always the same tail."""
         head = [s for s in self.symbols if _get_market(s) != "equity"]
         eq = [s for s in self.symbols if _get_market(s) == "equity"]
@@ -896,14 +777,13 @@ class DryRunner(RiskGates):
         if override:
             base_risk_pct = float(override)
         leverage = sym_leverage if strat.uses_leverage else 1.0
-        regime_ok = self.commodity_regime_ok.get(sym.upper(), None) if self.use_commodity_regime_filter else True
         sizing_capital = self._sizing_capital(market)
         candles = self._candles(sym, strat)
         if not self._candles_fresh(sym, candles, now, strat):
             return False
         ctx = dict(symbol=sym, candles=candles, now=now, instrument_key=SYMBOL_MAP.get(sym),
                    risk_pct=base_risk_pct * self._drawdown_risk_scale(), leverage=leverage, direction_filter=self.direction_filter,
-                   full_session=self.full_session, regime_ok=regime_ok, equity_regime_ok=self._gate_flags()["equity_regime_ok"],
+                   equity_regime_ok=self._gate_flags()["equity_regime_ok"],
                    data=self._market_data())
         pb = entry_pullback.config_for(sym, market)
         from_pullback = stopped_on_fill = False
@@ -1215,7 +1095,7 @@ class DryRunner(RiskGates):
         if not self.trades:
             return
         # fieldnames must cover every trade's keys, not just the first --
-        # position dicts vary by asset type (equity/commodity/currency have
+        # position dicts vary by asset type (equity/currency have
         # different fields, e.g. 'armed_be'/'be'), so a later trade can carry
         # keys the first one didn't, which crashes DictWriter otherwise.
         fieldnames = []
@@ -1297,7 +1177,7 @@ def check_token(broker) -> str:
 
 def refresh_market_hours(broker, day=None) -> None:
     """Read today's (or `day`'s) real exchange hours from Upstox and tell the operator if they differ from what was in use
-    (a special or shortened session, MCX's daylight-saving shift). A failure keeps the last known hours."""
+    (a special or shortened session). A failure keeps the last known hours."""
     try:
         for line in sessions.refresh(broker._api_client, day):
             log.warning("EXCHANGE HOURS CHANGED: %s", line)
@@ -1312,7 +1192,7 @@ def check_cost_drift(broker, runner) -> None:
         from engine import cost_drift
         keys = {s: SYMBOL_MAP[s] for s in runner.symbols if SYMBOL_MAP.get(s)}
         sample = {}
-        for market in ("commodity", "currency", "equity"):                       # one representative symbol per market keeps this to a few calls
+        for market in registry.MARKETS:                                           # one representative symbol per market keeps this to a few calls
             pick = next((s for s in keys if _get_market(s) == market), None)
             if pick:
                 sample[pick] = keys[pick]
@@ -1334,8 +1214,7 @@ def refresh_margin_rates(broker, runner) -> None:
             if market == "equity":
                 return price
             from markets.currency.costs import get_contract_multiplier as cur_mult
-            from markets.commodity.costs import get_contract_multiplier as com_mult
-            return price * (cur_mult(sym) if market == "currency" else com_mult(sym))
+            return price * cur_mult(sym)
         keys = {s: SYMBOL_MAP[s] for s in runner.symbols if SYMBOL_MAP.get(s)}
         changed = []
         rates = margin_rates.refresh(broker, keys, notional,
@@ -1344,7 +1223,7 @@ def refresh_margin_rates(broker, runner) -> None:
             msg = ", ".join(f"{s}: Upstox lot size was {a}, now {b}" for s, a, b in changed)
             log.error("LOT SIZE CHANGED by the broker: %s", msg)
             telegram.send(f"🔴 <b>LOT SIZE CHANGED</b> — {msg}. Costs / P&L for these still use the old size until the cost model is updated: "
-                          f"markets/*/costs.py *_SPECS. Consider pausing them (/stop commodity, /stop currency).")
+                          f"markets/*/costs.py *_SPECS. Consider pausing them (/stop currency).")
         log.info("Upstox margin rates: %s", {s: f"{r['leverage']:.1f}x (Rs{r['margin']:,.0f}/unit)" for s, r in rates.items() if s in keys and not _is_equity(s)})
         blocked = margin_rates.unaffordable(runner.capital, [s for s in runner.symbols])
         names = tuple(sorted(s for s, _ in blocked))
@@ -1374,7 +1253,7 @@ def handle_operator_command(runner, cmd: str, now: datetime, scan_n: int) -> str
         print(f"  {BOLD}{GR}TRADING STARTED via Telegram{R}", flush=True)
         telegram.send("🟢 <b>TRADING STARTED</b> (manual) — resuming normal entries.")
         return "start"
-    for seg in ("commodity", "currency", "equity"):
+    for seg in registry.MARKETS:
         if cmd in (f"/stop {seg}", f"/disable {seg}", f"stop {seg}"):
             runner.segment_enabled[seg] = False
             telegram.send(f"⏸ <b>{seg.upper()} TRADING PAUSED</b> (manual) — new {seg} entries halted.")
@@ -1387,9 +1266,6 @@ def handle_operator_command(runner, cmd: str, now: datetime, scan_n: int) -> str
         open_syms = list(runner.positions.keys())
         seg_status_str = ", ".join([f"{m.capitalize()}: {'🟢' if v else '🛑 PAUSED'}" for m, v in runner.segment_enabled.items()])
         regime_line = f"\nSegments: {seg_status_str}"
-        if runner.use_commodity_regime_filter:
-            regime_str = ", ".join([f"{s}: {'🟢' if v is not False else '🔴'}" for s, v in runner.commodity_regime_ok.items()])
-            regime_line += f"\nCommodity regimes: {regime_str or 'N/A'}"
         if runner.use_equity_regime_filter:
             regime_line += f"\nEquity regime: {'🟢 OK' if runner.equity_regime_ok is not False else '🔴 BLOCKED'}"
         pos_lines = ""
@@ -1422,7 +1298,7 @@ def main():
     ap.add_argument("--capital",   type=float, default=100_000, help="Paper capital Rs (default 1,00,000)")
     ap.add_argument("--risk-pct",  type=float, default=DEFAULT_RISK_PCT, help="Risk %% per trade")
     ap.add_argument("--leverage",  type=float, default=DEFAULT_LEVERAGE, help="MIS leverage (default 4.0)")
-    ap.add_argument("--symbols",   nargs="+",  default=None,        help="MCX commodity / NSE currency symbols to trade")
+    ap.add_argument("--symbols",   nargs="+",  default=None,        help="NSE currency pairs / NIFTY50 stocks to trade")
     ap.add_argument("--db",        default=None,           help="Path to SQLite DB (default: var/db/paper_trading.db)")
     ap.add_argument("--account",   default="DRYRUN_ACCOUNT", help="Account identifier")
     ap.add_argument("--long-only", action="store_true",    help="Execute LONG orders only (skip all short setups)")
@@ -1486,22 +1362,24 @@ def main():
 
     broker = UpstoxBroker(access_token=token, dry_run=True)
 
-    # Energy Contracts (Crude Oil Mini & Natural Gas Mini) default if --symbols not given
-    default_symbols = ["CRUDEOILM", "NATGASMINI"]
-    symbols = args.symbols or default_symbols
+    symbols = args.symbols or ["USDINR"]
+    unknown = [s for s in symbols if not (_is_currency(s) or _is_equity(s))]
+    if unknown:                                          # MCX commodity was removed 2026-10-12; any other symbol is a config error
+        print(f"{RED}ERROR: not an NSE currency pair or NIFTY50 stock: {', '.join(unknown)}. Fix DRYRUN_SYMBOLS / --symbols.{R}")
+        sys.exit(1)
     # NSE equity intraday scalper wired in 2026-09-19 (see
     # markets/equity/strategies/tf_5min/scalping/entry_signal.py's module docstring) -- opt-in via
     # DRYRUN_INCLUDE_EQUITY=true rather than folded into DRYRUN_SYMBOLS,
     # since the full validated universe is all 49 NIFTY50 names (see
     # markets/equity/universe.py) and hand-typing that into a symbols list
-    # would be unwieldy. Extends whatever commodity/currency symbols are
+    # would be unwieldy. Extends whatever currency symbols are
     # already configured rather than replacing them -- equity runs
     # alongside, not instead of.
     if os.environ.get("DRYRUN_INCLUDE_EQUITY", "false").lower() in ("1", "true", "yes"):
         symbols = list(symbols) + [s for s in NIFTY50_SYMBOLS if s not in symbols]
-        market_mode = "MCX COMMODITIES / NSE CURRENCY / NSE EQUITY"
+        market_mode = "NSE CURRENCY / NSE EQUITY"
     else:
-        market_mode = "MCX COMMODITIES / NSE CURRENCY"
+        market_mode = "NSE CURRENCY"
 
     direction_mode = "long" if args.long_only else args.direction
     runner = DryRunner(broker, db, symbols, args.capital, args.risk_pct, args.leverage,
@@ -1518,7 +1396,7 @@ def main():
           f"{GY}Leverage:{R} {MG}{args.leverage}x{R}  "
           f"{GY}Direction:{R} {CY}{direction_mode.upper()}{R}  "
           f"{GY}Interval:{R} {YL}{args.interval}s{R}"
-          f"  {GY}Hours:{R} {WH}MCX 09:00-23:30 / Currency 09:00-17:00 IST{R}")
+          f"  {GY}Hours:{R} {WH}Currency 09:00-17:00 / Equity 09:15-15:30 IST{R}")
     print(f"  {GY}Database:{R} {WH}{db.db_path}{R}")
     print(f"  {GY}Symbols ({len(symbols)}):{R} {WH}{', '.join(symbols[:8])}{'...' if len(symbols)>8 else ''}{R}")
     print(f"{BOLD}{CY}{'='*75}{R}\n")
@@ -1571,9 +1449,9 @@ def main():
     stopped_by_user = False
     while not stopped_by_user:
         now = datetime.now(IST)
-        # Widest window across both MCX (till 23:30) and currency (till 17:00)
+        # Widest window across currency (till 17:00) and equity (till 15:30)
         # -- per-symbol precision is handled inside scan()/_maybe_exit().
-        _wins = [sessions.window(m) for m in ("commodity", "currency", "equity")]          # Upstox's hours (core/sessions.py)
+        _wins = [sessions.window(m) for m in registry.MARKETS]          # Upstox's hours (core/sessions.py)
         _lo, _hi = min(w[0] for w in _wins), max(w[1] for w in _wins)
         mopen  = now.replace(hour=_lo // 60, minute=_lo % 60, second=0, microsecond=0)
         mclose = now.replace(hour=_hi // 60, minute=_hi % 60, second=0, microsecond=0)
@@ -1639,16 +1517,6 @@ def main():
         SYMBOL_MAP.clear()
         SYMBOL_MAP.update(fresh_map)
         refresh_margin_rates(broker, runner)
-
-        # Contract expiry alert (MCX contracts expire ~20th of month)
-        day_of_month = mopen.day
-        if 18 <= day_of_month <= 20:
-            mcx_syms = [s for s in runner.symbols if not _is_currency(s) and not _is_equity(s)]
-            if mcx_syms:
-                telegram.send(
-                    f"⚠️ <b>MCX CONTRACT EXPIRY WARNING</b> — Today is day {day_of_month} of month.\n"
-                    f"MCX contracts for {', '.join(mcx_syms)} expire around 20th. Verify positions & instrument keys."
-                )
 
         scan_n = 0
         while datetime.now(IST) <= mclose:

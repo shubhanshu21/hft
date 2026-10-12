@@ -1,8 +1,8 @@
 """Cost-model drift monitor: our charges versus Upstox's own brokerage calculator.
 
-    python3 -m engine.cost_drift [--symbols CRUDEOILM SILVERMIC USDINR RELIANCE] [--no-telegram]
+    python3 -m engine.cost_drift [--symbols USDINR RELIANCE] [--no-telegram]
 
-Brokerage, STT/CTT, exchange and SEBI fees, GST and stamp duty are set by Upstox, the exchanges and the government, and change without notice
+Brokerage, STT, exchange and SEBI fees, GST and stamp duty are set by Upstox, the exchanges and the government, and change without notice
 (2026-09-24: Upstox charged min(0.06%, Rs30) per order while the model had min(0.05%, Rs20), understating every trade's cost by ~Rs23.6 for
 weeks). Upstox exposes the exact figure (`ChargeApi.get_brokerage`), so each night, and at daemon start, we price a one-lot round trip at the
 live price with BOTH and alert when the model is off. A model that is CHEAPER than Upstox by more than UNDER_TOL is the dangerous direction
@@ -34,12 +34,9 @@ def model_round_trip(sym: str, market: str, lots: int, price: float) -> float:
         if market == "equity":
             from markets.equity.costs import compute_nse_equity_costs
             r = compute_nse_equity_costs("long", price, price, lots, symbol=sym)
-        elif market == "currency":
+        else:
             from markets.currency.costs import compute_ncd_currency_costs
             r = compute_ncd_currency_costs(sym, "long", price, price, lots)
-        else:
-            from markets.commodity.costs import compute_mcx_commodity_costs
-            r = compute_mcx_commodity_costs(sym, "long", price, price, lots)
     return float(r.get("total_friction", r.get("total")) - r.get("slippage", 0.0))
 
 
@@ -58,9 +55,8 @@ def check(broker, keys: dict[str, str], market_of, lots_for=None, price_of=None)
         if market == "equity":
             units = lots
         else:
-            from markets.commodity.costs import get_contract_multiplier as com
             from markets.currency.costs import get_contract_multiplier as cur
-            units = lots * (cur(sym) if market == "currency" else com(sym))
+            units = lots * cur(sym)
         up = upstox_round_trip(api, key, units, float(price))
         if not up:
             rows.append({"symbol": sym, "status": "no-data", "why": "Upstox brokerage calculator unavailable"})
@@ -84,11 +80,11 @@ def format_rows(rows: list[dict]) -> str:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--symbols", nargs="*", default=["CRUDEOILM", "SILVERMIC", "USDINR", "RELIANCE"])
+    ap.add_argument("--symbols", nargs="*", default=["USDINR", "RELIANCE"])
     ap.add_argument("--no-telegram", action="store_true")
     args = ap.parse_args(argv)
     from engine.live_dryrun import SYMBOL_MAP, _get_market
-    from markets.commodity.data import _get_broker
+    from markets.currency.data import _get_broker
     broker = _get_broker()
     rows = check(broker, {s: SYMBOL_MAP[s] for s in args.symbols if SYMBOL_MAP.get(s)}, _get_market)
     text = format_rows(rows)

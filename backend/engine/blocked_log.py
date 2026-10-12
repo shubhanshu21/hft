@@ -1,6 +1,6 @@
-"""A record of entry signals that did NOT become trades, and why -- so "does crude block silver?" is measured, not guessed.
+"""A record of entry signals that did NOT become trades, and why -- so "does one open position block another?" is measured, not guessed.
 
-Margin is one pool (~Rs100k; one crude lot is Rs28k, one SILVERMIC lot Rs30k, both sized to fill it), so an open position leaves too little free margin
+Margin is one pool (~Rs100k, and margin-bound sizing fills it), so an open position can leave too little free margin
 for another entry: sizing then yields zero lots and, until now, the signal simply vanished with no trace. `record()` appends one JSON line per skipped
 signal to var/logs/blocked_entries.jsonl (deduplicated per symbol and bar); the dashboard reads it. `summarize()` turns it into counts per blocker.
 """

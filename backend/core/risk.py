@@ -28,7 +28,6 @@ class RiskGates:
         self.max_margin_utilization_pct = float(os.environ.get("MAX_MARGIN_UTILIZATION_PCT", "100.0"))
         default_market_cap = float(os.environ.get("MAX_MARKET_MARGIN_UTILIZATION_PCT", "100.0"))
         self.max_market_margin_utilization_pct: dict[str, float] = {
-            "commodity": float(os.environ.get("COMMODITY_MAX_MARGIN_PCT", default_market_cap)),
             "currency": float(os.environ.get("CURRENCY_MAX_MARGIN_PCT", default_market_cap)),
             "equity": float(os.environ.get("EQUITY_MAX_MARGIN_PCT", default_market_cap)),
         }

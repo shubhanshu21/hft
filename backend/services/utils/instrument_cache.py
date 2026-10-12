@@ -53,7 +53,6 @@ REQUEST_TIMEOUT = 30
 
 MASTER_URLS = {
     "NSE": "https://assets.upstox.com/market-quote/instruments/exchange/NSE.csv.gz",
-    "MCX": "https://assets.upstox.com/market-quote/instruments/exchange/MCX.csv.gz",
     "BSE": "https://assets.upstox.com/market-quote/instruments/exchange/BSE.csv.gz",
 }
 
@@ -177,54 +176,14 @@ class InstrumentCache:
 
     def resolve_key(self, symbol: str) -> str | None:
         """
-        Resolve `symbol` as an equity, an index, OR an MCX commodity —
-        tries the equity segment first (resolve_equity_key), then the
-        INDEX segment, then falls back to the nearest MCX commodity
-        future (see resolve_commodity_key — MCX has no separate "spot"
-        instrument at all, only futures/options-on-futures, so the
-        nearest future IS the underlying's tradable instrument_key).
-        Lets callers pass a plain ticker ('RELIANCE', 'NIFTY', or 'GOLD')
-        without needing to know in advance which segment it's in.
-
-        Index rows carry a matching `tradingsymbol` (e.g. 'NIFTY' →
-        'NSE_INDEX|Nifty 50', 'BANKNIFTY' → 'NSE_INDEX|Nifty Bank').
-
-        Returns:
-            Instrument key string, or None if not found in any segment.
+        Resolve `symbol` as an equity, then as an index -- lets callers pass a plain ticker ('RELIANCE' or 'NIFTY')
+        without knowing its segment. Index rows carry a matching `tradingsymbol` (e.g. 'NIFTY' ->
+        'NSE_INDEX|Nifty 50', 'BANKNIFTY' -> 'NSE_INDEX|Nifty Bank'). Returns None if found in neither.
         """
         key = self.resolve_equity_key(symbol)
         if key:
             return key
-        key = self._resolve_index(symbol.upper().strip())
-        if key:
-            return key
-        commodity = self.resolve_commodity_key(symbol)
-        return commodity[0] if commodity else None
-
-    def resolve_commodity_key(self, symbol: str) -> tuple | None:
-        """
-        Return (instrument_key, expiry) of the nearest-dated MCX future
-        for `symbol` (e.g. 'GOLD', 'CRUDEOIL', 'SILVERM'), or None if it
-        has no listed MCX contract. MCX commodities have no cash-spot
-        instrument in Upstox's model at all — every price (for ATM-strike
-        calc, Black-76 F, live LTP) comes from this nearest future, same
-        role NSE's resolve_nearest_future_key() plays for Greeks there
-        (the difference: for MCX this IS the underlying's own tradable
-        key, not just a Greeks input — MCX options are ALREADY
-        futures-struck, so Black-76 needs no separate spot-vs-futures
-        distinction for commodities).
-        """
-        import re
-        df = self.get_or_refresh()
-        symbol = symbol.upper().strip()
-        fut = df[(df["exchange"] == "MCX_FO") & (df["instrument_type"] == "FUTCOM")]
-        pattern = re.compile(rf"^{re.escape(symbol)}\d{{2}}[A-Z]{{3}}FUT$")
-        matches = fut[fut["symbol"].astype(str).str.match(pattern)]
-        if matches.empty:
-            return None
-        matches = matches.sort_values("expiry")
-        row = matches.iloc[0]
-        return str(row["instrument_key"]), str(row["expiry"])
+        return self._resolve_index(symbol.upper().strip())
 
     def resolve_lot_size(self, symbol: str) -> int | None:
         """
@@ -251,7 +210,7 @@ class InstrumentCache:
         try:
             import re
             pattern = re.compile(rf"^{re.escape(symbol)}\d{{2}}[A-Z]{{3}}")
-            fo = df[df["exchange"].isin(("NSE_FO", "MCX_FO", "BSE_FO"))]
+            fo = df[df["exchange"].isin(("NSE_FO", "BSE_FO"))]
             matches = fo[fo["symbol"].astype(str).str.match(pattern)]
             if matches.empty:
                 log.warning("No F&O contracts found for '%s' to resolve lot size from.", symbol)
@@ -297,7 +256,7 @@ class InstrumentCache:
         try:
             import re
             pattern = re.compile(rf"^{re.escape(symbol)}\d{{2}}[A-Z]{{3}}")
-            fo = df[df["exchange"].isin(("NSE_FO", "MCX_FO", "BSE_FO"))]
+            fo = df[df["exchange"].isin(("NSE_FO", "BSE_FO"))]
             matches = fo[fo["symbol"].astype(str).str.match(pattern)]
             matches = matches[matches["option_type"].isin(["CE", "PE"])]
             if matches.empty:
@@ -325,23 +284,22 @@ class InstrumentCache:
     def list_tradable_symbols(self) -> dict:
         """
         Every underlying that actually has listed F&O contracts today,
-        split into stocks/indices/commodities — sourced from the real
-        downloaded instrument master (NSE_FO + MCX_FO futures rows), not
+        split into stocks/indices — sourced from the real
+        downloaded instrument master (NSE_FO futures rows), not
         any hardcoded convenience list. Used by the control-panel API so a
         user can pick from what's genuinely tradable right now, not just
         the ~11 stocks config.py happens to mention for --all bulk-
         download purposes.
 
         Futures tradingsymbols follow `{SYMBOL}{2-digit-year}{3-letter
-        -month}FUT` (e.g. 'RELIANCE26AUGFUT', 'GOLD27FEBFUT') — the
+        -month}FUT` (e.g. 'RELIANCE26AUGFUT', 'NIFTY27FEBFUT') — the
         underlying ticker is recovered by stripping that trailing
         date+FUT suffix, then deduplicated across the (usually 3) listed
-        expiries. Same pattern for both exchanges.
+        expiries.
         """
         import re
         df = self.get_or_refresh()
         fut = df[df["exchange"] == "NSE_FO"]
-        mcx_fut = df[(df["exchange"] == "MCX_FO") & (df["instrument_type"] == "FUTCOM")]
         pattern = re.compile(r"^([A-Z0-9\-&]+?)\d{2}[A-Z]{3}FUT$")
 
         def _extract(symbols) -> list:
@@ -355,13 +313,12 @@ class InstrumentCache:
         return {
             "stocks": _extract(fut[fut["instrument_type"] == "FUTSTK"]["symbol"]),
             "indices": _extract(fut[fut["instrument_type"] == "FUTIDX"]["symbol"]),
-            "commodities": _extract(mcx_fut["symbol"]),
         }
 
     def resolve_nearest_future_key(self, symbol: str) -> tuple | None:
         """
         Return (instrument_key, expiry) of the nearest-dated future for
-        `symbol` (NSE_FO/BSE_FO/MCX_FO — same exchange set resolve_lot_size/
+        `symbol` (NSE_FO/BSE_FO — same exchange set resolve_lot_size/
         resolve_strike_step already search), or None if it has no listed
         futures contract. Was NSE_FO-only until this fix, which silently
         broke Black-76 Greeks for every SENSEX leg (SENSEX futures list
@@ -377,7 +334,7 @@ class InstrumentCache:
         import re
         df = self.get_or_refresh()
         symbol = symbol.upper().strip()
-        fut = df[(df["exchange"].isin(("NSE_FO", "BSE_FO", "MCX_FO"))) & (df["instrument_type"].isin(["FUTSTK", "FUTIDX"]))]
+        fut = df[(df["exchange"].isin(("NSE_FO", "BSE_FO"))) & (df["instrument_type"].isin(["FUTSTK", "FUTIDX"]))]
         pattern = re.compile(rf"^{re.escape(symbol)}\d{{2}}[A-Z]{{3}}FUT$")
         matches = fut[fut["symbol"].astype(str).str.match(pattern)]
         if matches.empty:
@@ -411,7 +368,7 @@ class InstrumentCache:
     # ------------------------------------------------------------------
 
     def _download_and_cache(self, cache_file: Path) -> pd.DataFrame:
-        """Download and concatenate instrument master CSVs from NSE, MCX, and BSE daily."""
+        """Download and concatenate instrument master CSVs from NSE and BSE daily."""
         dfs = []
         start = time.monotonic()
 
@@ -426,7 +383,7 @@ class InstrumentCache:
                 log.info("Downloaded %s: %d rows", name, len(df_part))
             except Exception as exc:
                 log.error("Failed to download/parse %s master: %s", name, exc)
-                # If NSE fails, we must raise as it's critical. MCX/BSE are optional.
+                # If NSE fails, we must raise as it's critical. BSE is optional.
                 if name == "NSE":
                     log.critical(
                         "Critical instrument master (NSE) download failed: %s. Strategy entries/exits, "
@@ -454,7 +411,7 @@ class InstrumentCache:
 
     def sync_to_db(self, engine) -> None:
         """
-        Download today's NSE, MCX, BSE instruments, concatenate them,
+        Download today's NSE and BSE instruments, concatenate them,
         truncate the MySQL `instruments` table, and bulk-load all of them.
         """
         log.info("Syncing instrument master to MySQL database...")

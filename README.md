@@ -1,6 +1,8 @@
 # Multi-Asset Quantitative Trading Framework (Indian Markets)
 
-An institutional-grade, 100% configurable **quantitative trading framework for Indian markets**, focused on **MCX Commodity Futures** (crude oil, gold, natural gas), **NSE Currency Derivatives** (USDINR/EURINR/GBPINR/JPYINR), and **NSE Equities** (Cash/MIS), trading through Upstox.
+> **Status 2026-10-12 — read first.** MCX commodity was **removed** (user: "remove commodity section totally"): its strategies, cost model, features, engine support and tests are deleted (git history has them). MCX **data is still recorded**: the nightly candle top-up (`markets/commodity/data.py`) and the order-book recorder (`engine/depth_recorder.py`). The 5-minute scalpers of every market were deleted on 2026-10-10, so **no strategy trades** in the paper daemon, which is disabled (`hft-dryrun.service`); only the crypto slow-momentum paper trader runs. Sections below that describe MCX trading, the scalpers or `cli.py backtest` are history. `backend/markets/README.md` lists what exists now.
+
+An institutional-grade, 100% configurable **quantitative trading framework for Indian markets**, built for **MCX Commodity Futures** (removed 2026-10-12, see above), **NSE Currency Derivatives** (USDINR/EURINR/GBPINR/JPYINR), and **NSE Equities** (Cash/MIS), trading through Upstox.
 
 > **Update 2026-09-28:** crypto is back as a PAPER-ONLY slow-momentum trader (BTC/ETH/SOL spot on Binance public data, `engine/crypto_paper.py`, see `docs/CRYPTO_MOMENTUM.md`), added only after a held-out test found a real risk-adjusted edge for slow trend rules; fast crypto scalping and options remain removed.
 >
@@ -204,45 +206,31 @@ Upstox keeps **one active access token per app**: a login from anywhere else inv
 | `TRADING_DIRECTION` | `both` | `both` / `long-only` / `short-only`. |
 | `ALLOW_SHORTS` | `true` | `false` = never open a short, whatever `TRADING_DIRECTION` says. |
 
-### Backtest Defaults (`cli.py backtest`, MCX commodity)
-
-NSE currency and equity are backtested standalone (`python3 -m markets.currency.strategies.tf_5min.scalping.backtest`, `python3 -m markets.equity.strategies.tf_5min.scalping.backtest`).
-
-| Variable | Built-in default | Description |
-|---|---|---|
-| `BACKTEST_SYMBOLS` | *(blank)* | Space-separated symbols, e.g. `CRUDEOILM GOLDM`. Blank = default list. |
-| `BACKTEST_RISK_PCT` | `5.0` | Risk % per trade. |
-| `BACKTEST_LEVERAGE` | *(blank)* | Blank = `INTRADAY_LEVERAGE`. |
-| `BACKTEST_FROM` / `BACKTEST_TO` | *(blank)* | `YYYY-MM-DD`. Blank = full archive. |
-| `BACKTEST_FULL_SESSION` | `false` | `true` = full MCX session; `false` = evening US-overlap window only. Keep equal to `DRYRUN_FULL_SESSION`. |
-
 ### Dry Run (`cli.py dryrun`, the 24/7 daemon)
 
 | Variable | Built-in default | Description |
 |---|---|---|
-| `DRYRUN_SYMBOLS` | *(blank)* | MCX + currency symbols, e.g. `CRUDEOILM GOLDM SILVER USDINR`. Currency pairs are detected by name. |
+| `DRYRUN_SYMBOLS` | *(blank = `USDINR`)* | NSE currency pairs, e.g. `USDINR EURINR`. Any other symbol (MCX included) stops the daemon at start. |
 | `DRYRUN_INCLUDE_EQUITY` | `false` (dry run) | `true` = also trade the fixed NIFTY50 universe (49 names). Extends `DRYRUN_SYMBOLS` rather than replacing it. |
 | `DRYRUN_RISK_PCT` | `5.0` | Risk % per trade. |
 | `DRYRUN_LEVERAGE` | *(blank)* | Blank = `INTRADAY_LEVERAGE`. |
 | `DRYRUN_INTERVAL` | `30` | Scan interval, seconds. |
-| `DRYRUN_FULL_SESSION` | `true` | Full MCX session vs evening-only — see [Session window](#session-window). |
 
 ### Per-Market Risk, Leverage and Switches
 
 | Variable | Built-in default | Description |
 |---|---|---|
-| `COMMODITY_RISK_PCT` / `CURRENCY_RISK_PCT` / `EQUITY_RISK_PCT` | `DRYRUN_RISK_PCT` | Risk % per trade for that market. Per-symbol overrides (e.g. SILVER, CRUDEOILM) live in code: `_SYMBOL_RISK_PCT_OVERRIDE` / `_SYMBOL_LEVERAGE_OVERRIDE` in `engine/live_dryrun.py`. |
-| `COMMODITY_LEVERAGE` / `CURRENCY_LEVERAGE` / `EQUITY_LEVERAGE` | resolved `DRYRUN_LEVERAGE` | Leverage for that market. |
-| `ENABLE_COMMODITY_TRADING` / `ENABLE_CURRENCY_TRADING` | `true` | `false` = no new entries for that market (open positions are still managed). |
+| `CURRENCY_RISK_PCT` / `EQUITY_RISK_PCT` | `DRYRUN_RISK_PCT` | Risk % per trade for that market. Per-symbol overrides (e.g. GBPINR leverage) live in code: `_SYMBOL_RISK_PCT_OVERRIDE` / `_SYMBOL_LEVERAGE_OVERRIDE` in `engine/live_dryrun.py`. |
+| `CURRENCY_LEVERAGE` / `EQUITY_LEVERAGE` | resolved `DRYRUN_LEVERAGE` | Leverage for that market. |
+| `ENABLE_CURRENCY_TRADING` | `true` | `false` = no new entries for that market (open positions are still managed). |
 | `ENABLE_EQUITY_TRADING` | follows `DRYRUN_INCLUDE_EQUITY` | Same, for equity. |
 
 ### Strategy Switches
 
 | Variable | Built-in default | Description |
 |---|---|---|
-| `COMMODITY_STRATEGIES` / `CURRENCY_STRATEGIES` / `EQUITY_STRATEGIES` | strategies with `default_enabled` (the scalpers) | Comma-separated names of the strategy folders under `markets/<market>/` that trade, e.g. `EQUITY_STRATEGIES=scalping,swing`. A strategy file that isn't named here never trades. See [Adding a strategy](#adding-a-strategy). |
+| `CURRENCY_STRATEGIES` / `EQUITY_STRATEGIES` | strategies with `default_enabled` (the scalpers) | Comma-separated names of the strategy folders under `markets/<market>/` that trade, e.g. `EQUITY_STRATEGIES=scalping,swing`. A strategy file that isn't named here never trades. See [Adding a strategy](#adding-a-strategy). |
 | `<MARKET>_<STRATEGY>_RISK_PCT` | the market's risk % | Optional per-strategy risk %, e.g. `EQUITY_SWING_RISK_PCT=1.0`. |
-| `USE_COMMODITY_REGIME_FILTER` | `false` (dry run) | Daily-return-autocorrelation regime gate (`core/regime.py`). **Effective for CRUDEOILM only** — validated for crude; extending it to GOLDM/SILVER was tested and reverted (hurts SILVER, no benefit for GOLDM/USDINR). The old name `USE_CRUDE_REGIME_FILTER` is still read as a fallback. |
 | `USE_EQUITY_REGIME_FILTER` | `false` | Same gate on the NIFTY50 index for all equity entries. Unvalidated. |
 | `ENABLE_MEAN_REVERSION` | `true` in code — **`.env` sets `false`** | VWAP/RSI mean-reversion setup for commodity and equity. Off: it failed out-of-sample on crude (TRAIN PF 2.28 → TEST PF 0.96) and had too few trades elsewhere. Thresholds are hardcoded in the `entry_signal` modules, not env vars. |
 
@@ -251,13 +239,13 @@ NSE currency and equity are backtested standalone (`python3 -m markets.currency.
 | Variable | Built-in default | Description |
 |---|---|---|
 | `MAX_DAILY_LOSS_PCT` | `5.0` | Account-wide daily loss kill switch (% of day-start capital). Halts new entries; open positions are still managed. |
-| `MAX_MARKET_DAILY_LOSS_PCT` | `3.0` | Same, per market (commodity / currency / equity): that market pauses, the others keep trading. |
+| `MAX_MARKET_DAILY_LOSS_PCT` | `3.0` | Same, per market (currency / equity): that market pauses, the others keep trading. |
 | `MARKET_COOLDOWN_MINUTES` | `60` | Pause length after a per-market breach; 1.5x at 150% of the limit, 2x at 200%+. |
 | `MAX_PORTFOLIO_HEAT_PCT` | `8.0` | Total stop-distance risk across **all** open positions, % of capital. Researched range: 4–8% swing, up to ~10% for tight-stop scalpers. |
 | `MAX_MARGIN_UTILIZATION_PCT` | `100.0` | Total margin the open positions may commit, % of capital — margin is one shared pool. A new entry is **sized to the margin still free**, not rejected. Sizing is margin-bound (one trade routinely uses 80–100% of capital), so values well below 100 shrink every position; 90 (with a 50 per-market cap) once blocked essentially every entry. |
-| `MAX_MARKET_MARGIN_UTILIZATION_PCT` | `100.0` | Same, per market, so one market can't crowd out the others. Override per market with `COMMODITY_MAX_MARGIN_PCT` / `CURRENCY_MAX_MARGIN_PCT` / `EQUITY_MAX_MARGIN_PCT`. |
+| `MAX_MARKET_MARGIN_UTILIZATION_PCT` | `100.0` | Same, per market, so one market can't crowd out the others. Override per market with `CURRENCY_MAX_MARGIN_PCT` / `EQUITY_MAX_MARGIN_PCT`. |
 | `MARGIN_REFRESH_MIN` / `MARGIN_MAX_AGE_HOURS` / `MARGIN_VERIFY` | `60` / `6` / `strict` | **Real Upstox margin.** The `*_LEVERAGE` values are only an upper bound: the daemon reads Upstox's margin calculator at start, every `MARGIN_REFRESH_MIN` minutes and before every entry (`engine/margin_rates.py`), never uses more leverage than Upstox gives that symbol (2026-09-24: CRUDEOILM 3.3x, GOLDM 10.7x, SILVER 7.7x, USDINR 42x, NIFTY50 5.0x), cuts an order the account cannot carry, and skips any symbol whose ONE lot needs more margin than the capital (at Rs100k: GOLDM needs Rs140k, SILVER Rs901k). A cached rate older than `MARGIN_MAX_AGE_HOURS` is not trusted (`strict` skips the entry instead). Telegram alerts once when a symbol becomes untradable and when the broker changes a lot size. |
-| `<MARKET>_SQUAREOFF_BEFORE_CLOSE_MIN` / `<MARKET>_LAST_ENTRY_BEFORE_CLOSE_MIN` | commodity `45`/`60`, currency `35`/`50`, equity `35`/`45` | Forced exit and last entry, in minutes **before the day's real close**, which the daemon reads from Upstox every day (`core/sessions.py`, `get_exchange_timings`) - so special or shortened sessions and MCX's daylight-saving shift need no config. Upstox does not publish its auto square-off time through any API (only announced: currency 16:30, MCX 22:50, equity 15:00-15:15), so these two values are the one static policy; the defaults leave the account flat before those times, and `tests/test_sessions.py` fails if they ever do not. |
+| `<MARKET>_SQUAREOFF_BEFORE_CLOSE_MIN` / `<MARKET>_LAST_ENTRY_BEFORE_CLOSE_MIN` | currency `35`/`50`, equity `35`/`45` | Forced exit and last entry, in minutes **before the day's real close**, which the daemon reads from Upstox every day (`core/sessions.py`, `get_exchange_timings`) - so special or shortened sessions and MCX's daylight-saving shift need no config. Upstox does not publish its auto square-off time through any API (only announced: currency 16:30, MCX 22:50, equity 15:00-15:15), so these two values are the one static policy; the defaults leave the account flat before those times, and `tests/test_sessions.py` fails if they ever do not. |
 | `MAX_POSITIONS_PER_SECTOR` | `1` | Max concurrent open equity positions in one sector (`core/sector_correlation.py`). |
 | `TOKEN_CHECK_INTERVAL_MIN` | `15` | How often the daemon re-validates its Upstox token; also re-checked immediately on a broker 401. |
 | `SPREAD_SAMPLE_INTERVAL_MIN` | `5` | How often live bid/ask is sampled per symbol **while its market is open**, feeding the adaptive slippage model (`var/logs/spread_samples.csv`). |

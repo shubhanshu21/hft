@@ -2,7 +2,7 @@
 
 ```
 markets/
-  <market>/                          commodity | currency | equity | crypto
+  <market>/                          currency | equity | crypto   (commodity/: MCX data top-up only, no strategies)
     costs.py  data.py  features.py   shared by every strategy of that market (cost model, data top-up, indicators)
     strategies/
       tf_5min/                       strategies whose signal uses 5-minute bars
@@ -15,28 +15,29 @@ markets/
     experiments/                     throwaway research scripts, never run in production
 ```
 
-Add a strategy: `python3 cli.py new-strategy --market commodity --timeframe 15min --name my_idea` creates
-`markets/commodity/strategies/tf_15min/my_idea/strategy.py` from a template (timeframes: `5min`, `15min`, `1hour`, `daily`). The engine
-discovers it by itself (`core/registry.py`); it only trades once named in `.env`, e.g. `COMMODITY_STRATEGIES=swing,my_idea` (and
-optionally `COMMODITY_MY_IDEA_SYMBOLS=...` to limit it to some symbols). Names must be unique within a market, whatever the timeframe.
+Add a strategy: `python3 cli.py new-strategy --market currency --timeframe 15min --name my_idea` creates
+`markets/currency/strategies/tf_15min/my_idea/strategy.py` from a template (timeframes: `5min`, `15min`, `1hour`, `daily`). The engine
+discovers it by itself (`core/registry.py`); it only trades once named in `.env`, e.g. `CURRENCY_STRATEGIES=my_idea` (and
+optionally `CURRENCY_MY_IDEA_SYMBOLS=...` to limit it to some symbols). Names must be unique within a market, whatever the timeframe.
 A test (`tests/test_strategy_framework.py`) fails if a strategy sits in a folder that does not match its timeframe (`timeframe`, or
 `signal_timeframe` when the signal uses other bars than the ones the runner fetches). Guide: `docs/ADDING_A_STRATEGY.md`. Project
 rule: a credible backtest (>= 15 trades) and a held-out test window before it is switched on, then paper trading.
 
 ## Strategies (2026-10-12; paper trading only -- no real orders anywhere)
 
-Swing only (user, 2026-10-12: "remove scalping, focus on swing strategies, weekly horizon, backtest them first"). Deleted, in git
-history: the 5-minute scalpers (2026-10-10), the EURINR/GBPINR parity scalp and the crypto daily breakout (2026-10-12).
+MCX commodity was removed on 2026-10-12 (user: "remove commodity section totally"): the `swing` (12-month momentum) and `trend`
+(50/200-day EMA) strategies, the commodity cost model, features, research scripts and engine support are deleted (git history). Their
+last test on the real May-Oct 2026 MCX prices lost Rs24,334 on Rs1 lakh. `commodity/data.py` remains ONLY to keep recording MCX candles
+(nightly top-up); the order book is recorded by `engine/depth_recorder.py`. Earlier deletions, also in git history: the 5-minute scalpers
+(2026-10-10), the EURINR/GBPINR parity scalp and the crypto daily breakout (2026-10-12).
 
 | market | folder | what it does | status | backtest / doc |
 |---|---|---|---|---|
-| commodity | `strategies/tf_daily/swing` | 12-month time-series momentum on GOLDTEN / SILVERMIC / CRUDEOILM, ATR stop, held for weeks | paper; test 2019-26 profit factor 1.88 on roll-honest ETF prices (weak, mostly gold) | `docs/SWING_RESEARCH.md` |
-| commodity | `strategies/tf_daily/trend` | 50/200-day EMA trend on the roll-honest ETF proxies (GLD/SLV/USO x INR), ATR stop, held for weeks; trades a contract only when `swing` is not holding it | paper from 2026-10-13; test 2019-26 +4.67% a trade, PF 1.81, 6/8 years (t 1.4, weak) | `docs/SWING_RESEARCH.md` |
 | crypto | `strategies/tf_1hour/momentum.py`, `router.py` | slow volatility-targeted trend ensemble with a BTC regime router (BTC / ETH / SOL), holds weeks | paper on Binance's demo exchange (`hft-crypto.service`) | `docs/CRYPTO_MOMENTUM.md`, `docs/CRYPTO_ALL_WEATHER.md` |
 
-Currency and equity have no strategy now (their cost models, data top-ups and research data stay).
-Crypto strategies are single modules rather than folders: crypto runs on its own engine (`engine/crypto_paper.py`), not the
-`core/strategy.py` framework the other markets share.
+Currency and equity have no strategy now (their cost models, data top-ups and research data stay), so the paper daemon
+(`hft-dryrun.service`) is disabled. Crypto strategies are single modules rather than folders: crypto runs on its own engine
+(`engine/crypto_paper.py`), not the `core/strategy.py` framework the other markets share.
 
-Tested and rejected (in the docs and `var/reports/`): intraday and scalping ideas in every market (`docs/CURRENCY_RESEARCH.md`,
-`docs/COMMODITY_INTRADAY_RESEARCH.md`), currency daily rules, commodity trend portfolios that did no better than holding gold.
+Tested and rejected (in the docs, `var/reports/` and git history): intraday and scalping ideas in every market
+(`docs/CURRENCY_RESEARCH.md`), currency daily rules, MCX commodity swing / trend / intraday research.

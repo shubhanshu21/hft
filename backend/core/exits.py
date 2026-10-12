@@ -21,15 +21,14 @@ from datetime import datetime, timedelta
 from core.strategy import ExitDecision
 
 BE_LOCK_BUFFER_PCT = 0.0020       # stop moves to entry +0.20% once the breakeven level is reached
-FIXED_TP_TRAIL_MULT = 0.30        # commodity / currency trail distance, in stop-distances
+FIXED_TP_TRAIL_MULT = 0.30        # currency trail distance, in stop-distances
 
 
 def lock_stop(entry: float, trigger: float, d: int) -> float:
     """The stop a breakeven / trail arm moves to: entry +/- BE_LOCK_BUFFER_PCT, but NEVER beyond the trigger level.
     The arm fires only after price reached `trigger`, so a stop at or inside it is a price that really traded. A fixed 0.20% lock beyond
     the trigger is a stop ABOVE the market: the paper fill then happens at a price that never traded. That is common for currency, where
-    the trigger is ~0.04% from entry (USDINR 2026-09-23: entry 95.715, best price after entry 95.7525, "exit" 95.906 for +Rs957).
-    Commodity is unaffected (its 0.35% minimum stop puts the trigger at >= 0.21%, above the 0.20% lock)."""
+    the trigger is ~0.04% from entry (USDINR 2026-09-23: entry 95.715, best price after entry 95.7525, "exit" 95.906 for +Rs957)."""
     return entry + min(BE_LOCK_BUFFER_PCT * entry, abs(trigger - entry)) * d
 
 
@@ -131,7 +130,7 @@ def _deadline(now: datetime, close_at: tuple[int, int] | None) -> datetime | Non
 def fixed_tp_breakeven_trail(pos: dict, latest: dict, now: datetime, *,
                              close_at: tuple[int, int] | None,
                              max_hold_s: float | None) -> ExitDecision | None:
-    """Fixed take-profit, initial stop, then a breakeven lock + trailing stop (MCX / NSE currency).
+    """Fixed take-profit, initial stop, then a breakeven lock + trailing stop (NSE currency).
 
     Needs pos["tp"], pos["be"], pos["armed_be"], pos["current_stop"], pos["best_price"], pos["stop_dist"].
     close_at = (hour, minute) of the forced end-of-day exit, or None for a strategy held overnight.

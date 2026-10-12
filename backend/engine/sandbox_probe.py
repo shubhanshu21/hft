@@ -3,7 +3,7 @@
     python3 -m engine.sandbox_probe [--json out.json]
 
 Sends a small matrix of orders to the sandbox (never the live API) and prints accepted / rejected with Upstox's own error text: for each traded contract the
-quantity as lots AND as units, both MARKET and LIMIT. Question it answers: does the sandbox enforce lot / unit rules for MCX and currency, and which
+quantity as lots AND as units, both MARKET and LIMIT. Question it answers: does the sandbox enforce lot / unit rules for currency, and which
 quantity does it accept? If it accepts both (or rejects both for an unrelated reason) the sandbox does not enforce the rule and the question stays open --
 that itself is a finding. Results are saved to var/logs/sandbox_probe.json. Needs UPSTOX_SANDBOX_TOKEN in backend/.env.
 """
@@ -22,9 +22,6 @@ from services.broker import sandbox_client
 MATRIX = [
     ("equity",            "RELIANCE",  [1, 100],       "shares"),
     ("currency (USDINR)", "USDINR",    [1, 1000, 4000], "1 = one lot if lots; 1000 = one lot if units"),
-    ("commodity crude",   "CRUDEOILM", [1, 10, 100],   "1 = one lot if lots; 10 = one lot if units (10 bbl)"),
-    ("commodity silver",  "SILVERMIC", [1, 3],         "1 kg lot: identical in lots and units"),
-    ("commodity gold",    "GOLDM",     [1, 10, 100],   "master lot 100 g, price basis 10 g: the ambiguous one"),
 ]
 
 

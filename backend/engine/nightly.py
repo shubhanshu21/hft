@@ -23,7 +23,7 @@ from core.paths import ARCHIVE_ROOT
 PY = sys.executable
 STEP_TIMEOUT_S = 45 * 60
 STEPS = [                            # (name, argv, exit codes that count as success)
-    ("commodity data", [PY, "-m", "markets.commodity.data", "--topup"], {0}),
+    ("mcx data", [PY, "-m", "markets.commodity.data", "--topup"], {0}),          # recorded only: MCX is not traded since 2026-10-12
     ("currency data", [PY, "-m", "markets.currency.data", "--topup"], {0}),
     ("equity data", [PY, "-m", "markets.equity.data", "--topup"], {0}),
     ("research data", [PY, "-m", "engine.research_data", "all", "--max-minutes", "40"], {0}),     # 1-minute stocks/indexes, futures/options OI, NSE participant OI;

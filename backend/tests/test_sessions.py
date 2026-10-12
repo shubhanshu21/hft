@@ -45,13 +45,15 @@ class TestDefaultsAreInsideUpstoxsAutoSquareOff(unittest.TestCase):
             self.assertLess(sessions.last_entry_min(market), sessions.squareoff_min(market), market)      # no entry at the very minute of the exit
 
     def test_the_documented_defaults(self):
-        self.assertEqual(sessions.squareoff_clock("commodity"), (22, 45))
         self.assertEqual(sessions.squareoff_clock("currency"), (16, 25))
         self.assertEqual(sessions.squareoff_clock("equity"), (14, 55))
-        self.assertEqual(sessions.last_entry_since_open("commodity"), 810)        # 22:30 in minutes after 09:00
         self.assertEqual(sessions.last_entry_since_open("currency"), 430)         # 16:10
         self.assertEqual(sessions.squareoff_since_open("equity"), 340)            # 14:55 in minutes after 09:15
         self.assertEqual(sessions.last_entry_since_open("equity"), 330)           # 14:45
+
+    def test_mcx_is_not_a_session_any_more(self):
+        self.assertNotIn("commodity", sessions.DEFAULT_WINDOWS)                   # MCX commodity was removed 2026-10-12
+        self.assertNotIn("MCX", sessions.UPSTOX_EXCHANGE.values())
 
 
 class TestHoursAreReadFromUpstox(unittest.TestCase):
@@ -64,16 +66,16 @@ class TestHoursAreReadFromUpstox(unittest.TestCase):
         self.addCleanup(p.stop)
 
     def test_todays_real_hours_replace_the_defaults(self):
-        FakeTimingsApi.rows = [_row("MCX", (9, 0), (23, 55)), _row("CDS", (9, 0), (17, 0)), _row("NSE", (9, 15), (15, 30))]
+        FakeTimingsApi.rows = [_row("MCX", (9, 0), (23, 55)), _row("CDS", (9, 0), (17, 30)), _row("NSE", (9, 15), (15, 30))]
         changes = sessions.refresh(object(), date(2026, 9, 24))
-        self.assertEqual(sessions.window("commodity"), (540, 23 * 60 + 55))
-        self.assertEqual(len(changes), 1)
-        self.assertIn("commodity (MCX) hours 09:00-23:30 -> 09:00-23:55", changes[0])
+        self.assertEqual(sessions.window("currency"), (540, 17 * 60 + 30))
+        self.assertEqual(len(changes), 1)                                            # MCX is listed by Upstox but no longer tracked
+        self.assertIn("currency (CDS) hours 09:00-17:00 -> 09:00-17:30", changes[0])
 
     def test_exits_follow_the_days_real_close(self):
-        FakeTimingsApi.rows = [_row("MCX", (9, 0), (23, 55)), _row("NSE", (9, 15), (13, 0))]        # MCX daylight-saving close, and a shortened equity session
+        FakeTimingsApi.rows = [_row("CDS", (9, 0), (17, 30)), _row("NSE", (9, 15), (13, 0))]        # a longer currency day, and a shortened equity session
         sessions.refresh(object(), date(2026, 11, 1))
-        self.assertEqual(sessions.squareoff_clock("commodity"), (23, 10))            # close - 45 min
+        self.assertEqual(sessions.squareoff_clock("currency"), (16, 55))             # close - 35 min
         self.assertEqual(sessions.squareoff_clock("equity"), (12, 25))               # close - 35 min: a half-day session is handled without code changes
         self.assertLess(sessions.last_entry_min("equity"), sessions.window("equity")[1])
 
@@ -82,24 +84,24 @@ class TestHoursAreReadFromUpstox(unittest.TestCase):
         self.assertEqual(sessions.refresh(object(), date(2026, 9, 24)), [])
 
     def test_a_failed_call_keeps_the_last_known_hours_and_never_raises(self):
-        FakeTimingsApi.rows = [_row("MCX", (9, 0), (23, 55))]
+        FakeTimingsApi.rows = [_row("CDS", (9, 0), (17, 30))]
         sessions.refresh(object(), date(2026, 9, 24))
         FakeTimingsApi.fail = True
         self.assertEqual(sessions.refresh(object(), date(2026, 9, 25)), [])
-        self.assertEqual(sessions.window("commodity"), (540, 23 * 60 + 55))
+        self.assertEqual(sessions.window("currency"), (540, 17 * 60 + 30))
 
     def test_a_market_with_no_session_that_day_keeps_its_previous_hours(self):
-        FakeTimingsApi.rows = [_row("MCX", (9, 0), (23, 55))]
+        FakeTimingsApi.rows = [_row("CDS", (9, 0), (17, 30))]
         sessions.refresh(object(), date(2026, 9, 24))
         FakeTimingsApi.rows = []                                                     # holiday: Upstox lists no exchanges
         sessions.refresh(object(), date(2026, 10, 2))
-        self.assertEqual(sessions.window("commodity"), (540, 23 * 60 + 55))
+        self.assertEqual(sessions.window("currency"), (540, 17 * 60 + 30))
 
     def test_is_open_uses_the_live_window(self):
-        FakeTimingsApi.rows = [_row("MCX", (9, 0), (23, 55))]
+        FakeTimingsApi.rows = [_row("CDS", (9, 0), (17, 30))]
         sessions.refresh(object(), date(2026, 9, 24))
-        self.assertTrue(sessions.is_open("commodity", datetime(2026, 9, 24, 23, 45, tzinfo=IST)))
-        self.assertFalse(sessions.is_open("currency", datetime(2026, 9, 24, 23, 45, tzinfo=IST)))
+        self.assertTrue(sessions.is_open("currency", datetime(2026, 9, 24, 17, 20, tzinfo=IST)))
+        self.assertFalse(sessions.is_open("equity", datetime(2026, 9, 24, 17, 20, tzinfo=IST)))
 
     def test_policy_can_be_overridden_from_the_environment_if_upstox_announces_a_new_time(self):
         import os

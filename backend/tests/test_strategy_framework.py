@@ -15,16 +15,16 @@ from core.strategy import EntryContext, ExitDecision, Signal, Strategy
 
 # Pinned runner settings, so these tests never read the operator's .env.
 ENV = {
-    "USE_COMMODITY_REGIME_FILTER": "false", "USE_CRUDE_REGIME_FILTER": "false", "USE_EQUITY_REGIME_FILTER": "false",
-    "ENABLE_MEAN_REVERSION": "false", "DRYRUN_INCLUDE_EQUITY": "true", "DRYRUN_FULL_SESSION": "true",
-    "ENABLE_COMMODITY_TRADING": "true", "ENABLE_CURRENCY_TRADING": "true", "ENABLE_EQUITY_TRADING": "true",
-    "COMMODITY_RISK_PCT": "4.0", "COMMODITY_LEVERAGE": "5.0", "CURRENCY_RISK_PCT": "4.0", "CURRENCY_LEVERAGE": "5.0",
-    "EQUITY_RISK_PCT": "4.0", "EQUITY_LEVERAGE": "5.0", "CRUDEOILM_RISK_PCT": "3.0", "SILVER_RISK_PCT": "5.0",
+    "USE_EQUITY_REGIME_FILTER": "false",
+    "ENABLE_MEAN_REVERSION": "false", "DRYRUN_INCLUDE_EQUITY": "true",
+    "ENABLE_CURRENCY_TRADING": "true", "ENABLE_EQUITY_TRADING": "true",
+    "CURRENCY_RISK_PCT": "4.0", "CURRENCY_LEVERAGE": "5.0",
+    "EQUITY_RISK_PCT": "4.0", "EQUITY_LEVERAGE": "5.0",
     "MAX_PORTFOLIO_HEAT_PCT": "12.0", "MAX_DAILY_LOSS_PCT": "5.0",
     "MAX_MARKET_DAILY_LOSS_PCT": "3.0", "MARKET_COOLDOWN_MINUTES": "60", "MAX_MARGIN_UTILIZATION_PCT": "1000.0",
     "MAX_MARKET_MARGIN_UTILIZATION_PCT": "1000.0", "MAX_POSITIONS_PER_SECTOR": "1", "MARGIN_VERIFY": "off",
-    "EQUITY_PULLBACK_FRAC": "0", "COMMODITY_PULLBACK_FRAC": "0", "CURRENCY_PULLBACK_FRAC": "0", "CRUDEOILM_PULLBACK_FRAC": "0",
-    "LIVE_BAR_COMPLETE_LAG_S": "0", "COMMODITY_STRATEGIES": "", "CURRENCY_STRATEGIES": "", "EQUITY_STRATEGIES": "",
+    "EQUITY_PULLBACK_FRAC": "0", "CURRENCY_PULLBACK_FRAC": "0",
+    "LIVE_BAR_COMPLETE_LAG_S": "0", "CURRENCY_STRATEGIES": "", "EQUITY_STRATEGIES": "",
 }
 
 IST = timezone(timedelta(hours=5, minutes=30))
@@ -76,9 +76,10 @@ def _table(*extra):
 
 
 class TestRegistry(unittest.TestCase):
-    def test_the_existing_strategies_are_discovered_without_any_list(self):
-        found = set(registry.discover())
-        self.assertIn(("commodity", "swing"), found)
+    def test_discovery_needs_no_list_and_only_accepts_the_two_markets(self):
+        found = registry.discover()                    # walks every markets/<market>/strategies folder; a broken strategy file would raise here
+        self.assertEqual(registry.MARKETS, ("currency", "equity"))                  # MCX commodity was removed 2026-10-12
+        self.assertTrue(all(m in registry.MARKETS for m, _ in found))
 
     def test_new_strategies_stay_off_until_named_in_env(self):
         with patch.object(registry, "discover", lambda: _table(ToySwing())), patch.dict(os.environ, {}, clear=False):
@@ -246,7 +247,7 @@ class TestOvernightStrategyInLiveTrader(unittest.TestCase):
 
     def _signal(self):
         return ToySwing().entry(EntryContext(symbol="TATASTEEL", candles=[_bar(200.0)], now=datetime.now(IST), instrument_key="IK|T",
-                                             capital=100000.0, risk_pct=4.0, leverage=1.0, direction_filter="both", full_session=True))
+                                             capital=100000.0, risk_pct=4.0, leverage=1.0, direction_filter="both"))
 
     def test_real_orders_use_the_delivery_product_and_are_funds_checked_at_1x(self):
         broker, trader = self._trader()
@@ -294,23 +295,23 @@ class TestScaffold(unittest.TestCase):
         self.assertIsInstance(strat, Strategy)
         self.assertEqual((strat.market, strat.name), ("equity", "swing_trend"))
         ctx = EntryContext(symbol="X", candles=[_bar(100.0)], now=datetime.now(IST), instrument_key="K", capital=1e5,
-                           risk_pct=4.0, leverage=5.0, direction_filter="both", full_session=True)
+                           risk_pct=4.0, leverage=5.0, direction_filter="both")
         self.assertIsNone(strat.entry(ctx))                     # inert until the author writes entry()
         self.assertTrue((root / "equity" / "strategies" / "tf_5min" / "swing_trend" / "__init__.py").exists())
 
     def test_strategies_of_one_market_and_timeframe_sit_side_by_side_by_timeframe(self):
         from core import registry, scaffold
         root = Path(tempfile.mkdtemp())
-        a = scaffold.create("commodity", "carry", root=root, timeframe="daily")
-        b = scaffold.create("commodity", "trend", root=root, timeframe="daily")
-        c = scaffold.create("commodity", "fade", root=root, timeframe="15min")
+        a = scaffold.create("currency", "carry", root=root, timeframe="daily")
+        b = scaffold.create("currency", "trend", root=root, timeframe="daily")
+        c = scaffold.create("currency", "fade", root=root, timeframe="15min")
         self.assertEqual(a.parent.parent, b.parent.parent)                     # two daily strategies in one tf_daily folder
         self.assertEqual(a.parent.parent.name, "tf_daily")
         self.assertEqual(c.parent.parent.name, "tf_15min")
         self.assertIn('timeframe = ("days", 1)', a.read_text())
         self.assertIn("lookback_days = 250", a.read_text())
         with self.assertRaises(ValueError):
-            scaffold.create("commodity", "x", root=root, timeframe="3min")
+            scaffold.create("currency", "x", root=root, timeframe="3min")
 
     def test_every_strategy_lives_in_the_folder_of_its_signal_timeframe(self):
         from core import registry
@@ -322,10 +323,10 @@ class TestScaffold(unittest.TestCase):
     def test_it_refuses_bad_names_unknown_markets_and_overwrites(self):
         from core import scaffold
         root = Path(tempfile.mkdtemp())
-        scaffold.create("commodity", "carry", root=root)
+        scaffold.create("currency", "carry", root=root)
         with self.assertRaises(FileExistsError):
-            scaffold.create("commodity", "carry", root=root)
-        for market, name in [("equity", "Bad Name"), ("equity", "1abc"), ("futures", "ok")]:
+            scaffold.create("currency", "carry", root=root)
+        for market, name in [("equity", "Bad Name"), ("equity", "1abc"), ("futures", "ok"), ("commodity", "ok")]:
             with self.assertRaises(ValueError):
                 scaffold.create(market, name, root=root)
 

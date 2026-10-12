@@ -34,7 +34,7 @@ class Signal:
     direction: str                      # "long" | "short"
     entry_price: float
     stop_loss: float
-    qty: int                            # shares (equity) or lots (commodity / currency)
+    qty: int                            # shares (equity) or lots (currency)
     stop_dist: float                    # |entry - stop| in price units
     instrument_key: str | None = None
     lot_size: int = 1                   # units per qty; notional = qty * lot_size * entry_price
@@ -84,8 +84,6 @@ class EntryContext:
     risk_pct: float                     # already scaled by the drawdown rule
     leverage: float                     # 1.0 when the strategy declares uses_leverage = False
     direction_filter: str               # "both" | "long" | "short"
-    full_session: bool                  # MCX full session vs evening-only window
-    regime_ok: bool | None = True       # this symbol's regime gate (None = unknown)
     equity_regime_ok: bool | None = True
     data: MarketData | None = None      # other symbols' bars / live quotes (None in backtests that do not provide them)
 
@@ -103,7 +101,7 @@ class Strategy:
 
     # ---- declare ---------------------------------------------------------------
     name: str = ""                      # unique within a market, e.g. "scalping", "swing"
-    market: str = ""                    # "commodity" | "currency" | "equity"
+    market: str = ""                    # "currency" | "equity"
     intraday: bool = True               # False = held overnight: no EOD square-off, no timeout
     product: str = "I"                  # Upstox product for real orders: "I" intraday, "D" delivery
     uses_leverage: bool = True          # False (delivery) = sized and margin-checked at 1x

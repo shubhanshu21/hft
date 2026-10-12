@@ -1,31 +1,10 @@
 """
-core/regime.py — daily-timeframe regime gate for MCX commodity momentum
-strategies.
+core/regime.py — daily-timeframe regime gate: trailing autocorrelation of daily returns.
 
-Built 2026-09-18 after finding CRUDEOILM's intraday momentum thresholds
-were profitable on Aug17-Sep17 (+520%) but a clear net loser on the newly-
-revealed May18-Jul31 (-100%), on the EXACT SAME thresholds -- proving the
-edge is regime-dependent, not threshold-dependent (see
-markets/commodity/strategies/tf_5min/scalping/backtest.py's ENTRY_THRESHOLDS["crude"] comment for the full
-finding). A daily ADX trend-strength gate was tried first and found
-BACKWARDS (the bad period actually had HIGHER daily ADX, 31.4 vs 21.6 --
-high intraday volatility without persistent direction, not the "choppy/low-
-ADX" story the naive hypothesis assumed). The signal that actually worked:
-rolling daily-return AUTOCORRELATION -- positive means consecutive days
-tend to continue (favorable to an intraday momentum strategy), negative
-means they tend to reverse (day-to-day mean reversion, unfavorable). Real
-levels found: May-Jul mean daily-return autocorr(1) = -0.10 (mean-
-reverting), Aug-Sep = +0.18 (trending).
-
-Gating CRUDEOILM's backtested trades by "trailing 15-day autocorr >= 0.0,
-computed as of the prior day's close" took TRAIN from PF 0.75 (net
--Rs25,127 at the loosest gate) toward breakeven/positive (PF 0.99-2.50
-depending on gate strictness) while barely touching TEST's own strong
-performance (PF 1.34-1.45, net +Rs80k-95k vs the full ungated amount) --
-see conversation history for the full sweep. This is NOT a claim that
-day-to-day return autocorrelation is a universal edge -- it's specifically
-the feature that happened to separate these two real, already-observed
-periods. Revisit if it stops working as more real data accumulates.
+Positive autocorrelation means consecutive days tend to continue (favourable to momentum entries), negative means
+they tend to reverse. Used by the runners' optional equity regime filter (USE_EQUITY_REGIME_FILTER, on NIFTY50).
+It was first built for MCX crude scalping (2026-09-18), where it separated two observed periods; that strategy and
+the whole commodity market were removed on 2026-10-12. It is not a validated universal edge.
 """
 from __future__ import annotations
 
@@ -62,7 +41,7 @@ def regime_ok(daily_closes: list[float], window: int = 15, min_autocorr: float =
     # return numpy.bool_, and `numpy.bool_(False) is False` is False (a
     # different object from Python's own bool singleton) even though
     # `==` would agree. Every caller of this function checks the result
-    # with `is False`/`is True` (see markets/commodity/strategies/tf_5min/scalping/backtest.py, entry_signal.py)
+    # with `is False`/`is True`
     # specifically to distinguish a real answer from None -- without this
     # cast, `is False` never matches and the gate silently never blocks
     # anything. Found 2026-09-18 by the gate producing zero effect at all

@@ -26,8 +26,11 @@ _cache: dict = {}
 
 
 def market_of(sym: str) -> str:
-    from markets.equity.universe import NIFTY50_SYMBOLS
-    return "equity" if sym in NIFTY50_SYMBOLS else ("currency" if sym in ("USDINR", "EURINR", "GBPINR", "JPYINR") else "commodity")
+    from core.symbols import market_of as _market_of
+    try:
+        return _market_of(sym)
+    except ValueError:
+        return "other"                   # e.g. MCX rows recorded before commodity trading was removed (2026-10-12)
 
 
 def candles(broker, ikey: str, day: str, minutes: int) -> pd.DataFrame:

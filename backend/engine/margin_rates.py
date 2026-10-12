@@ -1,8 +1,7 @@
 """Real Upstox margin, so sizing never assumes leverage or a lot Upstox would refuse.
 
 Upstox's margin calculator (POST /charges/margin, `broker.get_required_margin`) returns the SPAN + exposure margin it would actually block
-for an order. Measured 2026-09-24 (MIS, per ONE lot / one share): CRUDEOILM Rs27.6k on Rs91k notional = 3.3x; GOLDM Rs140k on Rs1.5M =
-10.7x; SILVER Rs901k on Rs7.0M = 7.7x; USDINR Rs2.3k on Rs96k = 42x; NIFTY50 stocks exactly 20% = 5x. A leverage configured above these is
+for an order. Measured 2026-09-24 (MIS, per ONE lot / one share): USDINR Rs2.3k on Rs96k = 42x; NIFTY50 stocks exactly 20% = 5x. A leverage configured above these is
 imaginary, and a symbol whose ONE lot needs more margin than the account holds cannot trade at all.
 
 Brokers change margins and lot sizes at any time (span revisions, exchange circulars), so nothing here is assumed to stay true:
@@ -74,7 +73,7 @@ def master_lot_size(broker, instrument_key: str) -> int | None:
 
 
 def master_tick_size(broker, instrument_key: str) -> float | None:
-    """The tick Upstox lists, in RUPEES. The instrument master quotes tick_size in PAISE (CRUDEOILM 100 = Rs1, SILVERMIC 100 = Rs1, USDINR 0.25 = Rs0.0025),
+    """The tick Upstox lists, in RUPEES. The instrument master quotes tick_size in PAISE (USDINR 0.25 = Rs0.0025),
     so it is divided by 100. Using the raw number as rupees made the slippage fallback 100x too large."""
     try:
         df = broker._cache.get_or_refresh()
@@ -152,7 +151,7 @@ def cap_leverage(symbol: str, configured: float) -> float:
 
 def refresh(broker, keys: dict[str, str], notional_per_unit, path=None, sleep_s: float = 0.15,
             equity_syms: frozenset = frozenset(), mismatches: list | None = None) -> dict[str, dict]:
-    """Fetch the real MIS margin for ONE unit (1 lot for MCX/NCD futures, 1 share for equity) of every symbol.
+    """Fetch the real MIS margin for ONE unit (1 lot for NCD futures, 1 share for equity) of every symbol.
     `mismatches` (optional list) receives (symbol, previous master lot size, new master lot size) for every contract the broker revised.
     `keys`: symbol -> instrument_key; `notional_per_unit(symbol, price)`: contract value of one unit. Failures keep the previous value."""
     rates = dict(_load(path))
@@ -172,7 +171,7 @@ def refresh(broker, keys: dict[str, str], notional_per_unit, path=None, sleep_s:
             if not 1.0 <= lev <= 200.0:                                        # a ratio outside anything real means a units problem: distrust it, keep the old rate
                 log.error("margin ratio for %s is implausible (%.2fx from notional %.0f / margin %.0f); ignoring this reading", sym, lev, notional, margin)
                 continue
-            # The master's lot_size is NOT in the cost model's units (GOLDM: master 100 g vs a 10x price multiplier; USDINR: 1 vs 1000), so it is only ever
+            # The master's lot_size is NOT in the cost model's units (USDINR: 1 vs 1000), so it is only ever
             # compared with what the MASTER said last time: a change there means the broker revised the contract. The notional is left alone.
             live_lot = master_lot_size(broker, key) if sym.upper() not in equity_syms else None
             prev_lot = (rates.get(sym.upper()) or {}).get("lot_size")

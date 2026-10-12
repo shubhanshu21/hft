@@ -1,5 +1,9 @@
 # Swing-strategy research (equity, commodity, currency)
 
+> **2026-10-12:** MCX commodity was removed from the project. The commodity `swing` and `trend` strategies, the commodity research scripts
+> and the commodity part of `markets/swing_research*.py` are deleted (git history); the commodity sections below are history. On the real
+> May-Oct 2026 MCX prices the live swing rules lost Rs24,334 on Rs1 lakh. `python3 -m markets.swing_research` now covers equity and currency.
+
 Reproduce: `cd backend && python3 -m markets.swing_research`. Engine: `core/swing_engine.py`. Data: `services/data/yahoo.py`.
 Run on 2026-09-23.
 

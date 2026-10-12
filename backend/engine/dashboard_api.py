@@ -251,7 +251,7 @@ def system_info(now: datetime | None = None) -> dict:
                             "close": f"{sessions.window(m)[1] // 60:02d}:{sessions.window(m)[1] % 60:02d}",
                             "last_entry": f"{sessions.last_entry_min(m) // 60:02d}:{sessions.last_entry_min(m) % 60:02d}",
                             "forced_exit": f"{sessions.squareoff_min(m) // 60:02d}:{sessions.squareoff_min(m) % 60:02d}"}
-                           for m in ("commodity", "currency", "equity")]
+                           for m in ("currency", "equity")]
     except Exception:
         out["sessions"] = []
     return out

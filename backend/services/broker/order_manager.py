@@ -3,7 +3,7 @@ broker/order_manager.py — Smart Order Execution & Broker-Side Protection.
 
 Features:
   1. Smart Limit Execution: Dynamic limit order pegging and chasing to capture spread
-     and minimize market impact on MCX / Currency / Equity derivatives.
+     and minimize market impact on Currency / Equity derivatives.
   2. Broker-Side Protection: Automatic Stop-Loss (SL-M) order synchronization with Upstox
      to guard open positions against daemon or server outages.
   3. Pre-flight Margin Pre-Checks: Verification before live order submission.

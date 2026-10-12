@@ -7,6 +7,9 @@ last place a silent behaviour change is acceptable.
 
 The same script drives both APIs (old: _enter / _enter_equity / _exit / _exit_equity taking a signal dict;
 new: _enter(strategy, Signal, ...) / _exit(decision)) so the recorded outputs are directly comparable.
+
+The golden comparison was deleted with the scalpers (2026-10-10) and MCX commodity rows with the market (2026-10-12); FakeBroker and _trader
+are still used by tests/test_strategy_framework.py.
 """
 from __future__ import annotations
 
@@ -72,37 +75,33 @@ class FakeBroker:
 def _trader(broker, db_path):
     from engine import live_trading
     from engine.database import TradingDB
-    env = {"USE_COMMODITY_REGIME_FILTER": "false", "USE_EQUITY_REGIME_FILTER": "false", "ENABLE_MEAN_REVERSION": "false",
-           "EQUITY_PULLBACK_FRAC": "0", "COMMODITY_PULLBACK_FRAC": "0", "CURRENCY_PULLBACK_FRAC": "0", "CRUDEOILM_PULLBACK_FRAC": "0",
+    env = {"USE_EQUITY_REGIME_FILTER": "false", "ENABLE_MEAN_REVERSION": "false",
+           "EQUITY_PULLBACK_FRAC": "0", "CURRENCY_PULLBACK_FRAC": "0",
            "CURRENCY_EXIT_MODE": "fixed", "USDINR_EXIT_MODE": "fixed",
-           "SILVERMIC_INTRADAY_CHOP_WINDOW": "0", "USDINR_INTRADAY_CHOP_WINDOW": "0", "LIVE_BAR_COMPLETE_LAG_S": "0"}
+           "USDINR_INTRADAY_CHOP_WINDOW": "0", "LIVE_BAR_COMPLETE_LAG_S": "0"}
     with patch.dict(os.environ, env), patch.object(live_trading, "_build_symbol_map", lambda: {}):
-        return live_trading.LiveTrader(broker=broker, db=TradingDB(db_path), symbols=["CRUDEOILM"], capital=100000.0,
+        return live_trading.LiveTrader(broker=broker, db=TradingDB(db_path), symbols=["USDINR"], capital=100000.0,
                                        risk_pct=4.0, leverage=5.0, account_id="SCEN")
 
 
 # ---- entry scenarios: (name, market, symbol, direction, entry, sl, extra levels, qty/lots, stop_dist, broker kwargs)
 ENTRIES = [
-    ("mcx_long_fill_at_assumed", "commodity", "CRUDEOILM", "long", 8600.0, 8570.0, {"tp": 8660.0, "be": 8620.0}, 5, 30.0, {}),
-    ("mcx_short_slippage", "commodity", "GOLDM", "short", 150000.0, 150600.0, {"tp": 148800.0, "be": 149600.0}, 3, 600.0, {"fill_offset": 250.0}),
     ("ncd_long", "currency", "USDINR", "long", 95.75, 95.65, {"tp": 96.05, "be": 95.81}, 4, 0.10, {"fill_offset": 0.02}),
     ("eq_long", "equity", "TATASTEEL", "long", 189.9, 188.95, {"activation_price": 190.6, "trail_mult": 0.4}, 2500, 0.95, {}),
     ("eq_short_slippage", "equity", "SBIN", "short", 800.0, 804.0, {"activation_price": 797.0, "trail_mult": 0.3}, 300, 4.0, {"fill_offset": -1.5}),
-    ("funds_insufficient", "commodity", "CRUDEOILM", "long", 8600.0, 8570.0, {"tp": 8660.0, "be": 8620.0}, 5, 30.0, {"funds": 1000.0}),
-    ("order_rejected", "commodity", "CRUDEOILM", "long", 8600.0, 8570.0, {"tp": 8660.0, "be": 8620.0}, 5, 30.0, {"status": "rejected"}),
+    ("funds_insufficient", "currency", "USDINR", "long", 95.75, 95.65, {"tp": 96.05, "be": 95.81}, 4, 0.10, {"funds": 1000.0}),
+    ("order_rejected", "currency", "USDINR", "long", 95.75, 95.65, {"tp": 96.05, "be": 95.81}, 4, 0.10, {"status": "rejected"}),
     ("order_ambiguous", "equity", "TATASTEEL", "long", 189.9, 188.95, {"activation_price": 190.6, "trail_mult": 0.4}, 2500, 0.95, {"status": "open"}),
-    ("no_order_id", "commodity", "CRUDEOILM", "long", 8600.0, 8570.0, {"tp": 8660.0, "be": 8620.0}, 5, 30.0, {"place_returns_id": False}),
+    ("no_order_id", "currency", "USDINR", "long", 95.75, 95.65, {"tp": 96.05, "be": 95.81}, 4, 0.10, {"place_returns_id": False}),
 ]
 
 # ---- exit scenarios: (name, market, symbol, direction, position dict extras, reason, exit price, broker kwargs)
 EXITS = [
-    ("mcx_take_profit", "commodity", "CRUDEOILM", "long", {"tp": 8660.0, "be": 8620.0, "armed_be": True, "current_stop": 8605.0}, "take_profit", 8660.0, {}),
-    ("mcx_stop", "commodity", "CRUDEOILM", "long", {"tp": 8660.0, "be": 8620.0, "armed_be": False, "current_stop": 8570.0}, "initial_stop", 8570.0, {}),
     ("ncd_short_be_stop", "currency", "USDINR", "short", {"tp": 95.4, "be": 95.7, "armed_be": True, "current_stop": 95.74}, "be_stop", 95.74, {"fill_offset": 0.01}),
     ("eq_trail_stop", "equity", "TATASTEEL", "long", {"armed_trail": True, "activation_price": 190.6, "trail_mult": 0.4, "current_stop": 190.2}, "trail_stop", 190.2, {}),
     ("eq_short_initial_stop", "equity", "SBIN", "short", {"armed_trail": False, "activation_price": 797.0, "trail_mult": 0.3, "current_stop": 804.0}, "initial_stop", 804.0, {}),
     ("eq_exit_rejected", "equity", "TATASTEEL", "long", {"armed_trail": False, "activation_price": 190.6, "trail_mult": 0.4, "current_stop": 188.95}, "initial_stop", 188.95, {"status": "rejected"}),
-    ("mcx_exit_ambiguous", "commodity", "CRUDEOILM", "long", {"tp": 8660.0, "be": 8620.0, "armed_be": False, "current_stop": 8570.0}, "initial_stop", 8570.0, {"status": "open"}),
+    ("ncd_exit_ambiguous", "currency", "USDINR", "long", {"tp": 96.05, "be": 95.81, "armed_be": False, "current_stop": 95.65}, "initial_stop", 95.65, {"status": "open"}),
 ]
 
 
@@ -165,9 +164,9 @@ def run() -> dict:
             tmp = Path(tempfile.mkdtemp()) / "s.db"
             broker = FakeBroker(**bk); broker._last_price = price
             trader = _trader(broker, str(tmp))
-            lot = 1 if market == "equity" else (1000 if market == "currency" else {"CRUDEOILM": 10, "GOLDM": 10}.get(sym, 1))
+            lot = 1 if market == "equity" else 1000
             qty = 2500 if market == "equity" else 5
-            entry = {"CRUDEOILM": 8600.0, "USDINR": 95.75, "TATASTEEL": 189.9, "SBIN": 800.0}[sym]
+            entry = {"USDINR": 95.75, "TATASTEEL": 189.9, "SBIN": 800.0}[sym]
             trader.db.open_position(position_id="POS1", symbol=sym, direction=direction, qty=qty, entry_price=entry,
                                     current_stop=extra["current_stop"], target_price=extra.get("tp", extra.get("activation_price")),
                                     breakeven_price=extra.get("be", extra.get("activation_price")), account_id="SCEN")

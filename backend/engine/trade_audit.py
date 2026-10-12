@@ -34,7 +34,6 @@ STATE_PATH = DB_DIR / "audit_state.json"    # position_ids already alerted on, s
 DEFAULT_DAYS = 3                                 # re-audit the last few days each night: a day whose candles were not final yet is picked up next run
 TOL = 0.0005                     # 5 bps: exits are recorded at the stop price; this only absorbs tick rounding
 ENTRY_LOOKBACK_MIN = 10          # the entry is priced off the last CLOSED 5-minute bar, so look back a little
-COMMODITY_STEM = {"GOLDM": "GOLD", "NATGASMINI": "NATURALGAS", "SILVERMIC": "SILVER"}     # traded symbol -> archive file prefix (see markets/commodity/data.py SYMBOLS)
 STOP_LIKE = {"initial_stop", "be_stop", "trail_stop", "stop_loss", "stop"}
 BREAKEVEN_LIKE = {"be_stop", "trail_stop"}
 TARGET_LIKE = {"take_profit", "target"}
@@ -61,8 +60,7 @@ class TradeAudit:
 
 
 def _archive_path(symbol: str, market: str, suffix: str):
-    stem = COMMODITY_STEM.get(symbol, symbol) if market == "commodity" else symbol
-    return ARCHIVE_ROOT / market / f"{stem}_{suffix}.csv"
+    return ARCHIVE_ROOT / market / f"{symbol}_{suffix}.csv"
 
 
 def load_candles(symbol: str, market: str, day: date) -> tuple[pd.DataFrame | None, str]:
@@ -167,9 +165,13 @@ def run_audit(trades: list[dict], loader=load_candles) -> list[TradeAudit]:
     results = []
     for t in trades:
         day = datetime.fromisoformat(str(t["entry_dt"])).date()
+        try:
+            market = market_of(t["symbol"])
+        except ValueError:
+            continue                     # e.g. an MCX trade from before commodity trading was removed (2026-10-12)
         key = (t["symbol"], day)
         if key not in cache:
-            cache[key] = loader(t["symbol"], market_of(t["symbol"]), day)
+            cache[key] = loader(t["symbol"], market, day)
         candles, suffix = cache[key]
         results.append(audit_trade(t, candles, suffix or "1minute"))
     return results

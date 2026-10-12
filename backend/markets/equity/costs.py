@@ -4,8 +4,8 @@ markets/equity/costs.py -- NSE Equity Intraday (MIS) statutory cost model.
 Rebuilt 2026-09-19 (see markets/equity/universe.py's docstring for the
 rebuild context). Rates below are the same ones the prior removed equity
 scalper's README table documented, cross-checked against this project's
-CTT/currency cost modules' own documented rate-verification discipline
-(see commodity_costs.py's RATES_LAST_VERIFIED) -- re-verify against a
+currency cost module's own documented rate-verification discipline
+(see markets/currency/costs.py's RATES_LAST_VERIFIED) -- re-verify against a
 current public rate source if this goes stale.
 """
 from __future__ import annotations
@@ -103,7 +103,7 @@ def compute_nse_equity_delivery_costs(direction: str, entry: float, exit_p: floa
 
 def size_equity_shares(capital: float, entry_price: float, stop_distance: float, risk_pct: float, leverage: float = 5.0) -> int:
     """Sizes integer share quantity via the same dual risk/margin-cap logic as
-    size_commodity_lots/size_currency_lots -- no lot-size multiplier here,
+    size_currency_lots -- no lot-size multiplier here,
     just a 1-share unit."""
     import math
     if capital <= 0 or entry_price <= 0 or stop_distance <= 0:

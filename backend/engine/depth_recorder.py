@@ -3,7 +3,7 @@
     python3 -m engine.depth_recorder            # systemd: hft-depth-recorder.service
 
 Why: order-book imbalance is the one short-horizon predictor with real academic support (Cont, Kukanov & Stoikov), and Upstox keeps no depth
-history (docs/COMMODITY_LEADING_SIGNALS.md); trade-by-trade updates give order flow (volume at the bid vs at the ask); the live option chain
+history; trade-by-trade updates give order flow (volume at the bid vs at the ask); the live option chain
 gives intraday positioning (open interest, implied volatility, Greeks) that the expired-contract history does not contain.
 
 Records only; places no orders and does not touch the trading daemon or its DB. One WebSocket connection (Upstox MarketDataStreamerV3, mode

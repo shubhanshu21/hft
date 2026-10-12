@@ -1,6 +1,6 @@
 """Wider swing-strategy search with the safeguards that make a wide search meaningful.
 
-    python3 -m markets.swing_research_ext [--json out.json] [--markets equity_upstox equity_yahoo commodity currency]
+    python3 -m markets.swing_research_ext [--json out.json] [--markets equity_upstox equity_yahoo currency]
 
 A wide search is only worth anything if luck is controlled, so:
   * THE RULE LIST IS FIXED BELOW, before any result was seen. Every variant tried is counted and reported.
@@ -61,7 +61,6 @@ RANDOM_HOLD, RANDOM_STOP = 10, 3.0
 MARKETS = {                          # key -> (title, allow_short, train_end, has_volume)
     "equity_upstox": ("equity (real Upstox daily, 2022-26)", False, "2024-06-30", True),
     "equity_yahoo": ("equity (Yahoo NSE, 2005-26)", False, "2018-12-31", True),
-    "commodity": ("commodity (USD futures x INR proxy)", True, "2018-12-31", False),
     "currency": ("currency (INR pairs)", True, "2018-12-31", False),
 }
 
@@ -86,9 +85,6 @@ def _load(key: str) -> dict[str, pd.DataFrame]:
                 continue
             out[s] = g
         return out
-    if key == "commodity":
-        from markets.commodity.strategies.tf_daily.swing.proxy import MCX_PROXY, inr_frame
-        return {name: inr_frame(name) for name in MCX_PROXY}
     return {name: fetch_daily(t)[["open", "high", "low", "close"]].dropna() for t, name in CURRENCY.items()}
 
 

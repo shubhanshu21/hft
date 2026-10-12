@@ -54,9 +54,9 @@ def run_main(token_results, scans, env=None):
         return []
 
     base_env = {"DRYRUN_INCLUDE_EQUITY": "false", "TOKEN_CHECK_INTERVAL_MIN": "10", "TOKEN_RETRY_SEC": "30", "TOKEN_MAX_FAST_RETRIES": "5",
-                "MARGIN_REFRESH_MIN": "1", "MARGIN_VERIFY": "off", "USE_COMMODITY_REGIME_FILTER": "false", "USE_EQUITY_REGIME_FILTER": "false"}
+                "MARGIN_REFRESH_MIN": "1", "MARGIN_VERIFY": "off", "USE_EQUITY_REGIME_FILTER": "false"}
     base_env.update(env or {})
-    argv = ["live_dryrun", "--db", str(tmp / "t.db"), "--interval", "30", "--symbols", "CRUDEOILM", "USDINR", "--account", "SMOKE"]
+    argv = ["live_dryrun", "--db", str(tmp / "t.db"), "--interval", "30", "--symbols", "USDINR", "EURINR", "--account", "SMOKE"]
     patches = [
         patch.object(sys, "argv", argv), patch.dict("os.environ", base_env),
         patch.object(live_dryrun, "setup_logger"), patch.object(live_dryrun, "_acquire_process_lock", return_value=object()),

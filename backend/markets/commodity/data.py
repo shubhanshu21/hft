@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
 """
-backend/real_commodity_data.py — REAL MCX Commodity Historical Data (via Upstox).
+markets/commodity/data.py — REAL MCX commodity candles from Upstox, RECORDED ONLY.
 
-Replaces markets/commodity/synthetic_data.py's synthetic random-walk generator for
-CRUDEOILM / NATGASMINI (the only two symbols the live strategy actually
-trades) with genuine historical candles fetched from Upstox's own History
-API -- the same broker this bot already authenticates and live-trades
-through, so no new credentials/account are needed.
+MCX commodity trading was removed on 2026-10-12 (no strategies, cost model or engine support remain); the user asked
+to keep recording MCX data. This top-up runs nightly (engine/nightly.py, step "mcx data") and appends each day's
+candles to var/archive/commodity/. The order book is recorded separately by engine/depth_recorder.py.
 
 IMPORTANT CONSTRAINT: MCX commodity futures are monthly-expiry contracts,
 not continuously-listed instruments like equities -- real history for the

@@ -1,18 +1,17 @@
 """
 markets/currency/costs.py — Official NSE Currency Derivatives (NCD_FO) Statutory Cost & Lot Sizing Model
 
-Mirrors markets/commodity/costs.py's shape exactly, but with the genuinely
-different NSE currency-derivatives fee schedule (verified 2026-09-18 against
+Same result-dict shape as markets/equity/costs.py, with the NSE
+currency-derivatives fee schedule (verified 2026-09-18 against
 public rate sources -- see conversation history):
   1. NO STT/CTT at all -- currency futures/options are exempt (a real cost
-     advantage vs. MCX commodities' 0.01% CTT and NSE equity's 0.025% STT).
+     advantage vs. NSE equity's 0.025% STT).
   2. Upstox Flat/Capped Brokerage (min(₹20, 0.05%) per order leg) -- same
-     convention as the commodity/equity paths.
+     convention as the equity path.
   3. Exchange Transaction Charge: NSE currency segment ~0.0009% of turnover.
   4. Stamp Duty: ₹10 per crore (0.0001%) on buy-side turnover -- reduced
      from ₹200/crore for currency & interest-rate derivatives specifically;
-     do not reuse commodity's 0.002% or equity's 0.003% rate here, they are
-     for different segments.
+     do not reuse equity's 0.003% rate here, it is for a different segment.
   5. SEBI turnover fee: ₹10 per crore (0.0001%), same as every other segment.
   6. 18% GST on (Brokerage + Exchange Charges + SEBI).
   7. Contract multipliers and integer lot sizing per trade.
@@ -23,8 +22,8 @@ import math
 
 from core.slippage import adaptive_slippage_per_leg
 
-# See markets/commodity/costs.py's RATES_LAST_VERIFIED comment -- same
-# freshness discipline, checked by tests/test_rate_freshness.py.
+# Date the rates below were last checked against public sources; tests/test_rate_freshness.py
+# fails once it is too old, so a stale schedule cannot go unnoticed.
 RATES_LAST_VERIFIED = "2026-09-18"
 
 CURRENCY_SPECS = {
@@ -48,13 +47,13 @@ def get_contract_multiplier(symbol: str) -> int:
     """Lot size / multiplier (in units of the base currency) for a currency pair, scaled by any lot-size revision Upstox has made since the
     table was built (engine/margin_rates.lot_scale; 1.0 when unchanged)."""
     from engine import margin_rates
-    sym_clean = symbol.upper().split("|")[-1].split("2")[0]  # strip exchange prefix or expiry, matches commodity_costs.py's convention
+    sym_clean = symbol.upper().split("|")[-1].split("2")[0]  # strip exchange prefix or expiry, the same convention as markets/equity/costs.py
     base = CURRENCY_SPECS[sym_clean]["lot_size"] if sym_clean in CURRENCY_SPECS else 1000     # 3 of the 4 tracked pairs use 1000
     return max(1, round(base * margin_rates.lot_scale(symbol)))
 
 
 def compute_currency_brokerage(trade_val: float) -> float:
-    """Upstox brokerage for one order leg with GST -- identical convention to commodity/equity."""
+    """Upstox brokerage for one order leg with GST -- identical convention to equity."""
     base = min(trade_val * (UPSTOX_BROKERAGE_PCT / 100), UPSTOX_BROKERAGE_CAP)
     return base * (1 + GST_RATE)
 
@@ -98,7 +97,7 @@ def compute_ncd_currency_costs(
     return {
         "gross": round(gross, 2),
         "brokerage": round(brok, 2),
-        "ctt": 0.0,   # kept for shape-parity with compute_mcx_commodity_costs's dict (always zero here)
+        "ctt": 0.0,   # kept for shape-parity with the older MCX cost dict (always zero here)
         "stamp_duty": round(stamp, 2),
         "exchange_txn": round(exch, 2),
         "sebi": round(sebi, 2),
@@ -121,7 +120,7 @@ def size_currency_lots(
     size_mode: str = "margin",
 ) -> int:
     """Sizes integer lots dynamically based on account risk % and leverage margin constraint.
-    Mirrors markets/commodity/costs.py's size_commodity_lots exactly."""
+    Same dual risk/margin-cap logic as markets/equity/costs.py's size_equity_shares."""
     if capital <= 0 or entry_price <= 0 or stop_distance <= 0:
         return 0
 
@@ -140,6 +139,6 @@ def size_currency_lots(
     margin_per_lot = (entry_price * mult) / max(leverage, 1.0)
     if margin_per_lot <= 0:
         return lots_risk
-    lots_margin = math.floor(capital / margin_per_lot)            # 0 when one lot does not fit the account: see size_commodity_lots
+    lots_margin = math.floor(capital / margin_per_lot)            # 0 when one lot does not fit the account: Upstox would reject the order
 
     return min(lots_risk, lots_margin)

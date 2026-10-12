@@ -1,32 +1,5 @@
-import lzma
-import struct
+"""Pullback limit entries (core/entry_pullback.py)."""
 import unittest
-from datetime import date
-
-import numpy as np
-import pandas as pd
-
-
-class DukascopyDecodeTests(unittest.TestCase):
-    def test_decode_one_day(self):
-        from services.data import dukascopy as d
-        # two 1-minute records: (seconds since 00:00 UTC, open, close, low, high, volume); gold is scaled by 1000
-        payload = lzma.compress(struct.pack(">IIIIIf", 0, 2915148, 2914858, 2914428, 2915248, 0.5) + struct.pack(">IIIIIf", 60, 2914858, 2915000, 2914800, 2915100, 0.25))
-        df = d.decode(payload, date(2025, 3, 12), d.SCALE["XAUUSD"])
-        self.assertEqual(len(df), 2)
-        self.assertAlmostEqual(df.loc[0, "open"], 2915.148)
-        self.assertAlmostEqual(df.loc[0, "high"], 2915.248)          # record order is open, close, low, high
-        self.assertAlmostEqual(df.loc[0, "low"], 2914.428)
-        self.assertEqual(str(df.loc[1, "timestamp"]), "2025-03-12 00:01:00+00:00")
-
-    def test_closed_day_is_empty_not_an_error(self):
-        from services.data import dukascopy as d
-        self.assertEqual(len(d.decode(b"", date(2025, 3, 15), 1e3)), 0)
-
-
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 class EntryPullbackTests(unittest.TestCase):
@@ -113,7 +86,7 @@ class PendingBookTests(unittest.TestCase):
             return patch.dict(os.environ, {**keep, **extra}, clear=True)
         with clean({}):
             self.assertIsNone(ep.config_for("RELIANCE", "equity"))
-        with clean({"EQUITY_PULLBACK_FRAC": "0.15", "EQUITY_PULLBACK_THROUGH": "0.02", "CRUDEOILM_PULLBACK_FRAC": "0.2"}):
+        with clean({"EQUITY_PULLBACK_FRAC": "0.15", "EQUITY_PULLBACK_THROUGH": "0.02", "USDINR_PULLBACK_FRAC": "0.2"}):
             self.assertEqual(ep.config_for("RELIANCE", "equity"), (0.15, 3, 0.02))
-            self.assertEqual(ep.config_for("CRUDEOILM", "commodity"), (0.2, 3, 0.0))
-            self.assertIsNone(ep.config_for("SILVERMIC", "commodity"))
+            self.assertEqual(ep.config_for("USDINR", "currency"), (0.2, 3, 0.0))
+            self.assertIsNone(ep.config_for("EURINR", "currency"))

@@ -2,14 +2,9 @@
 markets/equity/features.py -- Feature engineering for 5-min NSE equity intraday (MIS).
 
 Rebuilt 2026-09-19 (see markets/equity/universe.py's docstring for the
-rebuild context). Reuses the same core technical-indicator shape as
-markets/commodity/features.py (momentum, RSI, ADX/DMI/ATR, VWAP, EMA slope,
-ORB, volume surge, candle microstructure) since those are generic
-price-action constructs, not MCX-specific -- but drops commodity_features.py's
-MCX-only constructs entirely (session_phase Asian/Europe/US-core buckets,
-US-open proximity, Wed/Thu EIA inventory windows) since NSE cash equity has
-none of those: one continuous 09:15-15:30 IST session, no overnight/global
-session handoff.
+rebuild context). Generic price-action features (momentum, RSI, ADX/DMI/ATR,
+VWAP, EMA slope, ORB, volume surge, candle microstructure) for one continuous
+09:15-15:30 IST session -- no overnight/global session handoff.
 """
 from __future__ import annotations
 

@@ -26,12 +26,11 @@ class TestMarketClassification(unittest.TestCase):
         self.assertEqual(_get_market("GBPINR"), "currency")
         self.assertEqual(_get_market("JPYINR"), "currency")
 
-    def test_commodity_symbols_classification(self):
-        self.assertEqual(_get_market("CRUDEOILM"), "commodity")
-        self.assertEqual(_get_market("NATGASMINI"), "commodity")
-        self.assertEqual(_get_market("GOLDM"), "commodity")
-        self.assertEqual(_get_market("SILVERM"), "commodity")
-        self.assertEqual(_get_market("COPPER"), "commodity")
+    def test_mcx_symbols_are_not_a_market_any_more(self):
+        """MCX commodity was removed 2026-10-12: a commodity symbol is a configuration error, not a silent third market."""
+        for sym in ("CRUDEOILM", "GOLDTEN", "SILVERMIC"):
+            with self.assertRaises(ValueError):
+                _get_market(sym)
 
 
 class TestMarketCooldownLogic(unittest.TestCase):
@@ -47,11 +46,11 @@ class TestMarketCooldownLogic(unittest.TestCase):
 
         with patch("engine.live_dryrun.TradingDB", return_value=db_instance), \
              patch("engine.live_dryrun.UpstoxBroker", return_value=broker_instance), \
-             patch("engine.live_dryrun._build_symbol_map", return_value={"CRUDEOILM": "MCX_1", "USDINR": "CDS_1", "RELIANCE": "NSE_1"}):
+             patch("engine.live_dryrun._build_symbol_map", return_value={"USDINR": "CDS_1", "RELIANCE": "NSE_1"}):
             runner = DryRunner(
                 broker=broker_instance,
                 db=db_instance,
-                symbols=["CRUDEOILM", "USDINR", "RELIANCE"],
+                symbols=["USDINR", "RELIANCE"],
                 capital=100_000.0,
                 risk_pct=5.0,
                 leverage=4.0,
@@ -64,48 +63,49 @@ class TestMarketCooldownLogic(unittest.TestCase):
         runner = self._create_runner()
         now = datetime(2026, 9, 22, 11, 0, 0, tzinfo=IST)
 
-        pos_commodity = {
-            "position_id": "POS_1", "direction": "long", "entry_price": 6000.0,
-            "lots": 1, "qty": 1, "entry_time": now - timedelta(minutes=30),
-            "current_stop": 5900.0, "tp": 6200.0, "be": 6050.0, "best_price": 6000.0, "armed_be": False, "strategy": "swing"
+        pos_currency = {
+            "position_id": "POS_1", "direction": "long", "entry_price": 96.0,
+            "lots": 4, "qty": 4, "entry_time": now - timedelta(minutes=30),
+            "current_stop": 95.9, "tp": 96.2, "be": 96.05, "best_price": 96.0, "armed_be": False, "strategy": "x"
         }
-        runner.positions["CRUDEOILM"] = pos_commodity
+        runner.positions["USDINR"] = pos_currency
+        strat = MagicMock()
+        strat.costs.return_value = {"net": -3500.0, "gross": -3400.0, "total": 100.0}
+        strat.lot_size.return_value = 1000
 
-        # Simulate closing a commodity position with a Rs 3,500 loss (3.5% of 100k capital)
-        with patch("markets.commodity.strategies.tf_daily.swing.strategy.CommoditySwing.costs", return_value={"net": -3500.0, "gross": -3400.0, "total": 100.0}), \
+        # Simulate closing a currency position with a Rs 3,500 loss (3.5% of 100k capital)
+        with patch.object(runner, "_strategy_of", return_value=strat), \
              patch("services.utils.telegram.send"), \
              patch("services.utils.telegram.alert_exit"):
-            runner._close_position("CRUDEOILM", pos_commodity, 5900.0, "stop_loss", now)
+            runner._close_position("USDINR", pos_currency, 95.9, "stop_loss", now)
 
-        # Commodity should be on cooldown
-        self.assertEqual(runner.market_daily_pnl["commodity"], -3500.0)
-        self.assertEqual(runner.market_cooldown_until["commodity"], now + timedelta(minutes=60))
-        self.assertTrue(runner._is_market_on_cooldown("commodity", now + timedelta(minutes=10)))
+        # Currency should be on cooldown
+        self.assertEqual(runner.market_daily_pnl["currency"], -3500.0)
+        self.assertEqual(runner.market_cooldown_until["currency"], now + timedelta(minutes=60))
+        self.assertTrue(runner._is_market_on_cooldown("currency", now + timedelta(minutes=10)))
 
-        # Currency and Equity markets must remain active (NOT on cooldown)
-        self.assertIsNone(runner.market_cooldown_until["currency"])
+        # Equity must remain active (NOT on cooldown)
         self.assertIsNone(runner.market_cooldown_until["equity"])
-        self.assertFalse(runner._is_market_on_cooldown("currency", now + timedelta(minutes=10)))
         self.assertFalse(runner._is_market_on_cooldown("equity", now + timedelta(minutes=10)))
 
     def test_market_cooldown_expiration(self):
         runner = self._create_runner()
         now = datetime(2026, 9, 22, 11, 0, 0, tzinfo=IST)
-        runner.market_cooldown_until["commodity"] = now + timedelta(minutes=60)
+        runner.market_cooldown_until["currency"] = now + timedelta(minutes=60)
 
         with patch("services.utils.telegram.send"):
             # Before 60 minutes: cooldown is active
-            self.assertTrue(runner._is_market_on_cooldown("commodity", now + timedelta(minutes=30)))
+            self.assertTrue(runner._is_market_on_cooldown("currency", now + timedelta(minutes=30)))
 
             # After 60 minutes: cooldown expires automatically
-            self.assertFalse(runner._is_market_on_cooldown("commodity", now + timedelta(minutes=61)))
-            self.assertIsNone(runner.market_cooldown_until["commodity"])
+            self.assertFalse(runner._is_market_on_cooldown("currency", now + timedelta(minutes=61)))
+            self.assertIsNone(runner.market_cooldown_until["currency"])
 
     def test_trading_day_rollover_resets_cooldown(self):
         runner = self._create_runner()
         now = datetime(2026, 9, 22, 11, 0, 0, tzinfo=IST)
-        runner.market_daily_pnl = {"commodity": -4000.0, "currency": 500.0, "equity": -100.0}
-        runner.market_cooldown_until = {"commodity": now + timedelta(minutes=60), "currency": None, "equity": None}
+        runner.market_daily_pnl = {"currency": -4000.0, "equity": -100.0}
+        runner.market_cooldown_until = {"currency": now + timedelta(minutes=60), "equity": None}
         runner.trading_day = "2026-09-22"
 
         # Simulate new day scan call with patched datetime
@@ -118,8 +118,8 @@ class TestMarketCooldownLogic(unittest.TestCase):
             runner.scan()
 
         self.assertEqual(runner.trading_day, "2026-09-23")
-        self.assertEqual(runner.market_daily_pnl, {"commodity": 0.0, "currency": 0.0, "equity": 0.0})
-        self.assertEqual(runner.market_cooldown_until, {"commodity": None, "currency": None, "equity": None})
+        self.assertEqual(runner.market_daily_pnl, {"currency": 0.0, "equity": 0.0})
+        self.assertEqual(runner.market_cooldown_until, {"currency": None, "equity": None})
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@ Every markets/<market>/strategies/<timeframe>/<name>/strategy.py (timeframe fold
 STRATEGIES (a list of them) is found automatically -- there is no list to edit. Which ones
 actually RUN is chosen per market in .env:
 
-    COMMODITY_STRATEGIES=swing
+    CURRENCY_STRATEGIES=my_idea
 
 If the variable is absent, only strategies with default_enabled = True run (the existing
 scalpers), so dropping in a new strategy file never starts trading by itself.
@@ -19,7 +19,7 @@ from functools import lru_cache
 import markets
 from core.strategy import Strategy
 
-MARKETS = ("commodity", "currency", "equity")
+MARKETS = ("currency", "equity")
 
 
 TIMEFRAME_FOLDERS = {("minutes", 5): "tf_5min", ("minutes", 15): "tf_15min", ("hours", 1): "tf_1hour", ("minutes", 60): "tf_1hour",
@@ -78,7 +78,7 @@ def active(market: str) -> list[Strategy]:
 
 
 def market_of(symbol: str) -> str:
-    """"equity" | "currency" | "commodity" for a traded symbol."""
+    """"equity" | "currency" for a traded symbol (ValueError for anything else)."""
     from core.symbols import market_of as _market_of
     return _market_of(symbol)
 

@@ -1,12 +1,12 @@
 """Trading-session windows per market (IST wall clock), read from Upstox.
 
-Exchange hours are the exchange's to change (special / muhurat / shortened sessions, MCX's US-daylight-saving shift), so the daemon asks Upstox
+Exchange hours are the exchange's to change (special / muhurat / shortened sessions), so the daemon asks Upstox
 each day: `MarketHolidaysAndTimingsApi.get_exchange_timings(date)` returns every exchange's start and end for that date (measured 2026-09-24:
-MCX 09:00-23:30, CDS 09:00-17:00, NSE 09:15-15:30). `refresh()` stores them; `window()` returns today's real hours, or the last values Upstox
+CDS 09:00-17:00, NSE 09:15-15:30). `refresh()` stores them; `window()` returns today's real hours, or the last values Upstox
 gave, or -- only if Upstox has never answered -- DEFAULT_WINDOWS, which are a fallback and never override an answer.
 
 What Upstox does NOT publish through any API is when it auto-squares-off intraday (MIS) positions and charges for it; that is only announced
-(currency 16:30, MCX 22:50, equity 15:00-15:15 in its announcements). So the bot's exits are defined RELATIVE TO THE DAY'S REAL CLOSE by two
+(currency 16:30, equity 15:00-15:15 in its announcements). So the bot's exits are defined RELATIVE TO THE DAY'S REAL CLOSE by two
 documented policy values per market -- SQUAREOFF_BEFORE_CLOSE_MIN and LAST_ENTRY_BEFORE_CLOSE_MIN -- chosen to leave the account flat before
 those announced times (tests/test_sessions.py ties them together). They can be overridden per market from the environment
 (<MARKET>_SQUAREOFF_BEFORE_CLOSE_MIN / <MARKET>_LAST_ENTRY_BEFORE_CLOSE_MIN) if Upstox announces a new time.
@@ -22,35 +22,32 @@ from datetime import date, datetime, timedelta, timezone
 log = logging.getLogger("sessions")
 IST = timezone(timedelta(hours=5, minutes=30))
 
-UPSTOX_EXCHANGE = {"commodity": "MCX", "currency": "CDS", "equity": "NSE"}
+UPSTOX_EXCHANGE = {"currency": "CDS", "equity": "NSE"}
 
 # Fallback ONLY (minutes since midnight IST): used until Upstox has answered once. Never overrides an Upstox answer.
 DEFAULT_WINDOWS: dict[str, tuple[int, int]] = {
-    "commodity": (9 * 60, 23 * 60 + 30),     # MCX 09:00-23:30
     "currency": (9 * 60, 17 * 60),           # NSE currency 09:00-17:00
     "equity": (9 * 60 + 15, 15 * 60 + 30),   # NSE equity 09:15-15:30
 }
 SESSION_WINDOWS = DEFAULT_WINDOWS            # older name, kept for imports
 
 # Policy (Upstox does not publish square-off times via an API). Minutes BEFORE the day's real close.
-#   commodity: exit 22:45 (Upstox announced MCX MIS auto square-off at 22:50), last entry 22:30
 #   currency:  exit 16:25 (Upstox announced currency auto square-off at 16:30), last entry 16:10
 #   equity:    exit 14:55 (Upstox announced 15:00 in 2021, later sources say 15:15; 14:55 is inside both), last entry 14:45
 # Currency was 16:40 / 16:50 until 2026-09-24: USDINR backtest PF 1.00 -> 1.08 at 5x and 1.48 -> 1.57 at 42x when moved
 # (markets/currency/experiments/squareoff_study.py); equity 15:15 -> 14:55 is PF-neutral (markets/equity/experiments/squareoff_study.py).
-SQUAREOFF_BEFORE_CLOSE_MIN = {"commodity": 45, "currency": 35, "equity": 35}
-LAST_ENTRY_BEFORE_CLOSE_MIN = {"commodity": 60, "currency": 50, "equity": 45}
-UPSTOX_ANNOUNCED_AUTO_SQUAREOFF = {"commodity": (22, 50), "currency": (16, 30), "equity": (15, 0)}    # earliest announced; used by the tests
+SQUAREOFF_BEFORE_CLOSE_MIN = {"currency": 35, "equity": 35}
+LAST_ENTRY_BEFORE_CLOSE_MIN = {"currency": 50, "equity": 45}
+UPSTOX_ANNOUNCED_AUTO_SQUAREOFF = {"currency": (16, 30), "equity": (15, 0)}    # earliest announced; used by the tests
 
 # The feature pipeline anchors `minutes_since_open` at these clock minutes (markets/*/features.py), independent of what Upstox reports as the open.
-FEATURE_ANCHOR = {"commodity": 9 * 60, "currency": 9 * 60, "equity": 9 * 60 + 15}
+FEATURE_ANCHOR = {"currency": 9 * 60, "equity": 9 * 60 + 15}
 
 # Static defaults, minutes AFTER the market's open, for the historical backtests (which have no "today" to ask Upstox about).
 CURRENCY_LAST_ENTRY_MIN = DEFAULT_WINDOWS["currency"][1] - LAST_ENTRY_BEFORE_CLOSE_MIN["currency"] - DEFAULT_WINDOWS["currency"][0]       # 430
 CURRENCY_SQUAREOFF_MIN = DEFAULT_WINDOWS["currency"][1] - SQUAREOFF_BEFORE_CLOSE_MIN["currency"] - DEFAULT_WINDOWS["currency"][0]         # 445
 EQUITY_LAST_ENTRY_SINCE_OPEN = DEFAULT_WINDOWS["equity"][1] - LAST_ENTRY_BEFORE_CLOSE_MIN["equity"] - DEFAULT_WINDOWS["equity"][0]            # 330 (14:45)
 EQUITY_SQUAREOFF_SINCE_OPEN = DEFAULT_WINDOWS["equity"][1] - SQUAREOFF_BEFORE_CLOSE_MIN["equity"] - DEFAULT_WINDOWS["equity"][0]          # 340
-COMMODITY_LAST_ENTRY_SINCE_OPEN = DEFAULT_WINDOWS["commodity"][1] - LAST_ENTRY_BEFORE_CLOSE_MIN["commodity"] - DEFAULT_WINDOWS["commodity"][0]   # 810
 UPSTOX_CURRENCY_AUTO_SQUAREOFF = UPSTOX_ANNOUNCED_AUTO_SQUAREOFF["currency"]
 
 _live: dict[str, dict] = {}                  # market -> {"open": min, "close": min, "date": iso, "asof": iso}

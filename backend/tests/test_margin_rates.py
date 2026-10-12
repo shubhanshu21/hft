@@ -10,7 +10,6 @@ from unittest.mock import patch
 import pandas as pd
 
 from engine import margin_rates as mr
-from markets.commodity.costs import size_commodity_lots
 from markets.currency.costs import size_currency_lots
 from markets.equity.costs import size_equity_shares
 
@@ -18,10 +17,10 @@ from markets.equity.costs import size_equity_shares
 class FakeBroker:
     """margin_per_lot can be changed between calls, like a broker revising SPAN margin mid-day."""
 
-    def __init__(self, margin_per_lot=27_623.0, price=9142.0, lot_size=10, fail=False):
+    def __init__(self, margin_per_lot=27_623.0, price=9142.0, lot_size=1000, fail=False):
         self.margin_per_lot, self.price, self.fail = margin_per_lot, price, fail
         self.calls = []
-        self._cache = SimpleNamespace(get_or_refresh=lambda: pd.DataFrame({"instrument_key": ["MCX_FO|1"], "lot_size": [lot_size]}))
+        self._cache = SimpleNamespace(get_or_refresh=lambda: pd.DataFrame({"instrument_key": ["NCD_FO|1"], "lot_size": [lot_size]}))
 
     def get_required_margin(self, key, qty, side, product="D"):
         self.calls.append((key, qty, side, product))
@@ -34,18 +33,16 @@ class FakeBroker:
 
 
 class TestSizingRespectsWhatFits(unittest.TestCase):
-    """Sizing used to force max(1, lots): GOLDM (Rs140k/lot) and SILVER (Rs901k/lot) 'traded' on Rs100k."""
+    """Sizing used to force max(1, lots): a lot the account could not carry still 'traded'."""
 
     def test_a_lot_that_does_not_fit_the_account_is_zero_not_one(self):
-        self.assertEqual(size_commodity_lots(100_000, 150_000, 500, 4.0, "GOLDM", leverage=10.7), 0)        # margin ~Rs140k > Rs100k
-        self.assertEqual(size_commodity_lots(100_000, 232_000, 1_000, 5.0, "SILVER", leverage=7.7), 0)      # margin ~Rs901k
         self.assertEqual(size_currency_lots(1_000, 96.0, 0.1, 4.0, "USDINR", leverage=42.0), 0)             # a tiny account cannot carry one lot
         self.assertEqual(size_equity_shares(100, 1_500.0, 5.0, 4.0, leverage=5.0), 0)                       # one share needs Rs300 of margin
 
     def test_what_fits_is_still_sized_by_the_smaller_of_risk_and_margin(self):
-        self.assertEqual(size_commodity_lots(100_000, 9_142, 60, 10.0, "CRUDEOILM", leverage=3.3), 3)       # real crude: 3 lots on Rs100k
         self.assertGreaterEqual(size_currency_lots(100_000, 96.0, 0.1, 4.0, "USDINR", leverage=42.0), 1)
         self.assertEqual(size_equity_shares(100_000, 1_000.0, 5.0, 4.0, leverage=5.0), 500)                  # risk allows 800 shares, margin (Rs200 each) only 500
+
 
 class TestConfirmOrder(unittest.TestCase):
     def setUp(self):
@@ -60,47 +57,47 @@ class TestConfirmOrder(unittest.TestCase):
         self.addCleanup(env.stop)
 
     def test_an_order_that_fits_passes_and_reports_the_real_margin(self):
-        r = mr.confirm_order(FakeBroker(), "CRUDEOILM", "MCX_FO|1", 3, "BUY", 100_000.0)
+        r = mr.confirm_order(FakeBroker(), "USDINR", "NCD_FO|1", 3, "BUY", 100_000.0)
         self.assertEqual((r["qty"], r["source"]), (3, "upstox"))
         self.assertAlmostEqual(r["margin"], 3 * 27_623.0)
 
     def test_an_order_that_is_too_big_is_cut_to_what_upstox_would_accept(self):
-        r = mr.confirm_order(FakeBroker(), "CRUDEOILM", "MCX_FO|1", 8, "BUY", 100_000.0)         # 8 lots needs Rs221k
+        r = mr.confirm_order(FakeBroker(), "USDINR", "NCD_FO|1", 8, "BUY", 100_000.0)            # 8 lots needs Rs221k
         self.assertEqual(r["qty"], 3)
         self.assertLessEqual(r["margin"], 100_000.0)
         self.assertIn("cut to 3", r["note"])
 
     def test_a_lot_that_cannot_be_afforded_is_skipped(self):
-        r = mr.confirm_order(FakeBroker(margin_per_lot=139_806.0), "GOLDM", "MCX_FO|1", 1, "SELL", 100_000.0)
+        r = mr.confirm_order(FakeBroker(margin_per_lot=139_806.0), "EURINR", "NCD_FO|1", 1, "SELL", 100_000.0)
         self.assertEqual(r["qty"], 0)
         self.assertIn("only Rs100,000 is free", r["note"])
 
     def test_a_margin_increase_since_the_last_refresh_is_caught_on_the_very_next_order(self):
         broker = FakeBroker(margin_per_lot=27_623.0)
-        self.assertEqual(mr.confirm_order(broker, "CRUDEOILM", "MCX_FO|1", 3, "BUY", 100_000.0)["qty"], 3)
+        self.assertEqual(mr.confirm_order(broker, "USDINR", "NCD_FO|1", 3, "BUY", 100_000.0)["qty"], 3)
         broker.margin_per_lot = 55_000.0                                   # the broker doubled SPAN margin
-        self.assertEqual(mr.confirm_order(broker, "CRUDEOILM", "MCX_FO|1", 3, "BUY", 100_000.0)["qty"], 1)
+        self.assertEqual(mr.confirm_order(broker, "USDINR", "NCD_FO|1", 3, "BUY", 100_000.0)["qty"], 1)
 
     def test_the_exact_order_is_priced_intraday_with_the_right_side_and_quantity(self):
         broker = FakeBroker()
-        mr.confirm_order(broker, "CRUDEOILM", "MCX_FO|1", 2, "SELL", 100_000.0)
-        self.assertEqual(broker.calls, [("MCX_FO|1", 2, "SELL", "I")])
+        mr.confirm_order(broker, "USDINR", "NCD_FO|1", 2, "SELL", 100_000.0)
+        self.assertEqual(broker.calls, [("NCD_FO|1", 2, "SELL", "I")])
 
     def test_when_upstox_cannot_answer_a_fresh_cached_rate_is_used_and_a_stale_one_is_not(self):
         fresh = datetime.now().isoformat(timespec="seconds")
-        mr._rates = {"CRUDEOILM": {"margin": 27_623.0, "asof": fresh}}
+        mr._rates = {"USDINR": {"margin": 27_623.0, "asof": fresh}}
         down = FakeBroker(fail=True)
-        r = mr.confirm_order(down, "CRUDEOILM", "MCX_FO|1", 3, "BUY", 100_000.0)
+        r = mr.confirm_order(down, "USDINR", "NCD_FO|1", 3, "BUY", 100_000.0)
         self.assertEqual((r["qty"], r["source"]), (3, "cached"))
-        mr._rates = {"CRUDEOILM": {"margin": 27_623.0, "asof": (datetime.now() - timedelta(hours=7)).isoformat(timespec="seconds")}}
-        r = mr.confirm_order(down, "CRUDEOILM", "MCX_FO|1", 3, "BUY", 100_000.0)
+        mr._rates = {"USDINR": {"margin": 27_623.0, "asof": (datetime.now() - timedelta(hours=7)).isoformat(timespec="seconds")}}
+        r = mr.confirm_order(down, "USDINR", "NCD_FO|1", 3, "BUY", 100_000.0)
         self.assertEqual((r["qty"], r["source"]), (0, "unverified"))          # unverifiable: skipped, not guessed
         mr._rates = {}
-        self.assertEqual(mr.confirm_order(down, "CRUDEOILM", "MCX_FO|1", 3, "BUY", 100_000.0)["qty"], 0)
+        self.assertEqual(mr.confirm_order(down, "USDINR", "NCD_FO|1", 3, "BUY", 100_000.0)["qty"], 0)
 
     def test_verification_can_be_switched_off_for_tests_only(self):
         with patch.dict(os.environ, {"MARGIN_VERIFY": "off"}):
-            r = mr.confirm_order(FakeBroker(fail=True), "CRUDEOILM", "MCX_FO|1", 8, "BUY", 100_000.0)
+            r = mr.confirm_order(FakeBroker(fail=True), "USDINR", "NCD_FO|1", 8, "BUY", 100_000.0)
         self.assertEqual((r["qty"], r["source"]), (8, "off"))
 
 
@@ -115,69 +112,50 @@ class TestRefreshAndLotSize(unittest.TestCase):
 
     def test_leverage_is_notional_over_the_real_margin_and_caps_the_configured_value(self):
         b = FakeBroker(margin_per_lot=27_623.0, price=9142.0)
-        rates = mr.refresh(b, {"CRUDEOILM": "MCX_FO|1"}, self._notional, path=self.path, sleep_s=0)
-        self.assertAlmostEqual(rates["CRUDEOILM"]["leverage"], 91_420 / 27_623, places=2)                 # 3.31x
-        self.assertAlmostEqual(mr.cap_leverage("CRUDEOILM", 10.0), 91_420 / 27_623, places=2)             # 10x configured -> 3.3x allowed
-        self.assertEqual(mr.cap_leverage("CRUDEOILM", 2.0), 2.0)                                          # configured below the limit stays
-        self.assertEqual(mr.cap_leverage("UNKNOWN", 5.0), 5.0)                                            # nothing known: configured value, not a guess
+        rates = mr.refresh(b, {"USDINR": "NCD_FO|1"}, self._notional, path=self.path, sleep_s=0)
+        self.assertAlmostEqual(rates["USDINR"]["leverage"], 91_420 / 27_623, places=2)                 # 3.31x
+        self.assertAlmostEqual(mr.cap_leverage("USDINR", 10.0), 91_420 / 27_623, places=2)             # 10x configured -> 3.3x allowed
+        self.assertEqual(mr.cap_leverage("USDINR", 2.0), 2.0)                                          # configured below the limit stays
+        self.assertEqual(mr.cap_leverage("UNKNOWN", 5.0), 5.0)                                         # nothing known: configured value, not a guess
 
     def test_a_lot_size_change_in_the_master_is_detected_against_what_it_said_last_time(self):
         changed = []
-        mr.refresh(FakeBroker(lot_size=100), {"GOLDM": "MCX_FO|1"}, self._notional, path=self.path, sleep_s=0, mismatches=changed)
+        mr.refresh(FakeBroker(lot_size=100), {"EURINR": "NCD_FO|1"}, self._notional, path=self.path, sleep_s=0, mismatches=changed)
         self.assertEqual(changed, [])                                   # first sight: a baseline, not a change
-        mr.refresh(FakeBroker(lot_size=100), {"GOLDM": "MCX_FO|1"}, self._notional, path=self.path, sleep_s=0, mismatches=changed)
+        mr.refresh(FakeBroker(lot_size=100), {"EURINR": "NCD_FO|1"}, self._notional, path=self.path, sleep_s=0, mismatches=changed)
         self.assertEqual(changed, [])                                   # same value again: still nothing
-        mr.refresh(FakeBroker(lot_size=50), {"GOLDM": "MCX_FO|1"}, self._notional, path=self.path, sleep_s=0, mismatches=changed)
-        self.assertEqual(changed, [("GOLDM", 100, 50)])                 # the broker revised the contract
+        mr.refresh(FakeBroker(lot_size=50), {"EURINR": "NCD_FO|1"}, self._notional, path=self.path, sleep_s=0, mismatches=changed)
+        self.assertEqual(changed, [("EURINR", 100, 50)])                # the broker revised the contract
 
     def test_the_masters_lot_size_is_never_compared_with_the_cost_models_units(self):
-        """The first version compared master lot 100 (GOLDM, grams) with the cost model's 10x price multiplier, cried 'changed', and rescaled the
-        notional to 107x leverage; USDINR (master 1 vs 1000) went to 0.0x. Units differ by design: the notional must stay as computed."""
-        rates = mr.refresh(FakeBroker(lot_size=100, price=150_000.0, margin_per_lot=139_806.0), {"GOLDM": "MCX_FO|1"}, self._notional,
+        """The first version compared the master's lot (USDINR: 1) with the cost model's multiplier (1000), cried 'changed', and rescaled the
+        notional to 0.0x leverage. Units differ by design: the notional must stay as computed."""
+        rates = mr.refresh(FakeBroker(lot_size=1, price=96.0, margin_per_lot=2_300.0), {"USDINR": "NCD_FO|1"}, lambda sym, price: price * 1000,
                            path=self.path, sleep_s=0, mismatches=[])
-        self.assertAlmostEqual(rates["GOLDM"]["notional"], 1_500_000.0)
-        self.assertAlmostEqual(rates["GOLDM"]["leverage"], 1_500_000 / 139_806, places=2)         # 10.7x, not 107x
+        self.assertAlmostEqual(rates["USDINR"]["notional"], 96_000.0)
+        self.assertAlmostEqual(rates["USDINR"]["leverage"], 96_000 / 2_300, places=2)              # 41.7x, not 0.0x
 
     def test_an_implausible_ratio_is_ignored_and_the_previous_rate_kept(self):
-        good = mr.refresh(FakeBroker(), {"A": "MCX_FO|1"}, self._notional, path=self.path, sleep_s=0)
-        bad = mr.refresh(FakeBroker(margin_per_lot=1e12), {"A": "MCX_FO|1"}, self._notional, path=self.path, sleep_s=0)        # 0.0x leverage
+        good = mr.refresh(FakeBroker(), {"A": "NCD_FO|1"}, self._notional, path=self.path, sleep_s=0)
+        bad = mr.refresh(FakeBroker(margin_per_lot=1e12), {"A": "NCD_FO|1"}, self._notional, path=self.path, sleep_s=0)        # 0.0x leverage
         self.assertEqual(bad["A"]["leverage"], good["A"]["leverage"])
 
     def test_a_failing_symbol_keeps_its_previous_rate_and_does_not_lose_the_others(self):
         good = FakeBroker()
-        mr.refresh(good, {"A": "MCX_FO|1", "B": "MCX_FO|1"}, self._notional, path=self.path, sleep_s=0)
+        mr.refresh(good, {"A": "NCD_FO|1", "B": "NCD_FO|1"}, self._notional, path=self.path, sleep_s=0)
         good.fail = True
-        rates = mr.refresh(good, {"A": "MCX_FO|1", "B": "MCX_FO|1"}, self._notional, path=self.path, sleep_s=0)
+        rates = mr.refresh(good, {"A": "NCD_FO|1", "B": "NCD_FO|1"}, self._notional, path=self.path, sleep_s=0)
         self.assertEqual(set(rates), {"A", "B"})
 
     def test_unaffordable_lists_symbols_whose_single_unit_exceeds_the_capital(self):
-        mr._rates = {"GOLDM": {"margin": 139_806.0}, "CRUDEOILM": {"margin": 27_623.0}, "SILVER": {"margin": 900_765.0}}
-        self.assertEqual([s for s, _ in mr.unaffordable(100_000.0, ["CRUDEOILM", "GOLDM", "SILVER"])], ["GOLDM", "SILVER"])
+        mr._rates = {"B": {"margin": 139_806.0}, "A": {"margin": 27_623.0}, "C": {"margin": 900_765.0}}
+        self.assertEqual([s for s, _ in mr.unaffordable(100_000.0, ["A", "B", "C"])], ["B", "C"])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
-class TestSmallCapitalContracts(unittest.TestCase):
-    """At Rs100k the full GOLDM / SILVER contracts cannot trade; the micro contracts use the same price series and fit."""
-
-    def test_the_micro_contracts_have_cost_multipliers_matching_their_lot_and_quote_basis(self):
-        from markets.commodity.costs import get_contract_multiplier
-        self.assertEqual(get_contract_multiplier("SILVERMIC"), 1)          # 1 kg lot, quoted per kg
-        self.assertEqual(get_contract_multiplier("GOLDTEN"), 1)            # 10 g lot, quoted per 10 g
-        self.assertEqual(get_contract_multiplier("GOLDM"), 10)             # 100 g lot, quoted per 10 g
-
-    def test_real_margins_decide_what_fits(self):
-        # margins measured on Upstox 2026-09-24 (MIS, per lot) and prices at that time
-        self.assertEqual(size_commodity_lots(100_000, 235_800, 800, 10.0, "SILVERMIC", leverage=7.8), 3)      # Rs30k/lot -> 3 lots
-        self.assertEqual(size_commodity_lots(100_000, 150_970, 300, 10.0, "GOLDTEN", leverage=10.8), 7)        # Rs14k/lot -> 7 lots
-        self.assertEqual(size_commodity_lots(100_000, 150_970, 300, 10.0, "GOLDM", leverage=10.8), 0)          # Rs140k/lot -> cannot trade
-        self.assertEqual(size_commodity_lots(100_000, 7_011_000 / 30, 800, 10.0, "SILVER", leverage=7.8), 0)   # Rs901k/lot -> cannot trade
-
+class TestMcxContractResolution(unittest.TestCase):
+    """MCX is no longer traded but is still recorded (markets/commodity/data.py, engine/depth_recorder.py): the front contract must be the right one."""
 
     def test_the_gold_prefix_does_not_swallow_the_smaller_gold_contracts(self):
-        from pathlib import Path
         src = Path(__file__).resolve().parent.parent.joinpath("services", "broker", "instruments.py").read_text()
         order = src[src.index('for base in ["CRUDEOILM"'):]
         self.assertLess(order.index('"GOLDTEN"'), order.index('"GOLD",'))         # startswith(): the longer names must be tried first
@@ -195,52 +173,56 @@ class TestLotAndTickChangesFlowIntoSizingAndCosts(unittest.TestCase):
         mr._rates = {}
         self.addCleanup(lambda: setattr(mr, "_rates", None))
 
-    def _refresh(self, lot, tick=100.0):                       # the master quotes tick_size in PAISE: 100 = Rs1
+    def _refresh(self, lot, tick=0.25):                        # the master quotes tick_size in PAISE: 0.25 = Rs0.0025
         class B(FakeBroker):
             def __init__(s):
-                super().__init__(lot_size=lot)
-                s._cache = SimpleNamespace(get_or_refresh=lambda: pd.DataFrame({"instrument_key": ["MCX_FO|1"], "lot_size": [lot], "tick_size": [tick]}))
-        mr.refresh(B(), {"CRUDEOILM": "MCX_FO|1"}, lambda s, p: p * 10, path=self.path, sleep_s=0, mismatches=[])
+                super().__init__(lot_size=lot, price=96.0, margin_per_lot=2_300.0)
+                s._cache = SimpleNamespace(get_or_refresh=lambda: pd.DataFrame({"instrument_key": ["NCD_FO|1"], "lot_size": [lot], "tick_size": [tick]}))
+        mr.refresh(B(), {"USDINR": "NCD_FO|1"}, lambda s, p: p * 1000, path=self.path, sleep_s=0, mismatches=[])
 
     def test_the_first_lot_size_seen_is_the_baseline_and_scale_is_one(self):
-        self._refresh(10)
-        self.assertEqual(mr.lot_scale("CRUDEOILM"), 1.0)
+        self._refresh(1)
+        self.assertEqual(mr.lot_scale("USDINR"), 1.0)
 
     def test_a_revised_lot_size_scales_the_multiplier_used_for_pnl_and_sizing(self):
-        from markets.commodity.costs import get_contract_multiplier
-        self._refresh(10)
-        self.assertEqual(get_contract_multiplier("CRUDEOILM"), 10)
-        self._refresh(20)                                              # Upstox doubles the lot
-        self.assertEqual(mr.lot_scale("CRUDEOILM"), 2.0)
-        self.assertEqual(get_contract_multiplier("CRUDEOILM"), 20)
+        from markets.currency.costs import get_contract_multiplier
+        self._refresh(1)
+        self.assertEqual(get_contract_multiplier("USDINR"), 1000)
+        before = size_currency_lots(100_000, 96.0, 0.1, 10.0, "USDINR", leverage=42.0)
+        self._refresh(2)                                               # Upstox doubles the lot
+        self.assertEqual(mr.lot_scale("USDINR"), 2.0)
+        self.assertEqual(get_contract_multiplier("USDINR"), 2000)
         # a lot now costs twice the margin and risks twice the money per point: fewer lots fit the same capital
-        self.assertLess(size_commodity_lots(100_000, 9_142, 60, 10.0, "CRUDEOILM", leverage=3.3), 3)
+        self.assertLess(size_currency_lots(100_000, 96.0, 0.1, 10.0, "USDINR", leverage=42.0), before)
 
     def test_a_symbol_never_seen_by_the_master_is_unscaled(self):
-        from markets.commodity.costs import get_contract_multiplier
-        self.assertEqual(get_contract_multiplier("SILVERMIC"), 1)
-        self.assertEqual(mr.lot_scale("SILVERMIC"), 1.0)
+        from markets.currency.costs import get_contract_multiplier
+        self.assertEqual(get_contract_multiplier("GBPINR"), 1000)
+        self.assertEqual(mr.lot_scale("GBPINR"), 1.0)
 
     def test_the_tick_size_comes_from_the_master_and_drives_the_slippage_fallback(self):
-        self._refresh(10, tick=50.0)                               # 50 paise = Rs0.5
-        self.assertEqual(mr.tick_size("CRUDEOILM"), 0.5)
+        self._refresh(1, tick=1.0)                                     # 1 paisa = Rs0.01
+        self.assertEqual(mr.tick_size("USDINR"), 0.01)
         import core.slippage as sl
-        from markets.commodity.costs import compute_mcx_commodity_costs
+        from markets.currency.costs import compute_ncd_currency_costs
         with patch.object(sl, "_cache", {}), patch.object(sl, "_cache_loaded_at", 1e18):
-            wide = compute_mcx_commodity_costs("CRUDEOILM", "long", 9000.0, 9010.0, 1)["slippage"]
-        self._refresh(10, tick=5.0)                                # 5 paise = Rs0.05
+            wide = compute_ncd_currency_costs("USDINR", "long", 96.0, 96.05, 1)["slippage"]
+        self._refresh(1, tick=0.25)                                    # 0.25 paise = Rs0.0025
         with patch.object(sl, "_cache", {}), patch.object(sl, "_cache_loaded_at", 1e18):
-            narrow = compute_mcx_commodity_costs("CRUDEOILM", "long", 9000.0, 9010.0, 1)["slippage"]
+            narrow = compute_ncd_currency_costs("USDINR", "long", 96.0, 96.05, 1)["slippage"]
         self.assertGreater(wide, narrow)
 
-
     def test_the_masters_paise_ticks_are_converted_to_rupees(self):
-        """CRUDEOILM/SILVERMIC list 100 (= Rs1) and USDINR 0.25 (= Rs0.0025). Read as rupees, the slippage fallback was 100x too large."""
-        self._refresh(10, tick=100.0)
-        self.assertEqual(mr.tick_size("CRUDEOILM"), 1.0)
+        """The master lists USDINR's tick as 0.25 (= Rs0.0025). Read as rupees, the slippage fallback was 100x too large."""
+        self._refresh(1, tick=100.0)
+        self.assertEqual(mr.tick_size("USDINR"), 1.0)
         self._refresh(1, tick=0.25)
-        self.assertAlmostEqual(mr.tick_size("CRUDEOILM"), 0.0025)
+        self.assertAlmostEqual(mr.tick_size("USDINR"), 0.0025)
 
     def test_old_cache_entries_holding_the_raw_paise_value_are_ignored(self):
-        mr._rates = {"CRUDEOILM": {"tick_size": 100.0, "margin": 1.0}}
-        self.assertIsNone(mr.tick_size("CRUDEOILM"))
+        mr._rates = {"USDINR": {"tick_size": 100.0, "margin": 1.0}}
+        self.assertIsNone(mr.tick_size("USDINR"))
+
+
+if __name__ == "__main__":
+    unittest.main()

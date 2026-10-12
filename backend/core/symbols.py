@@ -16,5 +16,9 @@ def is_equity(sym: str) -> bool:
 
 
 def market_of(sym: str) -> str:
-    """"equity" | "currency" | "commodity"."""
-    return "equity" if is_equity(sym) else "currency" if is_currency(sym) else "commodity"
+    """"equity" | "currency". Any other symbol is an error: there is no third market (MCX commodity was removed 2026-10-12)."""
+    if is_equity(sym):
+        return "equity"
+    if is_currency(sym):
+        return "currency"
+    raise ValueError(f"{sym!r} is neither an NSE currency pair {sorted(CURRENCY_SYMBOLS)} nor a NIFTY50 stock")

@@ -8,7 +8,7 @@ Measured 2026-09-25: one scan of the 52-symbol universe makes ~57 calls (one can
 fetching candles for markets that had closed. This module meters the calls (services/broker/upstox_broker.api_calls_in_window) and says whether a class of work may
 spend more, with headroom for everything else this process does (margin refresh, token probe, the dashboard is separate and makes none):
 
-  essential   exits of open positions and the few commodity/currency symbols -- allowed until the HARD limit
+  essential   exits of open positions and the few currency symbols -- allowed until the HARD limit
   entry       equity entry scans (49 symbols)                                   -- PACED: at most ENTRY_PACE calls in any minute, and under the SOFT 30-min limit
   sampling    spread sampling                                                   -- allowed until the SOFT limit minus a reserve
 

@@ -1,5 +1,5 @@
 """
-tests/test_regime_multi_symbol.py — Tests multi-symbol commodity regime filtering and equity regime gate.
+tests/test_regime_multi_symbol.py — Tests the daily-autocorrelation regime signal (used by the equity regime gate).
 """
 from __future__ import annotations
 

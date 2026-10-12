@@ -1,15 +1,11 @@
-"""Swing engine (no-lookahead, execution timing, stops, costs) and the commodity swing strategy."""
-import os
+"""Swing engine (no-lookahead, execution timing, stops, costs), used by the swing research."""
 import unittest
-from datetime import datetime, timedelta, timezone
-from unittest.mock import patch
+from datetime import timedelta
 
 import numpy as np
 import pandas as pd
 
 from core.swing_engine import Rule, entry_signal, run_symbol, summarize, with_indicators
-
-IST = timezone(timedelta(hours=5, minutes=30))
 
 
 def _frame(closes, spread=0.5, start="2020-01-01"):
@@ -107,148 +103,5 @@ class TestSummaryAndFilters(unittest.TestCase):
         self.assertEqual(entry_signal(Rule("tsmom", {"lookback": 126, "regime": True}), row, False), 0)
 
 
-class TestCommoditySwingStrategy(unittest.TestCase):
-    def _ctx(self, sym="GOLDM", now=None, price=150000.0, cash=2_000_000.0):        # one GOLDM lot needs ~Rs140k of Upstox margin: Rs100k cannot trade it
-        from core.strategy import EntryContext
-        bar = {"timestamp": "2026-09-24T09:10:00+05:30", "open": price, "high": price, "low": price, "close": price, "volume": 1}
-        return EntryContext(symbol=sym, candles=[bar], now=now or datetime(2026, 9, 24, 9, 10, tzinfo=IST), instrument_key="K",
-                            capital=cash, risk_pct=4.0, leverage=5.0, direction_filter="both", full_session=True)
-
-    def _strategy(self, closes):
-        from markets.commodity.strategies.tf_daily.swing import strategy as mod
-        frame = _frame(closes, start="2025-01-01")
-        frame.index = pd.bdate_range(end="2026-09-23", periods=len(frame))
-        s = mod.CommoditySwing()
-        for target, value in (("inr_frame", lambda sym: frame), ("mcx_front_expiry", lambda sym: "2026-12-31")):
-            patcher = patch.object(mod, target, value)
-            patcher.start()
-            self.addCleanup(patcher.stop)
-        return s
-
-    def test_it_is_discovered_but_never_runs_unless_named_in_env(self):
-        from core import registry
-        self.assertIn(("commodity", "swing"), registry.discover())
-        with patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("COMMODITY_STRATEGIES", None)
-            self.assertEqual([x.name for x in registry.active("commodity")], [])                 # nothing runs unless named
-
-    def test_long_signal_in_an_uptrend_is_sized_and_stopped_from_the_atr(self):
-        s = self._strategy(np.linspace(100, 300, 400))
-        sig = s.entry(self._ctx())
-        self.assertEqual(sig.direction, "long")
-        self.assertLess(sig.stop_loss, sig.entry_price)
-        self.assertAlmostEqual(sig.stop_dist, sig.entry_price - sig.stop_loss, places=6)
-        self.assertGreaterEqual(sig.qty, 1)
-        self.assertFalse(s.intraday)
-        self.assertEqual(s.product, "D")
-
-    def test_short_signal_in_a_downtrend(self):
-        s = self._strategy(np.linspace(300, 100, 400))
-        sig = s.entry(self._ctx())
-        self.assertEqual(sig.direction, "short")
-        self.assertGreater(sig.stop_loss, sig.entry_price)
-
-    def test_direction_filter_blocks_the_other_side(self):
-        s = self._strategy(np.linspace(300, 100, 400))
-        ctx = self._ctx()
-        ctx.direction_filter = "long"
-        self.assertIsNone(s.entry(ctx))
-
-    def test_it_only_evaluates_in_the_morning_window_of_the_session(self):
-        s = self._strategy(np.linspace(100, 300, 400))
-        self.assertTrue(s.due(datetime(2026, 9, 24, 9, 30, tzinfo=IST)))
-        self.assertFalse(s.due(datetime(2026, 9, 24, 8, 30, tzinfo=IST)))       # before the session
-        self.assertFalse(s.due(datetime(2026, 9, 24, 14, 0, tzinfo=IST)))       # not re-evaluated all day
-
-    def test_if_the_proxy_series_is_unavailable_it_does_not_trade(self):
-        from markets.commodity.strategies.tf_daily.swing import strategy as mod
-        with patch.object(mod, "inr_frame", side_effect=RuntimeError("download failed")), patch.object(mod, "mcx_front_expiry", lambda sym: "2026-12-31"):
-            self.assertIsNone(mod.CommoditySwing().entry(self._ctx()))
-
-    def test_todays_forming_bar_is_never_used_for_the_signal(self):
-        from markets.commodity.strategies.tf_daily.swing import strategy as mod
-        closes = list(np.linspace(100, 300, 400))
-        frame = _frame(closes, start="2025-01-01")
-        frame.index = pd.bdate_range(end="2026-09-24", periods=len(frame))     # last bar is dated TODAY
-        s = mod.CommoditySwing()
-        with patch.object(mod, "inr_frame", lambda sym: frame):
-            row = s._latest_row("GOLDM", "2026-09-24")
-        self.assertLess(row.name, pd.Timestamp("2026-09-24"))
-
-    def test_manage_stops_out_on_a_real_post_entry_break_and_exits_on_a_sign_flip(self):
-        from core.strategy import ExitContext
-        s = self._strategy(np.concatenate([np.linspace(100, 300, 330), np.linspace(300, 100, 70)]))   # now in a downtrend
-        now = datetime(2026, 9, 24, 9, 20, tzinfo=IST)
-        pos = {"symbol": "GOLDM", "direction": "long", "entry_price": 150000.0, "current_stop": 145000.0, "entry_time": now - timedelta(days=3)}
-        bar = lambda px, ts="2026-09-24T09:15:00+05:30": {"timestamp": ts, "open": px, "high": px, "low": px, "close": px, "volume": 1}
-        flip = s.manage(pos, ExitContext(symbol="GOLDM", candles=[bar(149000.0)], now=now))
-        self.assertEqual(flip.reason, "signal_exit")                                  # momentum turned negative while long
-        later = now.replace(hour=14)
-        through = {**bar(146000.0, "2026-09-24T14:00:00+05:30"), "low": 144000.0}
-        stop = s.manage(pos, ExitContext(symbol="GOLDM", candles=[through], now=later))
-        self.assertEqual((stop.reason, stop.price), ("initial_stop", 145000.0))       # outside the window: only the stop applies
-        gap = s.manage(pos, ExitContext(symbol="GOLDM", candles=[bar(144000.0, "2026-09-24T14:00:00+05:30")], now=later))
-        self.assertEqual((gap.reason, gap.price), ("initial_stop", 144000.0))         # opened below the stop: filled at the open
-
-    def test_the_affordable_mini_contracts_use_their_underlyings_series(self):
-        from markets.commodity.strategies.tf_daily.swing.proxy import ALIASES, MCX_PROXY, has_proxy
-        self.assertEqual(MCX_PROXY[ALIASES["GOLDTEN"]], "GC=F")
-        self.assertEqual(MCX_PROXY[ALIASES["SILVERMIC"]], "SI=F")
-        self.assertTrue(has_proxy("GOLDTEN") and has_proxy("SILVERMIC") and not has_proxy("USDINR"))
-        self.assertNotIn("GOLDTEN", MCX_PROXY)                                      # the research universe keeps one series per underlying
-        s = self._strategy(np.linspace(100, 300, 400))
-        sig = s.entry(self._ctx(sym="GOLDTEN", price=146000.0, cash=100000.0))
-        self.assertEqual((sig.direction, sig.exit_state["contract_expiry"]), ("long", "2026-12-31"))
-
-    def test_it_rolls_out_before_expiry_and_waits_for_the_next_contract(self):
-        from core.strategy import ExitContext
-        from markets.commodity.strategies.tf_daily.swing import strategy as mod
-        s = self._strategy(np.linspace(100, 300, 400))
-        now = datetime(2026, 9, 24, 9, 20, tzinfo=IST)
-        with patch.object(mod, "mcx_front_expiry", lambda sym: "2026-09-30"):           # 6 days left: inside the roll window
-            self.assertIsNone(s.entry(self._ctx(now=now)))
-        bar = {"timestamp": "2026-09-24T09:15:00+05:30", "open": 151000.0, "high": 151500.0, "low": 150800.0, "close": 151200.0, "volume": 1}
-        pos = {"symbol": "GOLDM", "direction": "long", "entry_price": 150000.0, "current_stop": 145000.0, "entry_time": now - timedelta(days=20),
-               "contract_expiry": "2026-09-30"}
-        roll = s.manage(pos, ExitContext(symbol="GOLDM", candles=[bar], now=now))
-        self.assertEqual((roll.reason, roll.price), ("contract_roll", 151200.0))
-        pos["contract_expiry"] = "2026-10-30"
-        self.assertIsNone(s.manage(pos, ExitContext(symbol="GOLDM", candles=[bar], now=now.replace(hour=14))))
-
-
 if __name__ == "__main__":
     unittest.main()
-
-
-class TestCommodityTrendStrategy(unittest.TestCase):
-    """The 50/200 EMA trend variant: the swing mechanics, its own rule, and the roll-honest ETF proxy."""
-
-    def _run(self, closes, now=None):
-        from markets.commodity.strategies.tf_daily.trend import strategy as tmod
-        from markets.commodity.strategies.tf_daily.swing import strategy as smod
-        frame = _frame(closes)
-        t = tmod.CommodityTrend()
-        ctx = TestCommoditySwingStrategy()._ctx(now=now)
-        with patch.object(tmod, "etf_inr_frame", lambda sym: frame), patch.object(smod, "inr_frame", side_effect=AssertionError("futures proxy used")), \
-             patch.object(smod, "mcx_front_expiry", lambda sym: "2026-12-31"):
-            return t, t.entry(ctx)
-
-    def test_it_is_discovered_and_off_unless_named(self):
-        from core import registry
-        self.assertIn(("commodity", "trend"), registry.discover())
-
-    def test_uptrend_goes_long_from_the_etf_proxy_with_its_own_label(self):
-        t, sig = self._run(np.linspace(100, 300, 400))
-        self.assertIsNotNone(sig)
-        self.assertEqual((sig.direction, sig.setup_type), ("long", "ema_50_200"))
-        self.assertLess(sig.stop_loss, sig.entry_price)
-
-    def test_downtrend_goes_short(self):
-        t, sig = self._run(np.linspace(300, 100, 400))
-        self.assertEqual(sig.direction, "short")
-
-    def test_the_swing_strategy_still_uses_its_own_rule(self):
-        from markets.commodity.strategies.tf_daily.swing.strategy import CommoditySwing
-        from markets.commodity.strategies.tf_daily.trend.strategy import CommodityTrend
-        self.assertEqual((CommoditySwing.RULE.name, CommoditySwing.SETUP), ("tsmom", "tsmom_252"))
-        self.assertEqual((CommodityTrend.RULE.name, CommodityTrend.RULE.params), ("ema_trend", {"fast": 50, "slow": 200}))

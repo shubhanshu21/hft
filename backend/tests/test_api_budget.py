@@ -40,7 +40,7 @@ class TestBudget(unittest.TestCase):
     def test_classes_of_work_have_different_ceilings(self):
         self.assertTrue(api_budget.allow("entry", 1000, 30))
         self.assertFalse(api_budget.allow("entry", 1600, 30))               # soft 30-min limit: equity entry scans stop...
-        self.assertTrue(api_budget.allow("essential", 1600, 100))           # ...but exits and commodity/currency continue
+        self.assertTrue(api_budget.allow("essential", 1600, 100))           # ...but exits and currency continue
         self.assertFalse(api_budget.allow("essential", 1900, 100))          # hard limit: everything stops well before Upstox's 2,000
         self.assertFalse(api_budget.allow("sampling", 1450, 100))           # spread sampling is the first thing to go
         self.assertTrue(api_budget.allow("sampling", 1000, 100))
@@ -54,7 +54,7 @@ class TestBudget(unittest.TestCase):
         """Live 2026-09-25: a pure 30-minute cap let equity scan flat out for ~15 min and then starve completely (49 of 49 deferred) until the window cleared."""
         self.assertTrue(api_budget.allow("entry", 300, 49))                # under the pace: scan
         self.assertFalse(api_budget.allow("entry", 300, 50))               # pace reached: wait for the minute to roll, even though the 30-min total is low
-        self.assertTrue(api_budget.allow("essential", 300, 50))            # exits and commodity/currency are not held back by the equity pace
+        self.assertTrue(api_budget.allow("essential", 300, 50))            # exits and currency are not held back by the equity pace
         # simulate 30 minutes: each minute the equity pass may spend until the last-minute total reaches the pace -> total stays far below Upstox's 2,000
         spent = sum(min(50, 60) for _ in range(30))
         self.assertLess(spent, 1600)
@@ -75,12 +75,12 @@ class TestScanOrderAndUsage(unittest.TestCase):
         r._scan_order = lambda: DryRunner._scan_order(r)
         return r
 
-    SYMS = ["CRUDEOILM", "SILVERMIC", "USDINR", "RELIANCE", "TCS", "SBIN", "ITC"]
+    SYMS = ["USDINR", "EURINR", "GBPINR", "RELIANCE", "TCS", "SBIN", "ITC"]
 
-    def test_commodity_and_currency_always_come_first_and_equity_rotates(self):
+    def test_currency_always_comes_first_and_equity_rotates(self):
         self.assertEqual(DryRunner._scan_order(self._runner(self.SYMS, 0)), self.SYMS)
         order = DryRunner._scan_order(self._runner(self.SYMS, 2))
-        self.assertEqual(order[:3], ["CRUDEOILM", "SILVERMIC", "USDINR"])
+        self.assertEqual(order[:3], ["USDINR", "EURINR", "GBPINR"])
         self.assertEqual(order[3:], ["SBIN", "ITC", "RELIANCE", "TCS"])                 # a different equity start each throttled pass
         self.assertEqual(sorted(order), sorted(self.SYMS))                              # nothing lost, nothing duplicated
 
@@ -109,18 +109,6 @@ class TestNoCallsForClosedMarkets(unittest.TestCase):
         r = SimpleNamespace(_candles=lambda *a: fetched.append(a) or [], _gate_flags=lambda: {})
         self.assertFalse(DryRunner._try_enter(r, strat, "RELIANCE", datetime(2026, 9, 25, 20, 0, tzinfo=IST), []))
         self.assertEqual(fetched, [])
-
-
-@unittest.skipUnless(os.environ.get("RUN_REPLAY"), "slow: real scan loop; set RUN_REPLAY=1")
-class TestRealScanLoopUnderABindingBudget(unittest.TestCase):
-    def test_equity_is_deferred_while_commodity_keeps_trading(self):
-        import tests.replay_harness as h
-        insts = [i for i in h.INSTRUMENTS if i[2] in ("CRUDEOILM", "TATASTEEL", "SBIN")]
-        with patch.object(api_budget, "allow", lambda kind, *a, **k: kind != "entry"), patch("engine.live_dryrun.DB_DIR", Path(tempfile.mkdtemp())):
-            out = h.run_replay(days=h.QUICK_DAYS, instruments=insts)
-        symbols = {t["symbol"] for t in out["trades"]}
-        self.assertIn("CRUDEOILM", symbols)                                            # essential work carried on
-        self.assertFalse(symbols & {"TATASTEEL", "SBIN"})                              # equity entry scans were the ones deferred
 
 
 if __name__ == "__main__":

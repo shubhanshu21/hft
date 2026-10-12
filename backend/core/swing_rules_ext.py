@@ -1,7 +1,6 @@
 """Extended swing rules: momentum/trend indicators, volatility squeezes, candlestick patterns, and chart formations.
 
-Used only by research (core.swing_engine.with_indicators(..., extended=True)); the live commodity swing strategy is not
-touched. Everything is backward-looking. Swing pivots are confirmed K bars AFTER they occur (a pivot low at bar j is only
+Used only by research (core.swing_engine.with_indicators(..., extended=True)); no live strategy uses them. Everything is backward-looking. Swing pivots are confirmed K bars AFTER they occur (a pivot low at bar j is only
 known once bars j+1..j+K have closed), so a pattern built from pivots never uses a bar it could not have seen.
 
 Rules (every parameter set is listed in markets/swing_research_ext.py BEFORE any result is looked at):

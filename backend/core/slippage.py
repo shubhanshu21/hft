@@ -7,8 +7,7 @@ project once enough real spread data has accumulated in var/logs/spread_samples.
 SPREAD_SAMPLE_INTERVAL_MIN per symbol).
 
 A one-off snapshot taken 2026-09-18 found real bid-ask spreads running 2x–29x
-wider than the ½-tick guess (CRUDEOILM 4x, GOLDM 25x, USDINR 3x, EURINR 2x,
-GBPINR 29x). This module builds the empirical model from that accumulating CSV
+wider than the ½-tick guess (USDINR 3x, EURINR 2x, GBPINR 29x). This module builds the empirical model from that accumulating CSV
 so cost models can automatically switch from the flat guess to the real median
 spread once a symbol has ≥ MIN_SAMPLES observations — no config change needed.
 
@@ -130,8 +129,7 @@ def adaptive_slippage_per_leg(sym: str, fallback_half_tick: float) -> float:
     existing ½-tick estimate — so the behaviour is identical to before this
     module existed when data is sparse.
 
-    Called by compute_mcx_commodity_costs, compute_ncd_currency_costs, and
-    compute_nse_equity_costs to replace their hardcoded slip calculations.
+    Called by compute_ncd_currency_costs and compute_nse_equity_costs to replace their hardcoded slip calculations.
     """
     _refresh_cache_if_needed()
     sym_key = sym.upper().split("|")[-1].split("2")[0]  # strip exchange prefix/expiry

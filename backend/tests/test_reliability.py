@@ -240,9 +240,8 @@ class TestOperatorCommands(unittest.TestCase):
     """Telegram /stop /start /status and per-segment pause/resume, exercised without a live loop."""
 
     def _runner(self):
-        r = SimpleNamespace(positions={"CRUDEOILM": {"direction": "long", "entry_price": 8900.0, "current_stop": 8850.0}},
-                            segment_enabled={"commodity": True, "currency": True, "equity": True}, capital=100000.0, trading_enabled=True,
-                            use_commodity_regime_filter=True, commodity_regime_ok={"CRUDEOILM": True, "GOLDM": False},
+        r = SimpleNamespace(positions={"USDINR": {"direction": "long", "entry_price": 96.0, "current_stop": 95.9}},
+                            segment_enabled={"currency": True, "equity": True}, capital=100000.0, trading_enabled=True,
                             use_equity_regime_filter=True, equity_regime_ok=None, calls=[])
         r.stop_trading = lambda now: (r.calls.append("stop"), 1)[1]
         r.start_trading = lambda: r.calls.append("start")
@@ -269,7 +268,7 @@ class TestOperatorCommands(unittest.TestCase):
 
     def test_each_segment_can_be_paused_and_resumed_independently(self):
         r = self._runner()
-        for seg in ("commodity", "currency", "equity"):
+        for seg in ("currency", "equity"):
             self.assertEqual(self._cmd(r, f"/stop {seg}")[0], f"pause:{seg}")
             self.assertFalse(r.segment_enabled[seg])
             self.assertEqual([s for s, v in r.segment_enabled.items() if v and s != seg], [s for s in r.segment_enabled if s != seg])
@@ -281,7 +280,7 @@ class TestOperatorCommands(unittest.TestCase):
         r.segment_enabled["currency"] = False
         action, sent = self._cmd(r, "/status")
         self.assertEqual(action, "status")
-        for expected in ("₹100,000.00", "CRUDEOILM LONG @ ₹8900.00", "stop ₹8850.00", "Currency: 🛑 PAUSED", "GOLDM: 🔴", "Scan #7", "ENABLED"):
+        for expected in ("₹100,000.00", "USDINR LONG @ ₹96.00", "stop ₹95.90", "Currency: 🛑 PAUSED", "Equity regime: 🟢 OK", "Scan #7", "ENABLED"):
             self.assertIn(expected, sent[0])
 
     def test_unknown_text_is_ignored(self):
@@ -291,19 +290,17 @@ class TestOperatorCommands(unittest.TestCase):
 
 
 class TestLiveOrderQuantityMatchesWhatUpstoxExpects(unittest.TestCase):
-    """Upstox V3: commodity quantity = number of LOTS; equity and other F&O = UNITS. The live path once sent lots x lot_size for every market
-    (5 lots of crude as 50)."""
+    """Upstox V3: equity and (non-commodity) F&O quantity = UNITS. The live path once sent the wrong unit for MCX crude (5 lots as 50 lots);
+    MCX commodity was removed 2026-10-12."""
 
     def test_units_per_market(self):
         import os
         from engine.order_units import broker_quantity
-        self.assertEqual(broker_quantity("commodity", 5, 10), 5)               # CRUDEOILM: 5 lots -> 5, NOT 50
-        self.assertEqual(broker_quantity("commodity", 3, 1), 3)                # SILVERMIC
         self.assertEqual(broker_quantity("equity", 2500, 1), 2500)             # shares
         self.assertEqual(broker_quantity("currency", 4, 1000), 4000)           # USDINR: lots x lot size (V3 rule for non-commodity F&O)
         with patch.dict(os.environ, {"LIVE_CURRENCY_QTY_MODE": "lots"}):
             self.assertEqual(broker_quantity("currency", 4, 1000), 4)          # the one unverified case can be switched without a code change
-        self.assertEqual(broker_quantity("commodity", 0, 10), 0)
+        self.assertEqual(broker_quantity("currency", 0, 1000), 0)
 
     def _place(self, market, symbol, qty, multiplier):
         import tempfile
@@ -329,18 +326,17 @@ class TestLiveOrderQuantityMatchesWhatUpstoxExpects(unittest.TestCase):
                 pass                                                              # later steps run on mocks; only the order quantity is under test
         return broker.place_buy_order
 
-    def test_a_real_entry_order_sends_lots_for_commodity_units_for_the_rest(self):
-        self.assertEqual(self._place("commodity", "CRUDEOILM", 5, 10).call_args[0][1], 5)
+    def test_a_real_entry_order_sends_units(self):
         self.assertEqual(self._place("equity", "TATASTEEL", 2500, 1).call_args[0][1], 2500)
         self.assertEqual(self._place("currency", "USDINR", 4, 1000).call_args[0][1], 4000)
 
     def test_a_non_positive_quantity_is_refused_before_any_order(self):
-        place = self._place("commodity", "CRUDEOILM", 0, 10)
+        place = self._place("currency", "USDINR", 0, 1000)
         place.assert_not_called()
 
 
 class MagicMockStrat:
-    product, id_prefix, name, uses_leverage, market = "I", "X", "scalping", True, "commodity"
+    product, id_prefix, name, uses_leverage, market = "I", "X", "scalping", True, "currency"
 
 
 class TestStaleFeedGuard(unittest.TestCase):
@@ -355,7 +351,7 @@ class TestStaleFeedGuard(unittest.TestCase):
         r = self._runner()
         strat = SimpleNamespace(timeframe=timeframe)
         ts = (self.NOW - timedelta(minutes=minutes_old)).isoformat()
-        return r.fresh(r, "CRUDEOILM", [{"timestamp": ts}], self.NOW, strat)
+        return r.fresh(r, "USDINR", [{"timestamp": ts}], self.NOW, strat)
 
     def test_a_current_or_forming_bar_is_fresh(self):
         self.assertTrue(self._fresh(0))

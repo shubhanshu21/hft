@@ -32,11 +32,11 @@ class TestScorecard(unittest.TestCase):
         self.assertEqual(scorecard.summarize([_t("X", 0.0)])["wins"], 0)
 
     def test_grouping_by_symbol_and_the_telegram_text(self):
-        hist = [_t("CRUDEOILM", 700), _t("CRUDEOILM", -1500), _t("USDINR", 300)]
-        self.assertEqual(list(scorecard.by_symbol(hist)), ["CRUDEOILM", "USDINR"])
+        hist = [_t("EURINR", 700), _t("EURINR", -1500), _t("USDINR", 300)]
+        self.assertEqual(list(scorecard.by_symbol(hist)), ["EURINR", "USDINR"])
         text = scorecard.format_scorecard(hist[:2], hist)
         self.assertIn("<pre>", text)
-        self.assertIn("CRUDEOILM", text)
+        self.assertIn("EURINR", text)
         self.assertIn("SINCE START (3 trades)", text)
         self.assertIsNone(scorecard.format_scorecard([], []))                              # nothing to say -> send nothing
 
@@ -63,9 +63,9 @@ class TestStatusRender(unittest.TestCase):
     def test_problems_are_visible(self):
         text = status.render(self._state(heartbeat_problem="no heartbeat for 900s past its deadline", control={"enabled": False},
                                          token_hours=-1.0, last_backup=None,
-                                         open_positions=[{"symbol": "CRUDEOILM", "direction": "long", "qty": 5, "entry_price": 8900.0,
-                                                          "current_stop": 8850.0, "target_price": 8990.0}]))
-        for expected in ("no heartbeat for 900s", "HALTED", "EXPIRED", "NONE", "CRUDEOILM", "8850"):
+                                         open_positions=[{"symbol": "USDINR", "direction": "long", "qty": 5, "entry_price": 96.0,
+                                                          "current_stop": 95.85, "target_price": 96.3}]))
+        for expected in ("no heartbeat for 900s", "HALTED", "EXPIRED", "NONE", "USDINR", "95.85"):
             self.assertIn(expected, text)
 
     def test_no_heartbeat_file_yet(self):
@@ -77,7 +77,7 @@ if __name__ == "__main__":
 
 
 class TestPerSymbolRiskOverrides(unittest.TestCase):
-    """Coded per-symbol risk (CRUDEOILM 3%, SILVER 5%) used to beat .env silently; an env var per symbol now wins."""
+    """A coded per-symbol value (GBPINR leverage 3.5) used to beat .env silently; an env var per symbol now wins."""
 
     def _get(self, sym, env=None):
         import os
@@ -87,20 +87,19 @@ class TestPerSymbolRiskOverrides(unittest.TestCase):
         patch.object(margin_rates, "_rates", {}).start()                       # no cached Upstox rates: this test is about the env-var precedence
         self.addCleanup(patch.stopall)
         stub = SimpleNamespace(risk_pct=4.0, leverage=5.0)
-        with patch.dict(os.environ, {"COMMODITY_RISK_PCT": "10", "COMMODITY_LEVERAGE": "10", **(env or {})}, clear=False):
-            for k in ("CRUDEOILM_RISK_PCT", "SILVER_RISK_PCT", "CRUDEOILM_LEVERAGE"):
+        with patch.dict(os.environ, {"CURRENCY_RISK_PCT": "10", "CURRENCY_LEVERAGE": "10", **(env or {})}, clear=False):
+            for k in ("GBPINR_RISK_PCT", "GBPINR_LEVERAGE", "USDINR_RISK_PCT", "USDINR_LEVERAGE"):
                 if not env or k not in env:
                     os.environ.pop(k, None)
             return live_dryrun.DryRunner._get_segment_risk_and_leverage(stub, sym)
 
     def test_without_a_symbol_env_var_the_coded_override_still_applies(self):
-        self.assertEqual(self._get("CRUDEOILM"), (3.0, 10.0))
-        self.assertEqual(self._get("SILVER"), (5.0, 10.0))
-        self.assertEqual(self._get("GOLDM"), (10.0, 10.0))                       # no override: the segment value
+        self.assertEqual(self._get("GBPINR"), (10.0, 3.5))
+        self.assertEqual(self._get("USDINR"), (10.0, 10.0))                      # no override: the segment value
 
     def test_a_symbol_env_var_beats_the_coded_override(self):
-        self.assertEqual(self._get("CRUDEOILM", {"CRUDEOILM_RISK_PCT": "10"}), (10.0, 10.0))
-        self.assertEqual(self._get("CRUDEOILM", {"CRUDEOILM_LEVERAGE": "7"}), (3.0, 7.0))
+        self.assertEqual(self._get("GBPINR", {"GBPINR_LEVERAGE": "7"}), (10.0, 7.0))
+        self.assertEqual(self._get("USDINR", {"USDINR_RISK_PCT": "2"}), (2.0, 10.0))
 
 
 class TestScorecardIsWiredIntoTheEndOfDay(unittest.TestCase):

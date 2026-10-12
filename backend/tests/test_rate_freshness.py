@@ -5,7 +5,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from markets.commodity import costs as commodity_costs
 from markets.currency import costs as currency_costs
 
 # How long a statutory-rate module can go unreviewed before this test starts
@@ -33,9 +32,6 @@ class TestRateFreshness(unittest.TestCase):
             f"notification), then bump RATES_LAST_VERIFIED -- do not bump it without "
             f"actually re-checking."
         )
-
-    def test_commodity_costs_fresh(self):
-        self._assert_fresh(commodity_costs)
 
     def test_currency_costs_fresh(self):
         self._assert_fresh(currency_costs)

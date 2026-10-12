@@ -11,7 +11,7 @@ def _charges(total):
 
 
 class FakeChargeApi:
-    per_leg = 43.3          # Upstox's real crude round trip is ~Rs86.6 = two legs of ~43.3
+    per_leg = 57.1          # Upstox's real round trip for 100 RELIANCE at Rs1,219 is ~Rs114.2 = two legs of ~57.1
 
     def __init__(self, client):
         pass
@@ -26,18 +26,18 @@ class FakeBroker:
     _api_client = object()
 
     def get_ltp(self, key):
-        return 9178.0
+        return 1219.0
 
 
 class TestDrift(unittest.TestCase):
     def setUp(self):
-        FakeChargeApi.per_leg = 43.3
+        FakeChargeApi.per_leg = 57.1
         p = patch("upstox_client.ChargeApi", FakeChargeApi)
         p.start()
         self.addCleanup(p.stop)
 
     def _rows(self):
-        return cost_drift.check(FakeBroker(), {"CRUDEOILM": "MCX_FO|1"}, lambda s: "commodity")
+        return cost_drift.check(FakeBroker(), {"RELIANCE": "NSE_EQ|1"}, lambda s: "equity")
 
     def test_a_model_that_matches_upstox_is_ok(self):
         r = self._rows()[0]
@@ -45,7 +45,7 @@ class TestDrift(unittest.TestCase):
         self.assertAlmostEqual(r["ratio"], 1.0, delta=0.02)
 
     def test_a_model_cheaper_than_upstox_is_flagged_as_understating(self):
-        FakeChargeApi.per_leg = 60.0                        # Upstox raises its charges ~40%: the model is now too cheap
+        FakeChargeApi.per_leg = 65.0                        # Upstox raises its charges ~14%: the model is now too cheap
         r = self._rows()[0]
         self.assertEqual(r["status"], "UNDERSTATES")
         self.assertIn("UNDERSTATES", cost_drift.format_rows([r]))

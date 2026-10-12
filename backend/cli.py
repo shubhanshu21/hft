@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """
-cli.py — Master CLI for the paper-trading framework (MCX commodity, NSE currency; crypto runs on its own engine).
+cli.py — Master CLI for the paper-trading framework (NSE currency and equity; crypto runs on its own engine).
 
 Strategies live in markets/<market>/strategies/<timeframe>/<name>/ (markets/README.md lists them). The 5-minute scalpers
-(commodity, currency, equity) were deleted on 2026-10-10 after losing money once costs and real fills were counted -- see git history.
+(commodity, currency, equity) were deleted on 2026-10-10 after losing money once costs and real fills were counted, and MCX commodity
+trading was removed entirely on 2026-10-12 (MCX data is still recorded: markets/commodity/data.py, engine/depth_recorder.py) -- see git history.
 
 Usage Examples:
     # 1. Swing research across markets (documented rules, train/test, costs)
     python3 -m markets.swing_research
 
-    # 2. Live paper-trading daemon (systemd: hft-dryrun.service)
+    # 2. Live paper-trading daemon (systemd: hft-dryrun.service; disabled since 2026-10-12, nothing to trade)
     python3 cli.py dryrun --interval 30
 
     # 3. Report / reset the paper-trading database
@@ -17,7 +18,7 @@ Usage Examples:
     python3 cli.py reset-db --capital 100000
 
     # 4. New strategy from a template
-    python3 cli.py new-strategy --market commodity --timeframe 15min --name my_idea
+    python3 cli.py new-strategy --market currency --timeframe 15min --name my_idea
 """
 from __future__ import annotations
 
@@ -124,7 +125,7 @@ def main():
     # Dryrun Subcommand -- defaults come from backend/.env (DRYRUN_* / TRADING_*
     # vars) so `python3 cli.py dryrun` needs no flags at all; passing a flag
     # still overrides the .env value for that one run.
-    p_dr = subparsers.add_parser("dryrun", help="Run live paper-trading dryrun (MCX commodities + NSE currency)")
+    p_dr = subparsers.add_parser("dryrun", help="Run live paper-trading dryrun (NSE currency + NSE equity)")
     p_dr.add_argument("--symbols", nargs="+", default=_env("DRYRUN_SYMBOLS", "").split() or None,
                        help="Symbols to watch")
     p_dr.add_argument("--capital", type=float, default=float(_env("TRADING_CAPITAL", "100000.0")),
@@ -180,7 +181,7 @@ def main():
     p_disarm.set_defaults(func=cmd_disarm_live_trading)
 
     p_new = subparsers.add_parser("new-strategy", help="Create a new strategy file from a template (see docs/ADDING_A_STRATEGY.md)")
-    p_new.add_argument("--market", required=True, choices=["commodity", "currency", "equity"])
+    p_new.add_argument("--market", required=True, choices=["currency", "equity"])
     p_new.add_argument("--name", required=True, help="strategy name, e.g. swing (lowercase, digits, underscores)")
     p_new.add_argument("--timeframe", default="5min", choices=["5min", "15min", "1hour", "daily"],
                        help="the bars its signal uses; decides the folder markets/<market>/strategies/tf_<timeframe>/ (default 5min)")

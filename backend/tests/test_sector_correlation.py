@@ -15,7 +15,7 @@ class TestSectorCorrelation(unittest.TestCase):
         self.assertEqual(SectorCorrelationGate.get_sector("INFY"), "IT")
         self.assertEqual(SectorCorrelationGate.get_sector("HDFCBANK"), "BANKING_FINANCE")
         self.assertEqual(SectorCorrelationGate.get_sector("RELIANCE"), "ENERGY")
-        self.assertEqual(SectorCorrelationGate.get_sector("CRUDEOILM"), "COMMODITY")
+        self.assertEqual(SectorCorrelationGate.get_sector("CRUDEOILM"), "OTHER")             # MCX commodity is not traded since 2026-10-12
         self.assertEqual(SectorCorrelationGate.get_sector("USDINR"), "CURRENCY")
 
     def test_sector_gate_allows_first_entry(self):

@@ -1,10 +1,10 @@
-"""Daily-bar swing-strategy simulator and rule definitions, shared by research and by the live strategies.
+"""Daily-bar swing-strategy simulator and rule definitions, used by the swing research (markets/swing_research*.py).
 
 Nothing here can see the future: a signal is computed from data up to and including day i's close and is EXECUTED at
 day i+1's open. Stops are checked against each later day's range (including the entry day), with gaps through the
 stop filled at the open, not the stop. Every trade pays a round-trip cost.
 
-The same `signal()` rules drive the backtests and the live Strategy classes, so what was validated is what trades.
+A live Strategy built on these rules (the commodity swing strategies did, until 2026-10-12) trades exactly what was validated.
 """
 from __future__ import annotations
 
