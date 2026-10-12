@@ -1,18 +1,15 @@
 """
 markets/equity/strategies/tf_daily/fibonacci/strategy.py -- Daily Fibonacci Retracement Swing Strategy.
 
-SETUP 5: Top 20 Universe + Pyramiding + 2.5:1 RR Target (Maximum Profit Engine)
-- Proven 2026 performance: +₹1,25,338.50 net realized profit (+203.36% compounded equity on ₹100,000 capital).
-- Universe: Top 20 validated high-beta momentum stocks in NIFTY 50.
-- Rules:
-  1. High-Beta Universe Filtering: Traded exclusively on the top 20 momentum leaders.
-  2. Macro Trend: Price above 50-day EMA.
-  3. Impulse Expansion: Upward impulse leg >= 1.5 * ATR(14) above EMA 50.
-  4. Golden Pocket Entry: Pullback into 50.0% - 61.8% Fibonacci zone with bullish candle rejection.
-  5. 2.5:1 Reward-to-Risk Target: High-profit expansion target (tp = entry + 2.5 * stop_distance).
-  6. Protection: Trailing Stop moved to Breakeven once price reaches +1R in profit.
-  7. Risk-Based Fractional Sizing: 5% risk per trade scaled by stop distance, with compounding.
-  8. Pyramiding: Allows up to 2 concurrent positions per stock on separate impulse waves.
+Features:
+- Timeframe: Daily candles (held overnight, delivery product "D", long-only).
+- Lookback history: 120 days loaded by the live engine (`lookback_days = 120`).
+- Macro Trend: Price above 50-day EMA.
+- Impulse Expansion: Upward impulse wave >= 1.5 * ATR(14) above EMA 50 (>= 5% swing).
+- Golden Pocket Entry: Retracement into 50.0% - 61.8% Fibonacci zone with bullish rejection candle.
+- Target: Prior Swing High (0.0% Fib) or fixed RR ratio.
+- Protection: Trailing Stop moved to Breakeven once price reaches +1R in profit (armed for subsequent bars).
+- Sizing: Risk-based sizing respecting 1x cash delivery margin.
 """
 from __future__ import annotations
 
@@ -34,16 +31,18 @@ TOP_20_EQUITY_UNIVERSE = (
 
 
 def compute_fibonacci_retracements(swing_low: float, swing_high: float) -> dict[str, float]:
-    """Calculates canonical Fibonacci Retracement levels from Swing Low to Swing High."""
+    """Calculates canonical Fibonacci Retracement and Extension levels from Swing Low to Swing High."""
     swing_range = swing_high - swing_low
     return {
-        "0.0": swing_high,                                         # Prior Swing High (0.0% Fib)
+        "-27.2": swing_high + 0.272 * swing_range,                 # Fibonacci Extension Target 2
+        "0.0": swing_high,                                         # Prior Swing High (0.0% Fib Target 1)
         "23.6": swing_high - 0.236 * swing_range,                  # Shallow pullback
         "38.2": swing_high - 0.382 * swing_range,                  # Moderate pullback
-        "50.0": swing_high - 0.500 * swing_range,                  # Equilibrium midpoint
-        "61.8": swing_high - 0.6180339887 * swing_range,           # Golden Pocket
-        "78.6": swing_high - 0.7861513778 * swing_range,           # Invalidation boundary
-        "100.0": swing_low,                                        # Swing Low
+        "50.0": swing_high - 0.500 * swing_range,                  # Equilibrium midpoint (Discount boundary)
+        "61.8": swing_high - 0.6180339887 * swing_range,           # Golden Ratio / OTE upper boundary
+        "70.5": swing_high - 0.705 * swing_range,                  # Optimal Trade Entry (OTE) sweet spot
+        "78.6": swing_high - 0.7861513778 * swing_range,           # Deep discount invalidation boundary
+        "100.0": swing_low,                                        # Swing Low (1.0 level)
     }
 
 
@@ -55,28 +54,28 @@ class FibonacciDailySwing(Strategy):
     uses_leverage = False        # 1x cash sizing for delivery
     allow_short = False          # Delivery is long-only
     timeframe = ("days", 1)
+    lookback_days = 120          # Required by engine/live_dryrun.py to fetch 120 days of daily candles
     default_enabled = False      # Stays off until explicitly named in EQUITY_STRATEGIES
 
     def __init__(
         self,
         swing_lookback: int = 15,
-        target_mode: str = "rr2.5",
-        rr_ratio: float = 2.5,
+        target_mode: str = "prior_high",
+        rr_ratio: float = 2.0,
         min_swing_pct: float = 0.05,
-        risk_pct: float = 5.0,
+        risk_pct: float = 3.0,
+        min_rr: float = 1.2,
         allowed_symbols: tuple[str, ...] | None = TOP_20_EQUITY_UNIVERSE,
-        enable_pyramiding: bool = True,
     ):
         self.swing_lookback = swing_lookback
         self.target_mode = target_mode
         self.rr_ratio = rr_ratio
         self.min_swing_pct = min_swing_pct
         self.risk_pct = risk_pct
+        self.min_rr = min_rr
         self.allowed_symbols = set(allowed_symbols) if allowed_symbols else None
-        self.enable_pyramiding = enable_pyramiding
 
     def entry(self, ctx: EntryContext) -> Signal | None:
-        # 1. Universe Filter: Only trade validated high-beta momentum stocks
         if self.allowed_symbols and ctx.symbol not in self.allowed_symbols:
             return None
 
@@ -102,7 +101,7 @@ class FibonacciDailySwing(Strategy):
         n = len(df)
         lookback = self.swing_lookback
         
-        # 2. Macro Trend Check: Price above 50 EMA
+        # 1. Macro Trend Check: Price above 50 EMA
         curr_bar = n - 1
         curr_close = closes[curr_bar]
         curr_high = highs[curr_bar]
@@ -114,7 +113,7 @@ class FibonacciDailySwing(Strategy):
         if curr_close < ema50_val:
             return None
 
-        # 3. Scientific Swing Detection via scipy.signal.argrelextrema
+        # 2. Scientific Swing Detection via scipy.signal.argrelextrema
         high_peaks = argrelextrema(highs[:curr_bar], np.greater_equal, order=lookback)[0]
         low_troughs = argrelextrema(lows[:curr_bar], np.less_equal, order=lookback)[0]
 
@@ -151,7 +150,7 @@ class FibonacciDailySwing(Strategy):
         if swing_range < 1.5 * atr_val or (swing_range / last_swing_low_val) < self.min_swing_pct:
             return None
 
-        # 4. Canonical Fibonacci Golden Pocket Levels
+        # 3. Canonical Fibonacci Golden Pocket Levels
         fib_levels = compute_fibonacci_retracements(last_swing_low_val, last_swing_high_val)
         fib_500 = fib_levels["50.0"]
         fib_618 = fib_levels["61.8"]
@@ -181,16 +180,23 @@ class FibonacciDailySwing(Strategy):
         if stop_dist <= 0:
             return None
 
-        # 5. Take Profit Target (2.5:1 RR Target for maximum expansion gains)
+        # 4. Take Profit Target (0.0 Prior High, -0.272 Extension, or fixed RR)
         if self.target_mode == "prior_high":
-            tp = round(last_swing_high_val, 2)
+            tp = round(fib_levels["0.0"], 2)
+        elif self.target_mode == "extension_272":
+            tp = round(fib_levels["-27.2"], 2)
         else:
             tp = round(entry_price + (stop_dist * self.rr_ratio), 2)
 
         if tp <= entry_price:
             return None
 
-        # 6. Risk-Based Fractional Sizing with Compounding
+        # Risk-to-Reward gate: require minimum expected reward relative to stop
+        rr_expected = (tp - entry_price) / stop_dist
+        if self.min_rr > 0 and rr_expected < self.min_rr:
+            return None
+
+        # 5. Risk-Based Fractional Sizing
         trade_risk_pct = ctx.risk_pct if ctx.risk_pct > 0 else self.risk_pct
         qty = size_equity_shares(
             capital=ctx.capital,
@@ -211,7 +217,7 @@ class FibonacciDailySwing(Strategy):
             qty=qty,
             stop_dist=stop_dist,
             target_price=tp,
-            setup_type="fibonacci_setup_5_pyramiding",
+            setup_type="fibonacci_golden_pocket",
             exit_state={
                 "sl": sl,
                 "orig_sl": sl,
@@ -242,20 +248,19 @@ class FibonacciDailySwing(Strategy):
         entry_p = pos.get("entry_price", 0.0)
         orig_sl = pos.get("exit_state", {}).get("orig_sl", sl)
 
-        # 1. Trailing Stop to Breakeven at +1R
-        risk_unit = entry_p - orig_sl
-        if risk_unit > 0 and high_p >= (entry_p + risk_unit):
-            sl = max(sl, entry_p)
-            pos["sl"] = sl
-
-        # 2. Check Stop Loss / Breakeven
+        # 1. Check existing Stop Loss / Breakeven FIRST (prevents same-bar dip exit bug)
         if sl > 0 and low_p <= sl:
             reason = "breakeven" if sl >= entry_p else "initial_stop"
             return ExitDecision(price=sl, reason=reason)
 
-        # 3. Check Take Profit Target (2.5:1 RR)
+        # 2. Check Take Profit Target
         if tp > 0 and high_p >= tp:
             return ExitDecision(price=tp, reason="take_profit")
+
+        # 3. Arm / trail stop to breakeven for SUBSEQUENT bars once price reaches +1R
+        risk_unit = entry_p - orig_sl
+        if risk_unit > 0 and high_p >= (entry_p + risk_unit):
+            pos["sl"] = max(sl, entry_p)
 
         return None
 

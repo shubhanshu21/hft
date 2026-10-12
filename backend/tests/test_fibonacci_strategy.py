@@ -76,5 +76,18 @@ class TestFibonacciStrategy(unittest.TestCase):
         self.assertEqual(dec.price, 120.0)
 
 
+    def test_fibonacci_levels_computation(self):
+        from markets.equity.strategies.tf_daily.fibonacci.strategy import compute_fibonacci_retracements
+        levels = compute_fibonacci_retracements(100.0, 200.0)
+        self.assertAlmostEqual(levels["0.0"], 200.0)
+        self.assertAlmostEqual(levels["50.0"], 150.0)
+        self.assertAlmostEqual(levels["61.8"], 138.1966, places=3)
+        self.assertAlmostEqual(levels["70.5"], 129.5, places=1)
+        self.assertAlmostEqual(levels["78.6"], 121.3848, places=3)
+        self.assertAlmostEqual(levels["100.0"], 100.0)
+        self.assertAlmostEqual(levels["-27.2"], 227.2, places=1)
+
+
 if __name__ == "__main__":
     unittest.main()
+
