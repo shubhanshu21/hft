@@ -20,7 +20,8 @@ FX = {"EURINR": "EURUSD=X", "GBPINR": "GBPUSD=X"}       # Yahoo tickers of the d
 THRESHOLD_BP = {"EURINR": 10.0, "GBPINR": 12.0}
 HOLD_MIN = 30
 STOP_BP = 25.0                                            # protective stop, ~3x the typical 30-minute move; rarely reached
-MAX_SPREAD_BP = 15.0                                      # skip a signal when the book is wider than this (the gap is then mostly spread)
+MAX_SPREAD_BP = 6.0     # skip a signal when the book is wider: the typical move is ~7.5 bp, so a wider spread makes the trade a loser on
+                        # average (2026-10-12, first live day: 4 of 6 trades paid 8-15 bp against the 3-4 bp the backtest assumed)
 MEDIAN_BARS, MEDIAN_MIN_BARS = 60, 20
 ROLL_BREAK_BP = 25.0
 BAR = timedelta(minutes=5)

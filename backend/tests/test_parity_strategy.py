@@ -106,6 +106,14 @@ class TestStrategy(unittest.TestCase):
         d = self.st.manage(p, ExitContext("EURINR", self.cross, self.now + timedelta(minutes=31), FakeData(self.usd, q)))
         self.assertAlmostEqual(d.price, round((3 * 110.52 + 110.53 + 110.5325) / 5, 4))
 
+    def test_a_spread_wider_than_6_bp_is_skipped(self):
+        q8 = {"bid": 110.5700, "ask": 110.6585}          # 8 bp
+        q5 = {"bid": 110.5700, "ask": 110.6250}          # 5 bp
+        with patch("markets.currency.strategies.tf_5min.parity.strategy.yahoo_fx_5m", return_value=self.fx):
+            self.assertIsNone(CurrencyParity().entry(self.ctx(q8)))
+            self.assertIsNotNone(CurrencyParity().entry(self.ctx(q5)))
+        self.assertIsNone(CurrencyParity.max_daily_losses)
+
     def test_lots_follow_the_env_setting(self):
         q = {"bid": 110.5700, "ask": 110.5900}
         with patch("markets.currency.strategies.tf_5min.parity.strategy.yahoo_fx_5m", return_value=self.fx), patch.dict(os.environ, {"CURRENCY_PARITY_LOTS": "3"}):

@@ -193,6 +193,27 @@ class TestOvernightStrategyInDryRunner(unittest.TestCase):
             self.assertIn("entry_bar_ts", _rows(path, "SELECT state FROM positions")[0]["state"])
             self.assertEqual(make().positions["TATASTEEL"]["entry_bar_ts"], "2026-09-10T11:00:00+05:30")
 
+    def test_after_max_daily_losses_the_strategy_stops_on_that_symbol_for_the_day(self):
+        capped = type("CappedSwing", (ToySwing,), {"name": "capped", "max_daily_losses": 2})()
+        with _dry_runner(capped) as (make, sim, bars, alerts, path):
+            bars["TATASTEEL"] = [_bar(200.0)]
+            runner = make()
+            with patch.object(runner, "_losses_today", return_value=2):
+                self.assertEqual(runner.scan(), [])
+                self.assertEqual(runner.positions, {})
+            with patch.object(runner, "_losses_today", return_value=1):
+                runner.scan()
+                self.assertIn("TATASTEEL", runner.positions)
+
+    def test_losses_today_are_counted_from_the_trades_table(self):
+        with _dry_runner(ToySwing()) as (make, sim, bars, alerts, path):
+            runner = make()
+            today = [{"symbol": "TATASTEEL", "strategy": "toy_swing", "net_pnl": -10.0}, {"symbol": "TATASTEEL", "strategy": "toy_swing", "net_pnl": 0.0},
+                     {"symbol": "TATASTEEL", "strategy": "toy_swing", "net_pnl": 25.0}, {"symbol": "SBIN", "strategy": "toy_swing", "net_pnl": -5.0},
+                     {"symbol": "TATASTEEL", "strategy": "other", "net_pnl": -5.0}]
+            with patch.object(runner.db, "get_trades_for_date", return_value=today):
+                self.assertEqual(runner._losses_today("toy_swing", "TATASTEEL", sim["now"]), 2)
+
     def test_a_long_only_strategy_can_never_open_a_short(self):
         with _dry_runner(ToyShort()) as (make, sim, bars, alerts, path):
             bars["TATASTEEL"] = [_bar(200.0)]

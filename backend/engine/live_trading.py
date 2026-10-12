@@ -284,6 +284,7 @@ class LiveTrader(RiskGates):
         self.kill_switch_active = False
         self.symbol_daily_pnl: dict[str, float] = {s: 0.0 for s in self.symbols}
         self.symbol_kill_switch: dict[str, bool] = {s: False for s in self.symbols}
+        self._skip_logged: dict[tuple, str] = {}       # (symbol, reason) -> day a skipped entry was last logged
 
         # Market-specific daily loss limits & cooldown timers (added 2026-09-22):
         self.max_market_daily_loss_pct = float(os.environ.get("MAX_MARKET_DAILY_LOSS_PCT", "3.0"))
@@ -495,10 +496,22 @@ class LiveTrader(RiskGates):
             return sorted(raw, key=lambda c: c["timestamp"]) if raw else []
         return _fetch_candles(self.broker, sym, ikey, self.today)
 
+    def _losses_today(self, strategy: str, sym: str, now: datetime) -> int:
+        """Losing trades (net <= 0) this strategy closed on `sym` today, from the trades table (survives a restart)."""
+        day = now.strftime("%Y-%m-%d")
+        return sum(1 for t in self.db.get_trades_for_date(day, account_id=self.account_id)
+                   if t.get("symbol") == sym and (t.get("strategy") or "") == strategy and float(t.get("net_pnl") or 0.0) <= 0.0)
+
     def _try_enter(self, strat, sym: str, now: datetime) -> bool:
         market = _get_market(sym)
         if hasattr(strat, "trades") and not strat.trades(sym):
             return False                     # <MARKET>_<NAME>_SYMBOLS limits this strategy to other symbols
+        if getattr(strat, "max_daily_losses", None) and self._losses_today(strat.name, sym, now) >= strat.max_daily_losses:
+            today = now.strftime("%Y-%m-%d")
+            if self._skip_logged.get((sym, "daily_losses")) != today:
+                self._skip_logged[(sym, "daily_losses")] = today
+                log.info("%s: %s stopped for today after %d losing trades.", sym, strat.name, strat.max_daily_losses)
+            return False
         if strat.blocked({"equity_regime_ok": self.equity_regime_ok if self.use_equity_regime_filter else True}):
             return False
         if strat.max_positions is not None:

@@ -44,6 +44,8 @@ class CurrencyParity(Strategy):
     product = "I"
     timeframe = ("minutes", 5)
     max_positions = 2
+    max_daily_losses = None       # no daily stop (user, 2026-10-12: keep every opportunity). A stop after 2 losses would cut the worst
+                                  # backtest day -2,033 -> -1,160 but also profit 18,873 -> 17,439; set 2 here to switch it on
     id_prefix = "PAR"
     price_decimals = 4
 
@@ -85,7 +87,7 @@ class CurrencyParity(Strategy):
             log.info("%s: gap %+.1f bp but no live quote -- skipped", sym, gap)
             return None
         spread_bp = (q["ask"] - q["bid"]) / ((q["ask"] + q["bid"]) / 2) * 1e4
-        if spread_bp > MAX_SPREAD_BP:
+        if spread_bp > float(os.environ.get("CURRENCY_PARITY_MAX_SPREAD_BP", MAX_SPREAD_BP)):
             log.info("%s: gap %+.1f bp but the spread is %.1f bp -- skipped", sym, gap, spread_bp)
             return None
         d = 1 if direction == "long" else -1

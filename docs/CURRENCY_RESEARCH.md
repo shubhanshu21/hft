@@ -150,6 +150,18 @@ exit 30 min later - half spread):
 
 7 of 8 weeks positive. At 2 lots the fixed Rs70.8 brokerage takes almost all of it. Judge it on its paper trades from 2026-10-12.
 
+**Live day 1 (2026-10-12): 6 trades, all shorts, all lost, -Rs4,479** (worst backtest day: -2,033). The rupee strengthened in the
+morning and the crosses did not follow for two hours: EURINR's basis to EUR/USD x USDINR went from ~10 bp (Oct 6-9) to 43 bp, the gap
+from 0 to +55 bp by 10:30, closing only by ~12:30, so each 30-minute short exited into a widening gap. Four trades also paid 8-15 bp
+of spread (backtest: 3-4 bp) -- the book was wide exactly when the gap was large. Changes the same day:
+- a pair stops for the day after 2 losing trades (`Strategy.max_daily_losses`, counted from the trades table by both runners):
+  backtest 134 -> 118 trades, Rs18,873 -> 17,439, worst day -2,033 -> -1,160 -- added, then switched OFF the same day at the user's
+  request (it gives up profit to make the worst day smaller); the setting stays available;
+- maximum spread at entry 15 -> 6 bp (`CURRENCY_PARITY_MAX_SPREAD_BP`): the typical move is ~7.5 bp, so a wider spread is a
+  losing trade on average (not testable on the backtest: no historical book).
+Skipping gaps > 30 bp was rejected: those were the backtest's most profitable trades (+12.7 bp each).
+With both, day 1 would have been about -2,088 (the two EURINR trades with normal spreads).
+
 ## What changed in 2024: only USDINR is liquid
 
 RBI's 2024 rule (rupee currency derivatives need an underlying exposure) emptied the other pairs. Median daily volume of the contract

@@ -857,11 +857,23 @@ class DryRunner(RiskGates):
             return False
         return True
 
+    def _losses_today(self, strategy: str, sym: str, now: datetime) -> int:
+        """Losing trades (net <= 0) this strategy closed on `sym` today, from the trades table (survives a restart)."""
+        day = now.strftime("%Y-%m-%d")
+        return sum(1 for t in self.db.get_trades_for_date(day, account_id=self.account_id)
+                   if t.get("symbol") == sym and (t.get("strategy") or "") == strategy and float(t.get("net_pnl") or 0.0) <= 0.0)
+
     def _try_enter(self, strat, sym: str, now: datetime, signals: list[dict]) -> bool:
         """Evaluate `strat` for `sym`; open a (paper) position if it signals and every gate passes."""
         market = _get_market(sym)
         if hasattr(strat, "trades") and not strat.trades(sym):
             return False                     # <MARKET>_<NAME>_SYMBOLS limits this strategy to other symbols
+        if getattr(strat, "max_daily_losses", None) and self._losses_today(strat.name, sym, now) >= strat.max_daily_losses:
+            today = now.strftime("%Y-%m-%d")
+            if self._skip_logged.get((sym, "daily_losses")) != today:
+                self._skip_logged[(sym, "daily_losses")] = today
+                log.info("%s: %s stopped for today after %d losing trades.", sym, strat.name, strat.max_daily_losses)
+            return False
         if not strat.in_session(now):
             return False                     # market closed: the entry functions would reject this anyway, and every candle fetch counts against Upstox's rate limits
         if strat.blocked(self._gate_flags()):

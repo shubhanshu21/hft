@@ -30,7 +30,7 @@ Only strategies that made money after costs in testing are kept. The 5-minute sc
 
 | market | folder | what it does | status | backtest / doc |
 |---|---|---|---|---|
-| currency | `strategies/tf_5min/parity` | fades the gap between EURINR / GBPINR and EUR/USD (GBP/USD) x USDINR; 5 lots, 30 min, fills walk the live book | **paper from 2026-10-12** | `python3 -m markets.currency.strategies.tf_5min.parity.backtest`; `docs/CURRENCY_RESEARCH.md` |
+| currency | `strategies/tf_5min/parity` | fades the gap between EURINR / GBPINR and EUR/USD (GBP/USD) x USDINR; 5 lots, 30 min, fills walk the live book; max spread 6 bp | **paper from 2026-10-12** (day 1: -Rs4,479) | `python3 -m markets.currency.strategies.tf_5min.parity.backtest`; `docs/CURRENCY_RESEARCH.md` |
 | commodity | `strategies/tf_daily/swing` | 12-month time-series momentum on GOLDTEN / SILVERMIC / CRUDEOILM, held for weeks | paper (weak edge) | `docs/SWING_RESEARCH.md` |
 | crypto | `strategies/tf_1hour/momentum.py`, `router.py` | slow volatility-targeted trend ensemble with a BTC regime router (BTC / ETH / SOL) | paper on Binance's demo exchange (`hft-crypto.service`) | `docs/CRYPTO_MOMENTUM.md`, `docs/CRYPTO_ALL_WEATHER.md` |
 | crypto | `strategies/tf_15min/breakout.py` | daily volatility breakout, long-only with a trend filter (+5-9% a year on its 2025-26 test) | paper (`engine/crypto_breakout.py`) | `docs/CRYPTO_ACTIVE_STRATEGIES.md` |
