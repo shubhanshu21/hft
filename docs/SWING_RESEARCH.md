@@ -237,3 +237,21 @@ failed out of sample. The one persistent pattern is that long-only trend-followi
 nothing otherwise, which is a market-beta effect, not an edge that can be traded on demand. **Nothing is enabled.** The next
 evidence that would change this: a longer *real* (not proxy) history including delisted stocks, or paper results over a full
 market cycle for the commodity time-series-momentum candidate.
+
+
+## Weekly swing and the trend strategy (2026-10-12)
+
+The user asked for swing strategies with a weekly limit. All 31 documented rule variants (`markets/swing_research_ext.py`) were rerun
+with every trade held at most 5 trading days, on roll-honest prices for commodities (ETFs GLD/SLV/USO/UNG/CPER x INR -- Yahoo's
+continuous futures jump at every roll, which fakes P&L) and on the rupee pairs; train <= 2018, test 2019-26.
+
+- One-week limit: nothing passes in either market. Commodity: best rule 12-month momentum +0.19% a trade (t 1.5) while random entries
+  with the same exits reached t 2.6. Currency: best +0.17% (74 trades). Cutting trades at a week removes the long winners trend
+  following lives on.
+- No holding limit (commodity): 12-month momentum +2.56% a trade (PF 1.97, 6/8 years), 50/200 EMA trend +4.67% (PF 1.81, 94 trades),
+  double bottom +1.21% (PF 1.48, 7/8 years). But random entries averaged +1.13% a trade in 2019-26 (a commodity bull market) and the
+  best random reached t 2.7: none clears the multiple-testing bar (t >= 3.15).
+- The existing 12-month swing holds up on the roll-honest prices too: all 5 commodities, test PF 1.88 (t 1.5) vs 1.77 on Yahoo futures.
+
+Added on paper: `markets/commodity/strategies/tf_daily/trend` (50/200 EMA trend, signals from the ETF proxies, same mechanics as the
+swing). With one position per contract it trades only what the swing is not holding.

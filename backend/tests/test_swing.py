@@ -218,3 +218,37 @@ class TestCommoditySwingStrategy(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestCommodityTrendStrategy(unittest.TestCase):
+    """The 50/200 EMA trend variant: the swing mechanics, its own rule, and the roll-honest ETF proxy."""
+
+    def _run(self, closes, now=None):
+        from markets.commodity.strategies.tf_daily.trend import strategy as tmod
+        from markets.commodity.strategies.tf_daily.swing import strategy as smod
+        frame = _frame(closes)
+        t = tmod.CommodityTrend()
+        ctx = TestCommoditySwingStrategy()._ctx(now=now)
+        with patch.object(tmod, "etf_inr_frame", lambda sym: frame), patch.object(smod, "inr_frame", side_effect=AssertionError("futures proxy used")), \
+             patch.object(smod, "mcx_front_expiry", lambda sym: "2026-12-31"):
+            return t, t.entry(ctx)
+
+    def test_it_is_discovered_and_off_unless_named(self):
+        from core import registry
+        self.assertIn(("commodity", "trend"), registry.discover())
+
+    def test_uptrend_goes_long_from_the_etf_proxy_with_its_own_label(self):
+        t, sig = self._run(np.linspace(100, 300, 400))
+        self.assertIsNotNone(sig)
+        self.assertEqual((sig.direction, sig.setup_type), ("long", "ema_50_200"))
+        self.assertLess(sig.stop_loss, sig.entry_price)
+
+    def test_downtrend_goes_short(self):
+        t, sig = self._run(np.linspace(300, 100, 400))
+        self.assertEqual(sig.direction, "short")
+
+    def test_the_swing_strategy_still_uses_its_own_rule(self):
+        from markets.commodity.strategies.tf_daily.swing.strategy import CommoditySwing
+        from markets.commodity.strategies.tf_daily.trend.strategy import CommodityTrend
+        self.assertEqual((CommoditySwing.RULE.name, CommoditySwing.SETUP), ("tsmom", "tsmom_252"))
+        self.assertEqual((CommodityTrend.RULE.name, CommodityTrend.RULE.params), ("ema_trend", {"fast": 50, "slow": 200}))

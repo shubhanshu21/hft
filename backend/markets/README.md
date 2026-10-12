@@ -31,6 +31,7 @@ history: the 5-minute scalpers (2026-10-10), the EURINR/GBPINR parity scalp and 
 | market | folder | what it does | status | backtest / doc |
 |---|---|---|---|---|
 | commodity | `strategies/tf_daily/swing` | 12-month time-series momentum on GOLDTEN / SILVERMIC / CRUDEOILM, ATR stop, held for weeks | paper; test 2019-26 profit factor 1.88 on roll-honest ETF prices (weak, mostly gold) | `docs/SWING_RESEARCH.md` |
+| commodity | `strategies/tf_daily/trend` | 50/200-day EMA trend on the roll-honest ETF proxies (GLD/SLV/USO x INR), ATR stop, held for weeks; trades a contract only when `swing` is not holding it | paper from 2026-10-13; test 2019-26 +4.67% a trade, PF 1.81, 6/8 years (t 1.4, weak) | `docs/SWING_RESEARCH.md` |
 | crypto | `strategies/tf_1hour/momentum.py`, `router.py` | slow volatility-targeted trend ensemble with a BTC regime router (BTC / ETH / SOL), holds weeks | paper on Binance's demo exchange (`hft-crypto.service`) | `docs/CRYPTO_MOMENTUM.md`, `docs/CRYPTO_ALL_WEATHER.md` |
 
 Currency and equity have no strategy now (their cost models, data top-ups and research data stay).

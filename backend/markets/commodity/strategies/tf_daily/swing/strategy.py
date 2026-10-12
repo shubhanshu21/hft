@@ -59,6 +59,8 @@ class CommoditySwing(Strategy):
     max_positions = 3
     id_prefix = "CSW"
     WINDOW = (9, 5, 10, 0)        # evaluate between 09:05 and 10:00 IST: yesterday's global close is in, the day is young
+    RULE = RULE                   # a variant overrides the rule, its data source (_frame / _has_proxy) and its label (SETUP)
+    SETUP = "tsmom_252"
 
     def __init__(self) -> None:
         self._cache: dict[tuple[str, str], tuple[int, float, pd.Series] | None] = {}
@@ -67,7 +69,7 @@ class CommoditySwing(Strategy):
     def _latest_row(self, sym: str, today: str):
         """Indicator row of the last COMPLETED daily bar, or None if the proxy is unavailable."""
         try:
-            ind = with_indicators(inr_frame(sym))
+            ind = with_indicators(self._frame(sym))
         except Exception:
             return None
         ind = ind[ind.index < pd.Timestamp(today)]           # drop today's still-forming bar
@@ -82,8 +84,8 @@ class CommoditySwing(Strategy):
             if row is None:
                 self._cache[key] = None
             else:
-                stop_pct = RULE.stop_mult * float(row["atr"]) / float(row["close"])
-                self._cache[key] = (entry_signal(RULE, row, allow_short=True), stop_pct, row)
+                stop_pct = self.RULE.stop_mult * float(row["atr"]) / float(row["close"])
+                self._cache[key] = (entry_signal(self.RULE, row, allow_short=True), stop_pct, row)
         return self._cache[key]
 
     def due(self, now: datetime) -> bool:
@@ -92,7 +94,7 @@ class CommoditySwing(Strategy):
 
     # ---- decide ------------------------------------------------------------------------------------------------
     def entry(self, ctx: EntryContext) -> Signal | None:
-        if not has_proxy(ctx.symbol) or not ctx.candles:
+        if not self._has_proxy(ctx.symbol) or not ctx.candles:
             return None
         expiry = mcx_front_expiry(ctx.symbol)
         left = _days_to_expiry(expiry, ctx.now)
@@ -112,7 +114,7 @@ class CommoditySwing(Strategy):
         return Signal(
             symbol=ctx.symbol, direction="long" if direction > 0 else "short", entry_price=price,
             stop_loss=price - direction * stop_dist, qty=lots, stop_dist=stop_dist, instrument_key=ctx.instrument_key,
-            lot_size=COMMODITY_SPECS.get(ctx.symbol, {}).get("lot_size", 1), setup_type="tsmom_252",
+            lot_size=COMMODITY_SPECS.get(ctx.symbol, {}).get("lot_size", 1), setup_type=self.SETUP,
             exit_state={"dir": direction, "stop_pct": stop_pct, "contract_expiry": expiry},
             target_price=price, breakeven_price=price,      # the DB needs values; this strategy has no target
         )
@@ -133,9 +135,15 @@ class CommoditySwing(Strategy):
         # 3. the momentum sign flipped: leave at the current price (the backtest exits at the next open)
         if self.due(ctx.now):
             sig = self._signal(ctx.symbol, ctx.now)
-            if sig is not None and exit_signal(RULE, sig[2], direction):
+            if sig is not None and exit_signal(self.RULE, sig[2], direction):
                 return ExitDecision(float(ctx.candles[-1]["close"]), "signal_exit")
         return None
+
+    def _frame(self, sym: str) -> pd.DataFrame:
+        return inr_frame(sym)
+
+    def _has_proxy(self, sym: str) -> bool:
+        return has_proxy(sym)
 
     def costs(self, symbol: str, direction: str, entry: float, exit_price: float, qty: int) -> dict:
         return compute_mcx_commodity_costs(symbol, direction, entry, exit_price, qty)

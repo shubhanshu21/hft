@@ -18,6 +18,22 @@ MCX_PROXY = {"CRUDEOILM": "CL=F", "GOLDM": "GC=F", "SILVER": "SI=F", "NATGASMINI
 ALIASES = {"GOLDTEN": "GOLDM", "SILVERMIC": "SILVER"}
 
 
+# Roll-honest proxies: ETFs that hold the rolled futures, so the price has no jump at each contract roll (Yahoo's continuous
+# futures above do; a roll in contango then shows as a fake gain for a long). Used by the trend strategy, which was backtested on them.
+ETF_PROXY = {"CRUDEOILM": "USO", "GOLDM": "GLD", "SILVER": "SLV", "NATGASMINI": "UNG", "COPPER": "CPER"}
+
+
+def has_etf_proxy(symbol: str) -> bool:
+    return ALIASES.get(symbol, symbol) in ETF_PROXY
+
+
+def etf_inr_frame(symbol: str) -> pd.DataFrame:
+    """Daily OHLC of the ETF proxy for an MCX symbol, in rupees. Index = date."""
+    etf = fetch_daily(ETF_PROXY[ALIASES.get(symbol, symbol)], start="2005-01-01")
+    rate = fetch_daily("INR=X")["close"].reindex(etf.index).ffill().bfill()
+    return pd.DataFrame({k: etf[k] * rate for k in ("open", "high", "low", "close")}).dropna()
+
+
 def has_proxy(symbol: str) -> bool:
     return symbol in MCX_PROXY or symbol in ALIASES
 
