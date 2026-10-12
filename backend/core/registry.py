@@ -5,7 +5,6 @@ STRATEGIES (a list of them) is found automatically -- there is no list to edit. 
 actually RUN is chosen per market in .env:
 
     COMMODITY_STRATEGIES=swing
-    CURRENCY_STRATEGIES=parity
 
 If the variable is absent, only strategies with default_enabled = True run (the existing
 scalpers), so dropping in a new strategy file never starts trading by itself.

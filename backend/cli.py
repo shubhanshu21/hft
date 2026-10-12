@@ -6,8 +6,8 @@ Strategies live in markets/<market>/strategies/<timeframe>/<name>/ (markets/READ
 (commodity, currency, equity) were deleted on 2026-10-10 after losing money once costs and real fills were counted -- see git history.
 
 Usage Examples:
-    # 1. Backtest a strategy (each has its own backtest next to it)
-    python3 -m markets.currency.strategies.tf_5min.parity.backtest
+    # 1. Swing research across markets (documented rules, train/test, costs)
+    python3 -m markets.swing_research
 
     # 2. Live paper-trading daemon (systemd: hft-dryrun.service)
     python3 cli.py dryrun --interval 30
