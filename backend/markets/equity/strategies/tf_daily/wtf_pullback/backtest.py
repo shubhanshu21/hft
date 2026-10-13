@@ -126,9 +126,9 @@ def run_backtest(
                 })
                 del open_pos[sym]
             else:
-                # Breakeven trail at +1R (offset +0.6% to cover statutory costs and fees)
+                # Breakeven trail at +1.5R (gives trades room to breathe, prevents premature scratching)
                 risk_unit = pos["entry"] - pos["orig_sl"]
-                if risk_unit > 0 and hi >= pos["entry"] + risk_unit:
+                if risk_unit > 0 and hi >= pos["entry"] + 1.5 * risk_unit:
                     pos["sl"] = max(pos["sl"], round(pos["entry"] * 1.006, 2))
 
         # Current portfolio equity
@@ -152,7 +152,7 @@ def run_backtest(
 
                 if pd.isna(ema50) or c < ema50:
                     continue
-                if pd.isna(rsi) or rsi < 20.0 or rsi > 50.0:
+                if pd.isna(rsi) or rsi < 35.0 or rsi > 48.0:
                     continue
                 bar_range = max(hi - lo, 1e-4)
                 if not (c > op and (c - lo) / bar_range >= 0.40):
@@ -161,22 +161,15 @@ def run_backtest(
                     continue
 
                 atr_val = atr if (atr and not pd.isna(atr)) else 0.015 * c
-                sl = round(lo - 0.5 * atr_val, 2)
+                # Wider stop (1.0 ATR) gives trades breathing room from daily noise
+                sl = round(lo - 1.0 * atr_val, 2)
                 sd = c - sl
                 if sd <= 0:
                     continue
 
-                df_d = daily[sym]
-                idx = df_d[df_d["date_str"] == d].index
-                if len(idx) == 0 or idx[0] < 20:
-                    continue
-                i = idx[0]
-                tp = round(float(df_d.iloc[max(0, i - 20) : i]["high"].max()), 2)
-                if tp <= c:
-                    continue
-                rr = (tp - c) / sd
-                if rr < 1.5:
-                    continue
+                # Realistic, attainable 2.0R target rather than distant 20-day high
+                tp = round(c + 2.0 * sd, 2)
+                rr = 2.0
 
                 cands.append({"sym": sym, "entry": c, "sl": sl, "tp": tp, "rr": rr, "sd": sd})
 

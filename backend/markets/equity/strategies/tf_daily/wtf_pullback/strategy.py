@@ -62,12 +62,12 @@ class WTFPullbackDelivery(Strategy):
 
     def __init__(
         self,
-        rsi_min: float = 20.0,
-        rsi_max: float = 50.0,
+        rsi_min: float = 35.0,              # Real pullback zone (35-48)
+        rsi_max: float = 48.0,              # Exclude shallow uncorrected candles (49-50)
         min_rr: float = 1.5,
-        risk_pct: float = 6.0,              # 6% equity risk per trade for high capital efficiency
-        target_lookback: int = 20,          # bars back to find prior high (target)
-        stop_atr_mult: float = 0.5,         # stop = low - X * ATR
+        risk_pct: float = 6.0,              # 6% equity risk per trade
+        target_rr: float = 2.0,             # Fixed attainable 2.0R target (avoids far 20d high trap)
+        stop_atr_mult: float = 1.0,         # Wider 1.0 ATR stop gives breathing room from daily noise
         weekly_ema_period: int = 10,        # EMA period on weekly bars
         allowed_symbols: tuple[str, ...] | None = DEFAULT_UNIVERSE,
     ):
@@ -75,7 +75,7 @@ class WTFPullbackDelivery(Strategy):
         self.rsi_max        = rsi_max
         self.min_rr         = min_rr
         self.risk_pct       = risk_pct
-        self.target_lookback = target_lookback
+        self.target_rr      = target_rr
         self.stop_atr_mult  = stop_atr_mult
         self.weekly_ema_period = weekly_ema_period
         self.allowed_symbols = set(allowed_symbols) if allowed_symbols else None
@@ -155,17 +155,9 @@ class WTFPullbackDelivery(Strategy):
         if stop_dist <= 0:
             return None
 
-        # Target = highest high of last N bars (prior resistance)
-        lb = self.target_lookback
-        if curr < lb:
-            return None
-        tp = round(float(highs[curr - lb : curr].max()), 2)
-        if tp <= c:
-            return None
-
-        rr = (tp - c) / stop_dist
-        if rr < self.min_rr:
-            return None  # Not worth it
+        # Attainable 2.0R target rather than distant 20-day high
+        tp = round(c + self.target_rr * stop_dist, 2)
+        rr = self.target_rr
 
         # ── Position sizing ──────────────────────────────────────────
         trade_risk_pct = ctx.risk_pct if ctx.risk_pct > 0 else self.risk_pct
@@ -228,9 +220,9 @@ class WTFPullbackDelivery(Strategy):
         if tp > 0 and hi >= tp:
             return ExitDecision(price=tp, reason="take_profit")
 
-        # Trail stop to breakeven once up +1R (offset +0.6% to cover statutory costs and fees)
+        # Trail stop to breakeven once up +1.5R (gives trades room to breathe)
         risk_unit = entry - orig_sl
-        if risk_unit > 0 and hi >= entry + risk_unit:
+        if risk_unit > 0 and hi >= entry + 1.5 * risk_unit:
             pos["sl"] = max(sl, round(entry * 1.006, 2))
 
         return None
