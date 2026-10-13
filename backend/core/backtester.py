@@ -24,13 +24,24 @@ import pandas as pd
 
 from core.exits import bar_exit
 from core.paths import ARCHIVE_ROOT
-from core.strategy import EntryContext, ExitContext, Strategy
+from core.strategy import EntryContext, ExitContext, MarketData, Strategy
 
 DAILY_FILE = {"equity": "equity/{sym}_daily.csv", "currency": "currency/{sym}_1day.csv"}
 
 
 class BacktestError(ValueError):
     """The request cannot be run (bad dates, no data, unsupported strategy). The message is shown to the user."""
+
+
+class _DayView(MarketData):
+    """What a strategy may know about OTHER symbols on the day it decides: their daily candles up to and including that day (never later)."""
+
+    def __init__(self, cache: dict, pos_of: dict, day: pd.Timestamp, window: int):
+        self._cache, self._pos, self._day, self._window = cache, pos_of, day, window
+
+    def candles(self, symbol: str) -> list[dict]:
+        i = self._pos.get(symbol, {}).get(self._day)
+        return [] if i is None else self._cache[symbol][max(0, i + 1 - self._window): i + 1]
 
 
 def load_daily(market: str, symbol: str) -> pd.DataFrame:
@@ -176,7 +187,8 @@ def run_backtest(strategy: Strategy, symbols: list[str], start: str, end: str, *
                 if i < 30:
                     continue
                 sig = strategy.entry(EntryContext(symbol=s, candles=cache[s][max(0, i + 1 - window): i + 1], now=datetime(d.year, d.month, d.day),
-                                                  instrument_key=None, capital=equity_now, risk_pct=risk_pct, leverage=leverage, direction_filter="both"))
+                                                  instrument_key=None, capital=equity_now, risk_pct=risk_pct, leverage=leverage, direction_filter="both",
+                                                  data=_DayView(cache, pos_of, d, window)))
                 if sig is None or sig.qty < 1 or (sig.direction == "short" and not strategy.allow_short):
                     continue
                 pending.append({"symbol": s, "direction": sig.direction, "qty": sig.qty, "stop": sig.stop_loss, "tp": sig.target_price or None,
