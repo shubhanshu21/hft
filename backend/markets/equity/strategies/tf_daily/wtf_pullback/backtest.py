@@ -63,6 +63,7 @@ def run_backtest(
     max_pos: int = 3,
     universe_mode: str = "top_momentum",
     compound: bool = True,
+    min_breadth: float = 0.50,
 ):
     symbols = list(TOP_MOMENTUM_UNIVERSE if universe_mode == "top_momentum" else BROAD_UNIVERSE)
     daily, weekly = load_candles(symbols)
@@ -89,7 +90,10 @@ def run_backtest(
         df_w = weekly.get(sym)
         if df_w is None:
             return False
-        sub = df_w[df_w["date_str"] <= d]
+        # Weekly bars in archive are stamped with Monday date (e.g. 2026-01-05).
+        # A week's bar completes on Friday afternoon. To ensure ZERO lookahead bias,
+        # we only accept completed weeks (week_start <= d - 7 days).
+        sub = df_w[pd.to_datetime(df_w["date_str"]) <= pd.to_datetime(d) - pd.Timedelta(days=7)]
         if len(sub) < 12:
             return False
         ema10 = ta.ema(sub["close"], length=10)
@@ -138,8 +142,14 @@ def run_backtest(
         )
         equity_curve.append({"date": d, "equity": port_eq})
 
-        # 2. Check Entries
-        if len(open_pos) < max_pos:
+        # 2. Check Entries (with Market Regime Breadth Gate)
+        above_ema = sum(
+            1 for s in symbols
+            if drecs.get(s, {}).get(d, {}).get("close", 0) > drecs.get(s, {}).get(d, {}).get("ema50", 1e9)
+        )
+        breadth = above_ema / len(symbols) if symbols else 0.5
+
+        if len(open_pos) < max_pos and breadth >= min_breadth:
             cands = []
             for sym in symbols:
                 if sym in open_pos or sym not in drecs:
@@ -249,6 +259,7 @@ if __name__ == "__main__":
     parser.add_argument("--max-pos", type=int, default=3, help="Max concurrent open positions (default: 3)")
     parser.add_argument("--universe", type=str, default="top_momentum", choices=["top_momentum", "broad"],
                         help="Universe mode: 'top_momentum' (Top 20 leaders) or 'broad' (Nifty50)")
+    parser.add_argument("--min-breadth", type=float, default=0.50, help="Minimum market breadth (default: 0.50)")
     parser.add_argument("--no-compound", action="store_true", help="Disable compounding position sizing")
     args = parser.parse_args()
 
@@ -259,4 +270,5 @@ if __name__ == "__main__":
         max_pos=args.max_pos,
         universe_mode=args.universe,
         compound=not args.no_compound,
+        min_breadth=args.min_breadth,
     )

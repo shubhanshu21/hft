@@ -87,6 +87,10 @@ class WTFPullbackDelivery(Strategy):
         if self.allowed_symbols and ctx.symbol not in self.allowed_symbols:
             return None
 
+        # Market Regime Gate: avoid buying when broader market regime is bearish
+        if ctx.equity_regime_ok is False:
+            return None
+
         candles = ctx.candles
         if not candles or len(candles) < 60:
             return None
@@ -131,7 +135,8 @@ class WTFPullbackDelivery(Strategy):
         if len(df_w) < self.weekly_ema_period + 2:
             return None
         df_w["ema_w"] = ta.ema(df_w["close"], length=self.weekly_ema_period)
-        last_w = df_w.iloc[-1]
+        # Use the last completed week (iloc[-2]) rather than in-progress week (iloc[-1])
+        last_w = df_w.iloc[-2] if len(df_w) >= 2 else df_w.iloc[-1]
         if pd.isna(last_w["ema_w"]) or last_w["close"] < last_w["ema_w"]:
             return None  # Weekly downtrend — skip
 
