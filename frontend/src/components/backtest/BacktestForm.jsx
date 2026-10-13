@@ -17,7 +17,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
   const [all, setAll] = useState(true);
   const [chosen, setChosen] = useState([]);
   const [f, setF] = useState({ ...yearRange(THIS_YEAR), capital: 100000, slippage_bp: 5, risk_pct: 2, max_positions: 3, leverage: 1, trail_stop_pct: 8, trail_after_pct: 5, profit_trail_pct: 0 });
-  const [useTrail, setUseTrail] = useState(true);
+  const [useTrail, setUseTrail] = useState(false);       // off: strategies bring their own exits (trend_ema_cross has a built-in trailing stop)
   const [year, setYear] = useState(String(THIS_YEAR));       // "custom" once the dates are edited by hand
 
   useEffect(() => { const o = strategies.filter((s) => s.market === market); setName(o[0]?.name ?? ""); setChosen([]); setAll(true); }, [market, strategies]);
@@ -89,7 +89,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
       </Panel>
 
       <Panel title="Trailing stop and trailing profit">
-        <label className="check" htmlFor="usetrail"><input id="usetrail" type="checkbox" checked={useTrail} onChange={(e) => setUseTrail(e.target.checked)} disabled={crypto} /> Use trailing stop and trailing profit (ready-made values below, change them if you like)</label>
+        <label className="check" htmlFor="usetrail"><input id="usetrail" type="checkbox" checked={useTrail} onChange={(e) => setUseTrail(e.target.checked)} disabled={crypto} /> Add an extra trailing stop and trailing profit on top of the strategy's own exits (ready-made values below)</label>
         <div className="form-grid">
           <div className="field"><label htmlFor="tstop">Trailing stop (% below the best price)</label><input id="tstop" type="number" min="0" max="30" step="0.5" value={f.trail_stop_pct} onChange={set("trail_stop_pct")} disabled={crypto || !useTrail} />
             <span className="hint">Wide on purpose: a tight trail is hit by ordinary daily moves. The stop follows the price up and never moves down.</span></div>
