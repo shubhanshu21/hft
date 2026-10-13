@@ -28,7 +28,7 @@ from core.exits import bar_exit
 from core.paths import ARCHIVE_ROOT
 from core.strategy import EntryContext, ExitContext, MarketData, Strategy
 
-DAILY_FILE = {"equity": "equity/{sym}_daily.csv", "currency": "currency/{sym}_1day.csv"}
+DAILY_FILE = {"equity": "equity/{sym}_daily.csv", "currency": "currency/{sym}_daily_adj.csv"}   # currency: back-adjusted futures series from 2012 (markets/currency/daily_series.py)
 
 
 class BacktestError(ValueError):
