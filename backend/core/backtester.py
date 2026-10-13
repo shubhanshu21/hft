@@ -70,7 +70,7 @@ def _candles(df: pd.DataFrame) -> list[dict]:
 
 def run_backtest(strategy: Strategy, symbols: list[str], start: str, end: str, *, capital: float = 100_000.0, slippage_bp: float = 5.0,
                  risk_pct: float = 2.0, max_positions: int = 3, leverage: float = 1.0,
-                 trail_stop_pct: float = 0.0, trail_after_pct: float = 0.0, profit_trail_pct: float = 0.0, pyramid_pct: float | None = None,
+                 trail_stop_pct: float = 0.0, trail_after_pct: float = 0.0, profit_trail_pct: float = 0.0, pyramid_pct: float | None = None, max_position_pct: float | None = None,
                  progress: Callable[[int, int], None] | None = None, on_snapshot: Callable[[dict], None] | None = None, snapshot_every: int = 4) -> dict:
     if tuple(strategy.timeframe) != ("days", 1):
         raise BacktestError(f"{strategy.market}/{strategy.name} reads {strategy.timeframe} bars; the web backtester runs daily-bar strategies only")
@@ -148,7 +148,8 @@ def run_backtest(strategy: Strategy, symbols: list[str], start: str, end: str, *
             if (dr == 1 and fill <= sig["stop"]) or (dr == -1 and fill >= sig["stop"]):
                 continue                                           # gapped through the stop: no trade
             used = sum(p["entry_price"] * p["qty"] * lot[p_s] for p_s, p in book.items()) / leverage
-            qty = min(sig["qty"], int(max(eq_open - used, 0) * leverage / (fill * lot[s])), int(eq_open * leverage / max_positions / (fill * lot[s])))
+            cap = (max_position_pct / 100) if max_position_pct else (1 / max_positions)      # largest share of the account one trade may use
+            qty = min(sig["qty"], int(max(eq_open - used, 0) * leverage / (fill * lot[s])), int(eq_open * leverage * cap / (fill * lot[s])))
             if qty < 1:
                 continue
             book[s] = {"direction": sig["direction"], "dir": dr, "qty": qty, "entry_price": fill, "current_stop": sig["stop"], "best_price": fill,
