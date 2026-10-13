@@ -226,7 +226,7 @@ def run_backtest(strategy: Strategy, symbols: list[str], start: str, end: str, *
                 if i < 30:
                     continue
                 sig = strategy.entry(EntryContext(symbol=s, candles=cache[s][max(0, i + 1 - window): i + 1], now=datetime(d.year, d.month, d.day),
-                                                  instrument_key=None, capital=equity_now, risk_pct=risk_pct, leverage=leverage, direction_filter="both",
+                                                  instrument_key=None, capital=equity_now, risk_pct=risk_pct, leverage=leverage, direction_filter="both", account_equity=equity_now,
                                                   data=_DayView(view_cache, view_pos, d, window)))
                 if sig is None or sig.qty < 1 or (sig.direction == "short" and not strategy.allow_short):
                     continue

@@ -783,7 +783,7 @@ class DryRunner(RiskGates):
             return False
         ctx = dict(symbol=sym, candles=candles, now=now, instrument_key=SYMBOL_MAP.get(sym),
                    risk_pct=base_risk_pct * self._drawdown_risk_scale(), leverage=leverage, direction_filter=self.direction_filter,
-                   equity_regime_ok=self._gate_flags()["equity_regime_ok"],
+                   equity_regime_ok=self._gate_flags()["equity_regime_ok"], account_equity=self.capital,
                    data=self._market_data())
         pb = entry_pullback.config_for(sym, market)
         from_pullback = stopped_on_fill = False

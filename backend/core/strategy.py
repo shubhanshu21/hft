@@ -86,6 +86,7 @@ class EntryContext:
     direction_filter: str               # "both" | "long" | "short"
     equity_regime_ok: bool | None = True
     data: MarketData | None = None      # other symbols' bars / live quotes (None in backtests that do not provide them)
+    account_equity: float | None = None # the whole account's value (capital is only what is free for sizing); None if the runner does not say
 
 
 @dataclass
