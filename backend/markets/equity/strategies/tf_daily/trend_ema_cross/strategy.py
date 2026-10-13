@@ -7,6 +7,10 @@ Rules (fixed before testing; "T4B" in the 2026-10-13 trend comparison), daily ba
     No profit target and no time limit, so a big rally can run.
 Tested on the 49 stocks, Rs1 lakh, Upstox delivery fees and 5 bp slippage, chosen among 8 trend designs on 2023-25:
   2023-25 +29.7% (54 trades, 41% winners, profit factor 1.65, worst fall -18.4%); judged on 2026: +8.3% (12 trades, 58% winners).
+Stocks traded (2026-10-13, user: "only use those"): the 20 stocks whose signals made the most in 2023-25 (BEST_SYMBOLS below). Ranked on 2023-25 only,
+then judged on 2026: top 20 +11.2% (9 trades) vs all 49 +8.3%, and it beat all 8 random groups of 20 stocks (-8.6% to +10.9%); top 10 and top 15 also
+beat every random group of their size. A backtest of 2023-25 with this list is NOT a fair test (the list was chosen on those years). Re-rank it each
+January on the latest three years. The market check still uses all 49 stocks.
 Not switched on for paper trading (default_enabled stays False).
 """
 from __future__ import annotations
@@ -20,6 +24,8 @@ from markets.equity.universe import NIFTY50_SYMBOLS
 FAST, SLOW, LONG = 20, 50, 200
 MIN_BREADTH_PCT = 50.0
 STOP_ATR, TRAIL_ATR = 2.5, 3.0
+BEST_SYMBOLS = ("ADANIPORTS", "BPCL", "COALINDIA", "IOC", "SBILIFE", "ONGC", "TITAN", "WIPRO", "EICHERMOT", "SUNPHARMA",
+                "INFY", "ASIANPAINT", "APOLLOHOSP", "HEROMOTOCO", "MARUTI", "TCS", "BAJAJFINSV", "BRITANNIA", "RELIANCE", "HCLTECH")   # ranked on 2023-25
 
 
 def atr(df: pd.DataFrame, n: int = 14) -> float:
@@ -51,6 +57,13 @@ class TrendEmaCrossEquity(Strategy):
     timeframe = ("days", 1)
     lookback_days = 260
     id_prefix = "TRD"
+
+    def trades(self, symbol: str) -> bool:
+        """Only the 20 best stocks of 2023-25 (an EQUITY_TREND_EMA_CROSS_SYMBOLS list in .env still overrides it)."""
+        import os
+        if os.environ.get("EQUITY_TREND_EMA_CROSS_SYMBOLS", "").strip():
+            return super().trades(symbol)
+        return symbol.upper() in BEST_SYMBOLS
 
     def entry(self, ctx: EntryContext) -> Signal | None:
         if len(ctx.candles) < 210:

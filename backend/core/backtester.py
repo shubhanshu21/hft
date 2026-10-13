@@ -44,6 +44,14 @@ class _DayView(MarketData):
         return [] if i is None else self._cache[symbol][max(0, i + 1 - self._window): i + 1]
 
 
+def _market_universe(market: str) -> list[str]:
+    if market == "equity":
+        from markets.equity.universe import NIFTY50_SYMBOLS
+        return list(NIFTY50_SYMBOLS)
+    from core.symbols import CURRENCY_SYMBOLS
+    return sorted(CURRENCY_SYMBOLS)
+
+
 def load_daily(market: str, symbol: str) -> pd.DataFrame:
     path = ARCHIVE_ROOT / DAILY_FILE[market].format(sym=symbol)
     if not path.exists():
@@ -79,6 +87,15 @@ def run_backtest(strategy: Strategy, symbols: list[str], start: str, end: str, *
         raise BacktestError("None of the chosen symbols has daily data")
     cache = {s: _candles(df) for s, df in frames.items()}
     pos_of = {s: {d: i for i, d in enumerate(df.index)} for s, df in frames.items()}
+    # What strategies may read about OTHER symbols (e.g. market breadth) is the whole market, not just the symbols chosen to trade.
+    view_cache, view_pos = dict(cache), dict(pos_of)
+    for s in _market_universe(strategy.market):
+        if s not in view_cache:
+            try:
+                df = load_daily(strategy.market, s)
+            except BacktestError:
+                continue
+            view_cache[s], view_pos[s] = _candles(df), {d: i for i, d in enumerate(df.index)}
     days = sorted({d for df in frames.values() for d in df.index if t0 <= d <= t1})
     if len(days) < 5:
         raise BacktestError("Fewer than 5 trading days with data in that range")
@@ -188,7 +205,7 @@ def run_backtest(strategy: Strategy, symbols: list[str], start: str, end: str, *
                     continue
                 sig = strategy.entry(EntryContext(symbol=s, candles=cache[s][max(0, i + 1 - window): i + 1], now=datetime(d.year, d.month, d.day),
                                                   instrument_key=None, capital=equity_now, risk_pct=risk_pct, leverage=leverage, direction_filter="both",
-                                                  data=_DayView(cache, pos_of, d, window)))
+                                                  data=_DayView(view_cache, view_pos, d, window)))
                 if sig is None or sig.qty < 1 or (sig.direction == "short" and not strategy.allow_short):
                     continue
                 pending.append({"symbol": s, "direction": sig.direction, "qty": sig.qty, "stop": sig.stop_loss, "tp": sig.target_price or None,
