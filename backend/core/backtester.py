@@ -7,6 +7,10 @@ The strategy only DECIDES (entry / manage / costs), exactly as in paper trading.
   * a signal is decided on the close of day t and filled at the OPEN of day t+1, with slippage against us;
   * a stop fills with core.exits.bar_exit (a bar that opens through the stop fills at the open, same-bar stop and target -> stop first);
   * costs come from the strategy's own costs();
+  * optional trailing exits for any strategy: `trail_stop_pct` ratchets the stop to that % below the best price since entry (above it for a short), starting once
+    the trade is `trail_after_pct` in profit; `profit_trail_pct` turns the strategy's target into a trailing profit: when the target is reached the trade is NOT sold,
+    the stop is pulled up to that % below the best price and the trade runs until it is hit. A stop only ever moves in the trade's favour and moves after the bar
+    closes, so a bar cannot both raise the stop and be stopped by it;
   * one account, compounding, one position per symbol, at most `max_positions` open at once, sized so the notional never exceeds the free equity (times leverage).
 The result is plain JSON: the same shape the frontend replay reads (days, equity, events, pos, prices) plus metrics.
 """
@@ -45,6 +49,7 @@ def _candles(df: pd.DataFrame) -> list[dict]:
 
 def run_backtest(strategy: Strategy, symbols: list[str], start: str, end: str, *, capital: float = 100_000.0, slippage_bp: float = 5.0,
                  risk_pct: float = 2.0, max_positions: int = 3, leverage: float = 1.0,
+                 trail_stop_pct: float = 0.0, trail_after_pct: float = 0.0, profit_trail_pct: float = 0.0,
                  progress: Callable[[int, int], None] | None = None, on_snapshot: Callable[[dict], None] | None = None, snapshot_every: int = 4) -> dict:
     if tuple(strategy.timeframe) != ("days", 1):
         raise BacktestError(f"{strategy.market}/{strategy.name} reads {strategy.timeframe} bars; the web backtester runs daily-bar strategies only")
@@ -116,7 +121,7 @@ def run_backtest(strategy: Strategy, symbols: list[str], start: str, end: str, *
             if qty < 1:
                 continue
             book[s] = {"direction": sig["direction"], "dir": dr, "qty": qty, "entry_price": fill, "current_stop": sig["stop"], "best_price": fill,
-                       "stop_dist": abs(fill - sig["stop"]), "tp": sig["tp"] or None, "ref_open": opens[s], "entry_time": datetime(d.year, d.month, d.day), "entry_i": n, "symbol": s,
+                       "stop_dist": abs(fill - sig["stop"]), "tp": sig["tp"] or None, "initial_stop": sig["stop"], "target_hit": False, "ref_open": opens[s], "entry_time": datetime(d.year, d.month, d.day), "entry_i": n, "symbol": s,
                        **sig["state"]}
             events.append({"t": "buy", "sym": s, "q": qty * lot[s], "px": round(fill, 4), "note": sig["note"]})
         pending = []
@@ -127,10 +132,22 @@ def run_backtest(strategy: Strategy, symbols: list[str], start: str, end: str, *
                 continue
             p, row = book[s], frames[s].loc[d]
             fav, adv = (float(row.high), float(row.low)) if p["dir"] == 1 else (float(row.low), float(row.high))
-            hit = bar_exit(p["current_stop"], p["tp"], float(row.open), fav, adv, p["dir"])
-            price, why = (hit[0], "Stop hit" if hit[1] == "stop" else "Target hit") if hit else (None, None)
-            if hit is None:
+            tp = None if (profit_trail_pct and p["tp"]) else p["tp"]
+            hit = bar_exit(p["current_stop"], tp, float(row.open), fav, adv, p["dir"])
+            if hit:
+                if hit[1] == "tp":
+                    why = "Target hit"
+                elif p["target_hit"]:
+                    why = "Profit trail hit"
+                elif p["current_stop"] != p["initial_stop"]:
+                    why = "Trailing stop hit"
+                else:
+                    why = "Stop hit"
+                price = hit[0]
+            else:
+                price, why = None, None
                 p["best_price"] = max(p["best_price"], fav) if p["dir"] == 1 else min(p["best_price"], fav)
+                _trail(p, trail_stop_pct, trail_after_pct, profit_trail_pct)
                 i = pos_of[s][d]
                 dec = strategy.manage(p, ExitContext(symbol=s, candles=cache[s][max(0, i + 1 - window): i + 1], now=datetime(d.year, d.month, d.day), data=None))
                 if dec is not None:
@@ -181,6 +198,20 @@ def run_backtest(strategy: Strategy, symbols: list[str], start: str, end: str, *
     out["skipped_symbols"] = skipped
     out["days_all"] = all_days
     return out
+
+
+def _trail(p: dict, stop_pct: float, after_pct: float, profit_pct: float) -> None:
+    """Ratchet the stop after a bar that did not stop the trade out (see the module docstring)."""
+    d, best, entry = p["dir"], p["best_price"], p["entry_price"]
+    new = None
+    if stop_pct > 0 and (best - entry) * d / entry >= after_pct / 100:
+        new = best * (1 - d * stop_pct / 100)
+    if profit_pct > 0 and p["tp"] and (best >= p["tp"] if d == 1 else best <= p["tp"]):
+        p["target_hit"] = True
+        tight = best * (1 - d * profit_pct / 100)
+        new = tight if new is None else (max(new, tight) if d == 1 else min(new, tight))
+    if new is not None:
+        p["current_stop"] = max(p["current_stop"], new) if d == 1 else min(p["current_stop"], new)
 
 
 def _bar(df: pd.DataFrame, d: pd.Timestamp):

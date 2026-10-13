@@ -38,3 +38,5 @@
 .hint-inline{text-transform:none;letter-spacing:0;font-weight:400;margin-left:8px}
 .legend .acc{color:var(--accent)}
 .check{display:flex;align-items:center;gap:6px}
+button.danger{background:var(--loss);border-color:var(--loss);color:#fff;font-weight:600}
+.run-bar .note a,.run-bar a.note{white-space:nowrap}

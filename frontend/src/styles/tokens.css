@@ -1,14 +1,9 @@
 @import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap");
 
 :root{
+  color-scheme:light;
   --bg:#f3f5f7; --panel:#ffffff; --line:#dde3ea; --fg:#18222d; --muted:#5d6b7a;
   --accent:#1f6fb2; --gain:#12805c; --loss:#c23a3a; --gain-bg:#e1f3ec; --loss-bg:#f9e4e4; --grid:#e8edf2;
   --font-ui:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
   --font-num:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
 }
-@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
-  --bg:#0f1720; --panel:#16212d; --line:#26364a; --fg:#e4ebf2; --muted:#8a9bb0;
-  --accent:#5aa9e6; --gain:#38c796; --loss:#ef6b6b; --gain-bg:#12332b; --loss-bg:#3a1f24; --grid:#1f2e3f; color-scheme:dark}}
-:root[data-theme="dark"]{
-  --bg:#0f1720; --panel:#16212d; --line:#26364a; --fg:#e4ebf2; --muted:#8a9bb0;
-  --accent:#5aa9e6; --gain:#38c796; --loss:#ef6b6b; --gain-bg:#12332b; --loss-bg:#3a1f24; --grid:#1f2e3f; color-scheme:dark}

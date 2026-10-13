@@ -2,6 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import Panel from "../ui/Panel.jsx";
 
 const today = () => new Date().toISOString().slice(0, 10);
+const THIS_YEAR = new Date().getFullYear();
+const FIRST_YEAR = 2022;                    // the archived daily candles start in September 2022
+const YEARS = Array.from({ length: THIS_YEAR - FIRST_YEAR + 1 }, (_, i) => THIS_YEAR - i);
+const yearRange = (y) => ({ start: `${y}-01-01`, end: y === THIS_YEAR ? today() : `${y}-12-31` });
 const MARKET_LABEL = { equity: "Equity (NIFTY 50 stocks)", currency: "Currency (NSE)", crypto: "Crypto (Binance)" };
 
 export default function BacktestForm({ strategies, onSubmit, busy }) {
@@ -12,11 +16,15 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
   const strategy = options.find((s) => s.name === name) ?? options[0];
   const [all, setAll] = useState(true);
   const [chosen, setChosen] = useState([]);
-  const [f, setF] = useState({ start: "2023-01-01", end: today(), capital: 100000, slippage_bp: 5, risk_pct: 2, max_positions: 3, leverage: 1 });
+  const [f, setF] = useState({ ...yearRange(THIS_YEAR), capital: 100000, slippage_bp: 5, risk_pct: 2, max_positions: 3, leverage: 1, trail_stop_pct: 8, trail_after_pct: 5, profit_trail_pct: 0 });
+  const [useTrail, setUseTrail] = useState(true);
+  const [year, setYear] = useState(String(THIS_YEAR));       // "custom" once the dates are edited by hand
 
   useEffect(() => { const o = strategies.filter((s) => s.market === market); setName(o[0]?.name ?? ""); setChosen([]); setAll(true); }, [market, strategies]);
 
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  const pickYear = (v) => { setYear(v); if (v !== "custom") setF({ ...f, ...yearRange(Number(v)) }); };
+  const setDate = (k) => (e) => { setYear("custom"); setF({ ...f, [k]: e.target.value }); };
   const toggle = (s) => setChosen(chosen.includes(s) ? chosen.filter((x) => x !== s) : [...chosen, s]);
   const crypto = market === "crypto";
 
@@ -25,6 +33,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
     onSubmit({
       market, strategy: name, symbols: all ? strategy.symbols : chosen,
       start: f.start, end: f.end, capital: +f.capital, slippage_bp: +f.slippage_bp, risk_pct: +f.risk_pct, max_positions: +f.max_positions, leverage: +f.leverage,
+      trail_stop_pct: useTrail ? +f.trail_stop_pct : 0, trail_after_pct: useTrail ? +f.trail_after_pct : 0, profit_trail_pct: useTrail ? +f.profit_trail_pct : 0,
     });
   };
 
@@ -41,8 +50,14 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
               {options.map((s) => <option key={s.name} value={s.name} disabled={!s.supported}>{s.name}{s.supported ? "" : ` (${s.timeframe}: not supported yet)`}</option>)}
             </select>
             <span className="hint">{strategy?.summary}</span></div>
-          <div className="field"><label htmlFor="start">From</label><input id="start" type="date" value={f.start} onChange={set("start")} required /></div>
-          <div className="field"><label htmlFor="end">To</label><input id="end" type="date" value={f.end} onChange={set("end")} required /></div>
+          <div className="field"><label htmlFor="year">Year</label>
+            <select id="year" value={year} onChange={(e) => pickYear(e.target.value)}>
+              {YEARS.map((y) => <option key={y} value={y}>{y}{y === FIRST_YEAR ? " (data starts in September)" : y === THIS_YEAR ? " (so far)" : ""}</option>)}
+              <option value="custom">Custom dates</option>
+            </select>
+            <span className="hint">Picks 1 January to 31 December of that year. Strategies still read earlier candles to warm up.</span></div>
+          <div className="field"><label htmlFor="start">From</label><input id="start" type="date" value={f.start} onChange={setDate("start")} required /></div>
+          <div className="field"><label htmlFor="end">To</label><input id="end" type="date" value={f.end} onChange={setDate("end")} required /></div>
         </div>
         {strategy && (
           <div className="field">
@@ -71,6 +86,18 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
             ? "Crypto uses the live router's own costs: 0.12% per side on spot (SOL 0.15%), 0.09% on perpetuals, plus the real funding rate."
             : "Every trade is charged the strategy's full cost model (brokerage, STT, exchange charges, GST, stamp duty, SEBI fees) and the slippage above on entry and exit. Stops that gap are filled at the open, not at the stop price. Fees cannot be switched off."}
         </p>
+      </Panel>
+
+      <Panel title="Trailing stop and trailing profit">
+        <label className="check" htmlFor="usetrail"><input id="usetrail" type="checkbox" checked={useTrail} onChange={(e) => setUseTrail(e.target.checked)} disabled={crypto} /> Use trailing stop and trailing profit (ready-made values below, change them if you like)</label>
+        <div className="form-grid">
+          <div className="field"><label htmlFor="tstop">Trailing stop (% below the best price)</label><input id="tstop" type="number" min="0" max="30" step="0.5" value={f.trail_stop_pct} onChange={set("trail_stop_pct")} disabled={crypto || !useTrail} />
+            <span className="hint">Wide on purpose: a tight trail is hit by ordinary daily moves. The stop follows the price up and never moves down.</span></div>
+          <div className="field"><label htmlFor="tafter">Start trailing after profit of (%)</label><input id="tafter" type="number" min="0" max="50" step="0.5" value={f.trail_after_pct} onChange={set("trail_after_pct")} disabled={crypto || !useTrail} />
+            <span className="hint">0 = trail from the first day.</span></div>
+          <div className="field"><label htmlFor="ptrail">Trailing profit (% give-back)</label><input id="ptrail" type="number" min="0" max="20" step="0.5" value={f.profit_trail_pct} onChange={set("profit_trail_pct")} disabled={crypto || !useTrail} />
+            <span className="hint">0 = sell at the strategy's target (default: in tests, holding past the target lost money). Above 0 = at the target keep holding and sell when the price falls this % from its high.</span></div>
+        </div>
       </Panel>
 
       <div><button className="main" type="submit" disabled={busy || !strategy?.supported}>{busy ? "Running..." : "Run backtest"}</button></div>

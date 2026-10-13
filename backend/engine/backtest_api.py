@@ -4,6 +4,7 @@
     GET  /api/backtests          saved runs, newest first (summary only)
     GET  /api/backtests/<id>     one run: status, params, and the full replay result when finished
     POST /api/backtests          start a run (JSON body)
+    DELETE /api/backtests/<id>   delete one saved run;  DELETE /api/backtests  delete every saved run (the one running now is kept)
 
 It only reads archived candles and runs the strategy code; it never talks to Upstox, touches the paper-trading database or places an order.
 Fees (the strategy's cost model) and slippage are always charged. One run at a time; results are saved in var/backtests/<id>.json.
@@ -33,7 +34,8 @@ from markets.equity.universe import NIFTY50_SYMBOLS
 
 RUNS_DIR = VAR_DIR / "backtests"
 CURRENCY = ["USDINR", "EURINR", "GBPINR", "JPYINR"]
-LIMITS = {"capital": (10_000, 10_000_000), "slippage_bp": (0, 100), "risk_pct": (0.1, 10), "max_positions": (1, 10), "leverage": (1, 10)}
+LIMITS = {"capital": (10_000, 10_000_000), "slippage_bp": (0, 100), "risk_pct": (0.1, 10), "max_positions": (1, 10), "leverage": (1, 10),
+          "trail_stop_pct": (0, 30), "trail_after_pct": (0, 50), "profit_trail_pct": (0, 20)}
 COOLDOWN_S = 5
 MAX_SAVED = 200
 _lock = threading.Lock()
@@ -100,7 +102,7 @@ def validate(body: dict) -> dict:
         raise ValueError("Symbols must come from the market's list")
     p = {"symbols": symbols}
     for key, (lo, hi) in LIMITS.items():
-        v = float(body.get(key, {"capital": 100_000, "slippage_bp": 5, "risk_pct": 2, "max_positions": 3, "leverage": 1}[key]))
+        v = float(body.get(key, {"capital": 100_000, "slippage_bp": 5, "risk_pct": 2, "max_positions": 3, "leverage": 1, "trail_stop_pct": 0, "trail_after_pct": 0, "profit_trail_pct": 0}[key]))
         if not lo <= v <= hi:
             raise ValueError(f"{key} must be between {lo} and {hi}")
         p[key] = v
@@ -137,6 +139,7 @@ def work(run: dict) -> None:
                 run["progress"] = round(i / n * 100)
             run["result"] = run_backtest(registry.get(run["market"], run["strategy"]), p["symbols"], p["start"], p["end"], capital=p["capital"], slippage_bp=p["slippage_bp"],
                                          risk_pct=p["risk_pct"], max_positions=int(p["max_positions"]), leverage=p["leverage"], progress=progress,
+                                         trail_stop_pct=p["trail_stop_pct"], trail_after_pct=p["trail_after_pct"], profit_trail_pct=p["profit_trail_pct"],
                                          on_snapshot=lambda snap: run.__setitem__("partial", snap))
         run["status"] = "done"
     except BacktestError as e:
@@ -211,7 +214,28 @@ class Handler(BaseHTTPRequestHandler):
         _last_start[who] = now
         self._send(HTTPStatus.ACCEPTED, {"id": run["id"], "status": run["status"]})
 
-    do_PUT = do_DELETE = do_PATCH = lambda self: self._send(HTTPStatus.METHOD_NOT_ALLOWED, {"error": "method not allowed"})
+    def do_DELETE(self) -> None:                                   # noqa: N802
+        path = urlparse(self.path).path.rstrip("/")
+        running = _running["id"] if _running else None
+        if path == "/api/backtests":
+            gone = 0
+            for f in list(RUNS_DIR.glob("*.json")) if RUNS_DIR.exists() else []:
+                if f.stem != running:
+                    f.unlink(missing_ok=True)
+                    gone += 1
+            return self._send(200, {"deleted": gone})
+        m = re.fullmatch(r"/api/backtests/([0-9a-f]{12})", path)
+        if not m:
+            return self._send(HTTPStatus.NOT_FOUND, {"error": "not found"})
+        if m.group(1) == running:
+            return self._send(HTTPStatus.CONFLICT, {"error": "That backtest is still running"})
+        f = RUNS_DIR / f"{m.group(1)}.json"
+        if not f.exists():
+            return self._send(HTTPStatus.NOT_FOUND, {"error": "not found"})
+        f.unlink()
+        self._send(200, {"deleted": 1})
+
+    do_PUT = do_PATCH = lambda self: self._send(HTTPStatus.METHOD_NOT_ALLOWED, {"error": "method not allowed"})
 
     def log_message(self, fmt, *args) -> None:                     # quiet
         pass
