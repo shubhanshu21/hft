@@ -11,7 +11,7 @@ import { signed } from "../../lib/format.js";
  * bars[i] = [open, high, low, close, volume?] | null (older results have no volume); showVolume draws volume bars along the bottom.
  * bars[i] = [open, high, low, close] | null; calendar[i] = "YYYY-MM-DD"; trades = [{ i0, i1, entry, exit, pnl, q }].
  */
-export default function PriceChart({ symbol, bars, calendar, first, last, at, trades, fitKey, showVolume = true }) {
+export default function PriceChart({ symbol, bars, calendar, first, last, at, trades, fitKey, showVolume = true, focus = null }) {
   const colors = useTheme();
   const box = useRef(null);
   const api = useRef({});
@@ -65,17 +65,32 @@ export default function PriceChart({ symbol, bars, calendar, first, last, at, tr
       return s;
     }).filter(Boolean);
 
+    for (const pl of api.current.focusLines ?? []) candles.removePriceLine(pl);
+    api.current.focusLines = [];
     if (api.current.priceLine) { candles.removePriceLine(api.current.priceLine); api.current.priceLine = null; }
-    const open = trades.find((t) => t.i1 == null);
-    if (open) api.current.priceLine = candles.createPriceLine({ price: open.entry, color: colors.accent, lineStyle: LineStyle.Dashed, lineWidth: 1, axisLabelVisible: true, title: "bought" });
+    const ft = focus ? trades.find((t) => t.i0 <= focus.at && (t.i1 ?? at) >= focus.at) : null;
+    if (ft) {                                                            // the clicked trade: its buy, stop and sell as labelled lines
+      const line = (price, color, title) => price != null && api.current.focusLines.push(candles.createPriceLine({ price, color, lineStyle: LineStyle.Dashed, lineWidth: 1, axisLabelVisible: true, title }));
+      line(ft.entry, colors.accent, "bought");
+      line(ft.stop, colors.loss, "first stop");
+      if (ft.exit != null) line(ft.exit, ft.pnl >= 0 ? colors.gain : colors.loss, "sold");
+    } else {
+      const open = trades.find((t) => t.i1 == null);
+      if (open) api.current.priceLine = candles.createPriceLine({ price: open.entry, color: colors.accent, lineStyle: LineStyle.Dashed, lineWidth: 1, axisLabelVisible: true, title: "bought" });
+    }
 
-    const key = `${symbol}|${first}|${last}|${fitKey}|${colors.bg}`;
+    const key = `${symbol}|${first}|${last}|${fitKey}|${colors.bg}|${focus?.token ?? ""}`;
     if (lastRange.current !== key) {                         // fix the axis to the whole range; only when the range changes, so the user's zoom survives playback
       lastRange.current = key;
       const span = calendar.slice(first, last + 1).length;
-      chart.timeScale().setVisibleLogicalRange({ from: -1, to: span + 1 });
+      if (ft) {
+        const a = Math.max(0, ft.i0 - 15), b = Math.min(calendar.length - 1, (ft.i1 ?? at) + 15);
+        chart.timeScale().setVisibleRange({ from: calendar[a], to: calendar[b] });
+      } else {
+        chart.timeScale().setVisibleLogicalRange({ from: -1, to: span + 1 });
+      }
     }
-  }, [colors, symbol, bars, calendar, first, last, at, trades, fitKey, showVolume]);
+  }, [colors, symbol, bars, calendar, first, last, at, trades, fitKey, showVolume, focus]);
 
   const bar = hover ?? (bars[at] ? { open: bars[at][0], high: bars[at][1], low: bars[at][2], close: bars[at][3], volume: bars[at][4], time: calendar[at] } : null);
   return (

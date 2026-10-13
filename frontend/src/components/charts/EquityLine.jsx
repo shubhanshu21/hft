@@ -18,7 +18,9 @@ export default function EquityLine({ result, upto, start }) {
       bottomLineColor: colors.loss, bottomFillColor1: withAlpha(colors.loss, 0.02), bottomFillColor2: withAlpha(colors.loss, 0.3),
       lineWidth: 2, priceFormat: { type: "custom", formatter: (v) => `₹${Math.round(v).toLocaleString("en-IN")}` },
     });
-    api.current = { chart, series, fitted: false };
+    const bench = chart.addLineSeries({ color: colors.muted, lineWidth: 1, lineStyle: 2, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false,
+                                        title: "buy & hold", priceFormat: { type: "custom", formatter: (v) => `\u20B9${Math.round(v).toLocaleString("en-IN")}` } });
+    api.current = { chart, series, bench, fitted: false };
     return () => { chart.remove(); api.current = {}; };
   }, [colors, start]);
 
@@ -26,6 +28,7 @@ export default function EquityLine({ result, upto, start }) {
     const { chart, series } = api.current;
     if (!chart) return;
     series.setData(result.equity.slice(0, upto + 1).map((v, i) => ({ time: calendar[i], value: v })));
+    api.current.bench.setData((result.benchmark ?? []).slice(0, upto + 1).map((v, i) => ({ time: calendar[i], value: v })));
     const marks = [];
     for (let k = 0; k <= upto; k++) for (const e of result.events[k]) if (e.t === "sell") marks.push({ time: calendar[k], position: "inBar", shape: "circle", color: e.pnl >= 0 ? colors.gain : colors.loss });
     series.setMarkers(marks.filter((m, i, a) => i === 0 || m.time !== a[i - 1].time || m.color !== a[i - 1].color));

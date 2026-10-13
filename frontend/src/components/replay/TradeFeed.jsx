@@ -1,6 +1,6 @@
 import { shortDate, signed, tone } from "../../lib/format.js";
 
-export default function TradeFeed({ result, upto }) {
+export default function TradeFeed({ result, upto, onSelect }) {
   const rows = [];
   for (let k = 0; k <= upto; k++) for (const [j, e] of result.events[k].entries()) rows.push({ k, j, e });
   rows.reverse();
@@ -8,7 +8,7 @@ export default function TradeFeed({ result, upto }) {
   return (
     <div className="feed">
       {rows.map(({ k, j, e }) => (
-        <div className="trade" key={`${k}-${j}`}>
+        <div className="trade clickable" key={`${k}-${j}`} role="button" tabIndex={0} title="Show this trade on the chart" onClick={() => onSelect?.({ sym: e.sym, at: k })} onKeyDown={(ev) => ev.key === "Enter" && onSelect?.({ sym: e.sym, at: k })}>
           <span className="dt">{shortDate(result.days[k])}</span>
           <span className={`pill ${e.t}${e.t === "sell" && e.pnl > 0 ? " win" : ""}`}>{e.t === "buy" ? (e.add ? "ADD" : "BUY") : "SELL"}</span>
           <div>

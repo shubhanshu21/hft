@@ -3,7 +3,9 @@
     GET  /api/strategies         what can be run: market, name, timeframe, whether the web backtester supports it, symbols
     GET  /api/backtests          saved runs, newest first (summary only)
     GET  /api/backtests/<id>     one run: status, params, and the full replay result when finished
-    POST /api/backtests          start a run (JSON body)
+    POST /api/backtests          start a run (JSON body; optional label)
+    POST /api/backtests/<id>/label   rename a saved run (JSON body with label)
+    GET  /api/paper              the paper-trading account (read-only): balance, open positions, trades, daily account value
     DELETE /api/backtests/<id>   delete one saved run;  DELETE /api/backtests  delete every saved run (the one running now is kept)
 
 It only reads archived candles and runs the strategy code; it never talks to Upstox, touches the paper-trading database or places an order.
@@ -27,9 +29,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
+import pandas as pd
+
 from core import registry
 from core.backtester import BacktestError, run_backtest
-from core.paths import BACKEND_ROOT, VAR_DIR
+from core.paths import ARCHIVE_ROOT, BACKEND_ROOT, VAR_DIR
 from markets.equity.universe import NIFTY50_SYMBOLS
 
 RUNS_DIR = VAR_DIR / "backtests"
@@ -83,7 +87,7 @@ def summaries() -> list[dict]:
             r = json.loads(f.read_text())
         except ValueError:
             continue
-        out.append({k: r.get(k) for k in ("id", "status", "created", "market", "strategy", "params", "error")} | {"metrics": (r.get("result") or {}).get("metrics")})
+        out.append({k: r.get(k) for k in ("id", "status", "created", "market", "strategy", "params", "error", "label")} | {"metrics": (r.get("result") or {}).get("metrics")})
     if _running:
         out = [r for r in out if r["id"] != _running["id"]] + [{k: _running.get(k) for k in ("id", "status", "created", "market", "strategy", "params", "error", "progress")} | {"metrics": None}]
     return sorted(out, key=lambda r: r["created"] or "", reverse=True)
@@ -134,6 +138,37 @@ def crypto_result(params: dict) -> dict:
             "prices": {}, "metrics": m | {"note": "Continuous holding: no discrete trades. Costs and funding are inside the return."}, "skipped_symbols": []}
 
 
+def paper_summary() -> dict:
+    """The paper-trading account, read-only (SQLite opened mode=ro). Open positions are valued at the latest daily close in the archive."""
+    import sqlite3
+    from core.paths import DB_DIR
+    path = DB_DIR / "paper_trading.db"
+    if not path.exists():
+        return {"available": False}
+    con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    con.row_factory = sqlite3.Row
+    try:
+        acc = con.execute("SELECT * FROM accounts WHERE account_id = 'DRYRUN_ACCOUNT'").fetchone()
+        pos = [dict(r) for r in con.execute("SELECT symbol, direction, qty, entry_price, current_stop, best_price, entry_time, strategy FROM positions "
+                                              "WHERE account_id = 'DRYRUN_ACCOUNT' AND status = 'OPEN' ORDER BY entry_time")]
+        trades = [dict(r) for r in con.execute("SELECT symbol, direction, qty, entry_price, exit_price, entry_dt, exit_dt, exit_reason, gross_pnl, total_friction, net_pnl, strategy "
+                                                 "FROM trades WHERE account_id = 'DRYRUN_ACCOUNT' ORDER BY exit_dt DESC LIMIT 500")]
+        snaps = [dict(r) for r in con.execute("SELECT date, MAX(timestamp) AS ts, current_capital FROM portfolio_snapshots WHERE account_id = 'DRYRUN_ACCOUNT' "
+                                                "GROUP BY date ORDER BY date")]
+    finally:
+        con.close()
+    for p in pos:
+        f = ARCHIVE_ROOT / "equity" / f"{p['symbol']}_daily.csv"
+        try:
+            last = pd.read_csv(f).iloc[-1]
+            p["last_close"], p["last_date"] = float(last["close"]), str(last["timestamp"])[:10]
+        except Exception:
+            p["last_close"], p["last_date"] = None, None
+    return {"available": True, "account": dict(acc) if acc else None, "positions": pos, "trades": trades, "equity": snaps,
+            "stats": {"closed": len(trades), "wins": sum(1 for t in trades if (t["net_pnl"] or 0) > 0), "net": round(sum(t["net_pnl"] or 0 for t in trades)),
+                      "fees": round(sum(t["total_friction"] or 0 for t in trades))}}
+
+
 def work(run: dict) -> None:
     global _running
     try:
@@ -170,7 +205,8 @@ def start(body: dict) -> dict:
     with _lock:
         if _running is not None:
             raise RuntimeError(f"Another backtest is still running ({_running['strategy']}, {_running.get('progress', 0)}% done). Wait for it to finish; the New backtest page shows it live.")
-        run = {"id": uuid.uuid4().hex[:12], "status": "queued", "created": datetime.now(timezone.utc).isoformat(timespec="seconds"), "progress": 0, **spec}
+        run = {"id": uuid.uuid4().hex[:12], "status": "queued", "created": datetime.now(timezone.utc).isoformat(timespec="seconds"), "progress": 0, **spec,
+               "label": str(body.get("label") or "").strip()[:60]}
         _running = run
     save(run)
     threading.Thread(target=work, args=(run,), daemon=True).start()
@@ -194,6 +230,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, catalog())
         if path == "/api/backtests":
             return self._send(200, summaries())
+        if path == "/api/paper":
+            try:
+                return self._send(200, paper_summary())
+            except Exception as e:                                       # a locked or half-written DB must not break the page
+                return self._send(HTTPStatus.SERVICE_UNAVAILABLE, {"error": f"paper account unavailable: {type(e).__name__}"})
         m = re.fullmatch(r"/api/backtests/([0-9a-f]{12})", path)
         if m:
             live = _running if _running and _running["id"] == m.group(1) else None
@@ -205,6 +246,18 @@ class Handler(BaseHTTPRequestHandler):
         self._send(HTTPStatus.NOT_FOUND, {"error": "not found"})
 
     def do_POST(self) -> None:                                     # noqa: N802
+        m = re.fullmatch(r"/api/backtests/([0-9a-f]{12})/label", urlparse(self.path).path.rstrip("/"))
+        if m:
+            run = load(m.group(1))
+            if not run:
+                return self._send(HTTPStatus.NOT_FOUND, {"error": "not found"})
+            try:
+                body = json.loads(self.rfile.read(min(int(self.headers.get("Content-Length") or 0), 2000)) or b"{}")
+            except ValueError:
+                return self._send(HTTPStatus.BAD_REQUEST, {"error": "bad JSON"})
+            run["label"] = str(body.get("label") or "").strip()[:60]
+            save(run)
+            return self._send(200, {"id": run["id"], "label": run["label"]})
         if urlparse(self.path).path.rstrip("/") != "/api/backtests":
             return self._send(HTTPStatus.NOT_FOUND, {"error": "not found"})
         who = self.headers.get("X-Real-IP") or self.client_address[0]

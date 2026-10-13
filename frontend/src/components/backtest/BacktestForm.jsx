@@ -16,7 +16,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
   const strategy = options.find((s) => s.name === name) ?? options[0];
   const [all, setAll] = useState(true);
   const [chosen, setChosen] = useState([]);
-  const [f, setF] = useState({ ...yearRange(THIS_YEAR), capital: 100000, slippage_bp: 5, risk_pct: 2, max_positions: 3, leverage: 1, trail_stop_pct: 8, trail_after_pct: 5, profit_trail_pct: 0, pyramid_pct: "" });
+  const [f, setF] = useState({ ...yearRange(THIS_YEAR), capital: 100000, slippage_bp: 5, risk_pct: 2, max_positions: 3, leverage: 1, trail_stop_pct: 8, trail_after_pct: 5, profit_trail_pct: 0, pyramid_pct: "", label: "" });
   const [useTrail, setUseTrail] = useState(false);       // off: strategies bring their own exits (trend_ema_cross has a built-in trailing stop)
   const [year, setYear] = useState(String(THIS_YEAR));       // "custom" once the dates are edited by hand
 
@@ -35,7 +35,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
     onSubmit({
       market, strategy: name, symbols: all ? strategy.symbols : chosen,
       start: f.start, end: f.end, capital: +f.capital, slippage_bp: +f.slippage_bp, risk_pct: +f.risk_pct, max_positions: +f.max_positions, leverage: +f.leverage,
-      pyramid_pct: f.pyramid_pct === "" ? null : +f.pyramid_pct,
+      pyramid_pct: f.pyramid_pct === "" ? null : +f.pyramid_pct, label: f.label,
       trail_stop_pct: useTrail ? +f.trail_stop_pct : 0, trail_after_pct: useTrail ? +f.trail_after_pct : 0, profit_trail_pct: useTrail ? +f.profit_trail_pct : 0,
     });
   };
@@ -59,6 +59,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
               <option value="custom">Custom dates</option>
             </select>
             <span className="hint">Picks 1 January to 31 December of that year. Strategies still read earlier candles to warm up.</span></div>
+          <div className="field"><label htmlFor="label">Name this run (optional)</label><input id="label" type="text" maxLength={60} placeholder="e.g. 2% risk, best 20 stocks" value={f.label} onChange={set("label")} /></div>
           <div className="field"><label htmlFor="start">From</label><input id="start" type="date" value={f.start} onChange={setDate("start")} required /></div>
           <div className="field"><label htmlFor="end">To</label><input id="end" type="date" value={f.end} onChange={setDate("end")} required /></div>
         </div>

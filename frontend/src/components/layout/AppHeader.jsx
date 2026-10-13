@@ -1,4 +1,4 @@
-const TABS = [["results", "Results"], ["new", "New backtest"]];
+const TABS = [["results", "Results"], ["compare", "Compare"], ["paper", "Paper trading"], ["new", "New backtest"]];
 
 export default function AppHeader({ page }) {
   return (

@@ -115,6 +115,9 @@ def run_backtest(strategy: Strategy, symbols: list[str], start: str, end: str, *
     last_close = {s: None for s in frames}
     bars_cache: dict[str, list] = {}                           # [o, h, l, c] per calendar day, built once per symbol the first time it trades
     all_days = [d.strftime("%Y-%m-%d") for d in days]
+    closes = pd.DataFrame({s: df["close"] for s, df in frames.items()}).reindex(days).ffill()
+    first = closes.bfill().iloc[0]
+    benchmark = [round(float(v)) for v in (closes.divide(first).mean(axis=1).fillna(1.0) * capital)]     # buy every symbol equally on day one, hold
 
     def bars_of(s: str) -> list:
         if s not in bars_cache:
@@ -124,7 +127,7 @@ def run_backtest(strategy: Strategy, symbols: list[str], start: str, end: str, *
     def snapshot(n: int) -> dict:
         seen = sorted({e["sym"] for evs in out["events"] for e in evs} | set(book))
         return {"live": True, "days_all": all_days, "days": list(out["days"]), "equity": list(out["equity"]), "events": list(out["events"]), "pos": list(out["pos"]),
-                "bars": {x: bars_of(x)[: n + 1] for x in seen}, "metrics": metrics(out["equity"], capital, closed, n + 1, len(book))}
+                "bars": {x: bars_of(x)[: n + 1] for x in seen}, "benchmark": benchmark[: n + 1], "metrics": metrics(out["equity"], capital, closed, n + 1, len(book))}
 
     def equity_at(close_of: dict) -> float:
         return cash + sum((close_of[s] - p["entry_price"]) * p["dir"] * p["qty"] * lot[s] for s, p in book.items() if close_of.get(s))
@@ -155,7 +158,7 @@ def run_backtest(strategy: Strategy, symbols: list[str], start: str, end: str, *
             book[s] = {"direction": sig["direction"], "dir": dr, "qty": qty, "entry_price": fill, "current_stop": sig["stop"], "best_price": fill,
                        "stop_dist": abs(fill - sig["stop"]), "tp": sig["tp"] or None, "initial_stop": sig["stop"], "target_hit": False, "ref_open": opens[s], "legs": [(fill, qty, opens[s])], "add_pending": False, "entry_time": datetime(d.year, d.month, d.day), "entry_i": n, "symbol": s,
                        **sig["state"]}
-            events.append({"t": "buy", "sym": s, "q": qty * lot[s], "px": round(fill, 4), "note": sig["note"]})
+            events.append({"t": "buy", "sym": s, "q": qty * lot[s], "px": round(fill, 4), "note": sig["note"], "stop": round(sig["stop"], 4)})
         pending = []
         for s, p in book.items():                                   # pyramiding: add one lot to a winner decided on yesterday's close
             if not p.get("add_pending") or s not in opens:
@@ -248,6 +251,7 @@ def run_backtest(strategy: Strategy, symbols: list[str], start: str, end: str, *
     out["metrics"] = metrics(out["equity"], capital, closed, len(days), len(book))
     out["skipped_symbols"] = skipped
     out["days_all"] = all_days
+    out["benchmark"] = benchmark
     return out
 
 

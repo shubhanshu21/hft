@@ -40,3 +40,21 @@
 .check{display:flex;align-items:center;gap:6px}
 button.danger{background:var(--loss);border-color:var(--loss);color:#fff;font-weight:600}
 .run-bar .note a,.run-bar a.note{white-space:nowrap}
+.settings{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.chip.static{cursor:default;background:var(--panel)}
+.chip .k{color:var(--muted)}
+.warn.inline{display:inline-block;margin:0}
+.muted{color:var(--muted)}
+.analysis-grid{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:16px;align-items:start}
+@media (max-width:1100px){.analysis-grid{grid-template-columns:minmax(0,1fr)}}
+.monthly{border-collapse:collapse;width:100%;font-family:var(--font-num);font-size:.75rem;font-variant-numeric:tabular-nums}
+.monthly th{font-weight:600;color:var(--muted);padding:6px 4px;text-align:center}
+.monthly td{padding:6px 4px;text-align:center;border:1px solid var(--panel);border-radius:3px;min-width:44px}
+.monthly td.mg-empty{background:var(--grid)}
+.th-btn{border:0;background:none;padding:0;font:inherit;color:inherit;text-transform:inherit;letter-spacing:inherit;cursor:pointer}
+.clickable tbody tr,.trade.clickable{cursor:pointer}
+.clickable tbody tr:hover,.trade.clickable:hover{background:var(--grid)}
+.trade.clickable:focus-visible{outline:2px solid var(--accent)}
+.pick-list{display:flex;flex-direction:column;gap:6px;max-height:280px;overflow-y:auto}
+.swatch{display:inline-block;width:10px;height:10px;border-radius:2px;vertical-align:middle;margin-right:4px}
+.run-bar input[type=text]{min-width:0;flex:0 1 220px}

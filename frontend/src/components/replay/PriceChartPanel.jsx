@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 const VOL_KEY = "hft.showVolume";
 const readVol = () => { try { return localStorage.getItem(VOL_KEY) !== "0"; } catch { return true; } };
@@ -9,9 +9,10 @@ import { followedSymbol, symbolsWithBars, tradesBySymbol } from "../../lib/repla
 import { signed, tone } from "../../lib/format.js";
 
 /** Candlesticks of one symbol with all of the strategy's trades in it, plus a chip per symbol (trade count and profit) to switch. */
-export default function PriceChartPanel({ result, at }) {
+export default function PriceChartPanel({ result, at, focus, onSelect }) {
   const [picked, setPicked] = useState("");
   const [fitKey, setFitKey] = useState(0);
+  useEffect(() => { if (focus?.sym) setPicked(focus.sym); }, [focus?.token]);
   const [showVolume, setShowVolume] = useState(readVol);
   const toggleVolume = (on) => { setShowVolume(on); try { localStorage.setItem(VOL_KEY, on ? "1" : "0"); } catch { /* not remembered */ } };
   const syms = symbolsWithBars(result);
@@ -46,8 +47,8 @@ export default function PriceChartPanel({ result, at }) {
           );
         })}
       </div>
-      <PriceChart symbol={sym} bars={result.bars[sym]} calendar={calendar} first={0} last={last} at={at} trades={mine} fitKey={fitKey} showVolume={showVolume} />
-      <SymbolTrades trades={mine} days={result.days} />
+      <PriceChart symbol={sym} bars={result.bars[sym]} calendar={calendar} first={0} last={last} at={at} trades={mine} fitKey={fitKey} showVolume={showVolume} focus={focus && focus.sym === sym ? focus : null} />
+      <SymbolTrades trades={mine} days={result.days} onSelect={(t) => onSelect?.({ sym, at: t.i0 })} />
     </Panel>
   );
 }
