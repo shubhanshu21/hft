@@ -10,7 +10,7 @@ export default function SymbolTrades({ trades, days }) {
         <tbody>
           {trades.map((t, k) => (
             <tr key={k}>
-              <td>{shortDate(days[t.i0])}</td><td>{t.entry.toFixed(2)}</td>
+              <td>{shortDate(days[t.i0])}{t.adds?.length ? ` + added ${shortDate(days[t.adds[0].i])}` : ""}</td><td>{t.entry.toFixed(2)}{t.adds?.length ? ` / ${t.adds[0].px.toFixed(2)}` : ""}</td>
               <td>{t.i1 != null ? shortDate(days[t.i1]) : "open"}</td><td>{t.exit != null ? t.exit.toFixed(2) : "-"}</td>
               <td>{t.days != null ? `${t.days}d` : "-"}</td>
               <td className={t.pnl != null ? tone(t.pnl) : ""}>{t.pnl != null ? signed(t.pnl) : "-"}</td>

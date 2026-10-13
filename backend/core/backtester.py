@@ -11,6 +11,8 @@ The strategy only DECIDES (entry / manage / costs), exactly as in paper trading.
     the trade is `trail_after_pct` in profit; `profit_trail_pct` turns the strategy's target into a trailing profit: when the target is reached the trade is NOT sold,
     the stop is pulled up to that % below the best price and the trade runs until it is hit. A stop only ever moves in the trade's favour and moves after the bar
     closes, so a bar cannot both raise the stop and be stopped by it;
+  * optional pyramiding (`pyramid_pct`, default: the strategy's own `pyramid_pct`, else off): once a trade CLOSES at least that % above its first buy, one more
+    lot of the same size is bought at the next open (if the free money allows). Both lots share the stop and are sold together; each buy pays its own fees;
   * one account, compounding, one position per symbol, at most `max_positions` open at once, sized so the notional never exceeds the free equity (times leverage).
 The result is plain JSON: the same shape the frontend replay reads (days, equity, events, pos, prices) plus metrics.
 """
@@ -68,7 +70,7 @@ def _candles(df: pd.DataFrame) -> list[dict]:
 
 def run_backtest(strategy: Strategy, symbols: list[str], start: str, end: str, *, capital: float = 100_000.0, slippage_bp: float = 5.0,
                  risk_pct: float = 2.0, max_positions: int = 3, leverage: float = 1.0,
-                 trail_stop_pct: float = 0.0, trail_after_pct: float = 0.0, profit_trail_pct: float = 0.0,
+                 trail_stop_pct: float = 0.0, trail_after_pct: float = 0.0, profit_trail_pct: float = 0.0, pyramid_pct: float | None = None,
                  progress: Callable[[int, int], None] | None = None, on_snapshot: Callable[[dict], None] | None = None, snapshot_every: int = 4) -> dict:
     if tuple(strategy.timeframe) != ("days", 1):
         raise BacktestError(f"{strategy.market}/{strategy.name} reads {strategy.timeframe} bars; the web backtester runs daily-bar strategies only")
@@ -102,6 +104,7 @@ def run_backtest(strategy: Strategy, symbols: list[str], start: str, end: str, *
     window = max(int(strategy.lookback_days or 0), 120)
     lot = {s: max(int(strategy.lot_size(s)), 1) for s in frames}
     slip = slippage_bp / 1e4
+    pyr = float(getattr(strategy, "pyramid_pct", 0.0) or 0.0) if pyramid_pct is None else float(pyramid_pct)
 
     cash = float(capital)                      # realised money
     book: dict[str, dict] = {}                 # open positions
@@ -149,10 +152,23 @@ def run_backtest(strategy: Strategy, symbols: list[str], start: str, end: str, *
             if qty < 1:
                 continue
             book[s] = {"direction": sig["direction"], "dir": dr, "qty": qty, "entry_price": fill, "current_stop": sig["stop"], "best_price": fill,
-                       "stop_dist": abs(fill - sig["stop"]), "tp": sig["tp"] or None, "initial_stop": sig["stop"], "target_hit": False, "ref_open": opens[s], "entry_time": datetime(d.year, d.month, d.day), "entry_i": n, "symbol": s,
+                       "stop_dist": abs(fill - sig["stop"]), "tp": sig["tp"] or None, "initial_stop": sig["stop"], "target_hit": False, "ref_open": opens[s], "legs": [(fill, qty, opens[s])], "add_pending": False, "entry_time": datetime(d.year, d.month, d.day), "entry_i": n, "symbol": s,
                        **sig["state"]}
             events.append({"t": "buy", "sym": s, "q": qty * lot[s], "px": round(fill, 4), "note": sig["note"]})
         pending = []
+        for s, p in book.items():                                   # pyramiding: add one lot to a winner decided on yesterday's close
+            if not p.get("add_pending") or s not in opens:
+                continue
+            p["add_pending"] = False
+            fill = opens[s] * (1 + slip * p["dir"])
+            used = sum(q["entry_price"] * q["qty"] * lot[qs] for qs, q in book.items()) / leverage
+            q_add = min(p["legs"][0][1], int(max(eq_open - used, 0) * leverage / (fill * lot[s])))
+            if q_add < 1:
+                continue
+            p["legs"].append((fill, q_add, opens[s]))
+            p["entry_price"] = (p["entry_price"] * p["qty"] + fill * q_add) / (p["qty"] + q_add)
+            p["qty"] += q_add
+            events.append({"t": "buy", "sym": s, "q": q_add * lot[s], "px": round(fill, 4), "note": "added to a winner", "add": True})
 
         # 2. manage open positions on today's bar
         for s in list(book):
@@ -181,13 +197,18 @@ def run_backtest(strategy: Strategy, symbols: list[str], start: str, end: str, *
                 if dec is not None:
                     price, why = float(dec.price), dec.reason.replace("_", " ").capitalize()
             if price is None:
+                first = p["legs"][0][0]
+                if pyr > 0 and len(p["legs"]) == 1 and (float(row.close) - first) * p["dir"] / first >= pyr / 100:
+                    p["add_pending"] = True
                 continue
             exit_px = price * (1 - slip * p["dir"])
-            cost = trade_costs(strategy, s, p["direction"], p["entry_price"], exit_px, p["qty"])
-            gross = (exit_px - p["entry_price"]) * p["dir"] * p["qty"] * lot[s]
-            fees = float(cost.get("total", gross - cost["net"]))
-            net = float(cost.get("net", gross - fees))
-            slip_cost = (abs(p["entry_price"] - p["ref_open"]) + abs(exit_px - price)) * p["qty"] * lot[s]
+            gross = fees = net = slip_cost = 0.0
+            for leg_px, leg_q, leg_ref in p["legs"]:                  # each buy is its own order with its own fees
+                cost = trade_costs(strategy, s, p["direction"], leg_px, exit_px, leg_q)
+                g = (exit_px - leg_px) * p["dir"] * leg_q * lot[s]
+                f = float(cost.get("total", g - cost["net"]))
+                gross += g; fees += f; net += float(cost.get("net", g - f))
+                slip_cost += (abs(leg_px - leg_ref) + abs(exit_px - price)) * leg_q * lot[s]
             cash += net
             events.append({"t": "sell", "sym": s, "q": p["qty"] * lot[s], "px": round(exit_px, 4), "pnl": round(net), "fees": round(fees), "slip": round(slip_cost),
                            "days": n - p["entry_i"], "why": why, "entry": round(p["entry_price"], 4)})

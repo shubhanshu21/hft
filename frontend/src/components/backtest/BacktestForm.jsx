@@ -16,7 +16,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
   const strategy = options.find((s) => s.name === name) ?? options[0];
   const [all, setAll] = useState(true);
   const [chosen, setChosen] = useState([]);
-  const [f, setF] = useState({ ...yearRange(THIS_YEAR), capital: 100000, slippage_bp: 5, risk_pct: 2, max_positions: 3, leverage: 1, trail_stop_pct: 8, trail_after_pct: 5, profit_trail_pct: 0 });
+  const [f, setF] = useState({ ...yearRange(THIS_YEAR), capital: 100000, slippage_bp: 5, risk_pct: 2, max_positions: 3, leverage: 1, trail_stop_pct: 8, trail_after_pct: 5, profit_trail_pct: 0, pyramid_pct: "" });
   const [useTrail, setUseTrail] = useState(false);       // off: strategies bring their own exits (trend_ema_cross has a built-in trailing stop)
   const [year, setYear] = useState(String(THIS_YEAR));       // "custom" once the dates are edited by hand
 
@@ -33,6 +33,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
     onSubmit({
       market, strategy: name, symbols: all ? strategy.symbols : chosen,
       start: f.start, end: f.end, capital: +f.capital, slippage_bp: +f.slippage_bp, risk_pct: +f.risk_pct, max_positions: +f.max_positions, leverage: +f.leverage,
+      pyramid_pct: f.pyramid_pct === "" ? null : +f.pyramid_pct,
       trail_stop_pct: useTrail ? +f.trail_stop_pct : 0, trail_after_pct: useTrail ? +f.trail_after_pct : 0, profit_trail_pct: useTrail ? +f.profit_trail_pct : 0,
     });
   };
@@ -86,6 +87,13 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
             ? "Crypto uses the live router's own costs: 0.12% per side on spot (SOL 0.15%), 0.09% on perpetuals, plus the real funding rate."
             : "Every trade is charged the strategy's full cost model (brokerage, STT, exchange charges, GST, stamp duty, SEBI fees) and the slippage above on entry and exit. Stops that gap are filled at the open, not at the stop price. Fees cannot be switched off."}
         </p>
+      </Panel>
+
+      <Panel title="Add to winning trades">
+        <div className="form-grid">
+          <div className="field"><label htmlFor="pyr">Buy a second lot when the trade is up (%)</label><input id="pyr" type="number" min="0" max="30" step="0.5" placeholder="strategy default" value={f.pyramid_pct} onChange={set("pyramid_pct")} disabled={crypto} />
+            <span className="hint">Empty = the strategy's own setting. 0 = never. Both lots share the stop and are sold together; each buy pays its own fees.</span></div>
+        </div>
       </Panel>
 
       <Panel title="Trailing stop and trailing profit">

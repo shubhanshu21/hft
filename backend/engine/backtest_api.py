@@ -106,6 +106,14 @@ def validate(body: dict) -> dict:
         if not lo <= v <= hi:
             raise ValueError(f"{key} must be between {lo} and {hi}")
         p[key] = v
+    pyr = body.get("pyramid_pct")
+    if pyr in (None, ""):
+        p["pyramid_pct"] = None                                         # the strategy's own setting
+    else:
+        pyr = float(pyr)
+        if not 0 <= pyr <= 30:
+            raise ValueError("pyramid_pct must be between 0 and 30")
+        p["pyramid_pct"] = pyr
     for key in ("start", "end"):
         if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(body.get(key, ""))):
             raise ValueError("Dates must look like 2024-01-31")
@@ -140,6 +148,7 @@ def work(run: dict) -> None:
             run["result"] = run_backtest(registry.get(run["market"], run["strategy"]), p["symbols"], p["start"], p["end"], capital=p["capital"], slippage_bp=p["slippage_bp"],
                                          risk_pct=p["risk_pct"], max_positions=int(p["max_positions"]), leverage=p["leverage"], progress=progress,
                                          trail_stop_pct=p["trail_stop_pct"], trail_after_pct=p["trail_after_pct"], profit_trail_pct=p["profit_trail_pct"],
+                                         pyramid_pct=p.get("pyramid_pct"),
                                          on_snapshot=lambda snap: run.__setitem__("partial", snap))
         run["status"] = "done"
     except BacktestError as e:

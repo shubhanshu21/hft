@@ -10,7 +10,7 @@ export default function TradeFeed({ result, upto }) {
       {rows.map(({ k, j, e }) => (
         <div className="trade" key={`${k}-${j}`}>
           <span className="dt">{shortDate(result.days[k])}</span>
-          <span className={`pill ${e.t}${e.t === "sell" && e.pnl > 0 ? " win" : ""}`}>{e.t === "buy" ? "BUY" : "SELL"}</span>
+          <span className={`pill ${e.t}${e.t === "sell" && e.pnl > 0 ? " win" : ""}`}>{e.t === "buy" ? (e.add ? "ADD" : "BUY") : "SELL"}</span>
           <div>
             <div><b>{e.sym}</b> {e.q} at {e.px.toFixed(2)}{e.t === "sell" && ` (bought ${e.entry.toFixed(2)})`}</div>
             <div className="why">
