@@ -205,7 +205,7 @@ def run_backtest(strategy: Strategy, symbols: list[str], start: str, end: str, *
 
     # still open at the end: marked at the last close, not counted as closed
     traded = sorted({e["sym"] for evs in out["events"] for e in evs} | set(book))
-    out["bars"] = {s: bars_of(s) for s in traded}            # [open, high, low, close] per day, null before the first candle / on a holiday
+    out["bars"] = {s: bars_of(s) for s in traded}            # [open, high, low, close, volume] per day, null before the first candle / on a holiday
     out["metrics"] = metrics(out["equity"], capital, closed, len(days), len(book))
     out["skipped_symbols"] = skipped
     out["days_all"] = all_days
@@ -230,7 +230,7 @@ def _bar(df: pd.DataFrame, d: pd.Timestamp):
     if d not in df.index:
         return None
     r = df.loc[d]
-    return [round(float(r.open), 4), round(float(r.high), 4), round(float(r.low), 4), round(float(r.close), 4)]
+    return [round(float(r.open), 4), round(float(r.high), 4), round(float(r.low), 4), round(float(r.close), 4), int(r.volume)]
 
 
 def trade_costs(strategy: Strategy, symbol: str, direction: str, entry: float, exit_px: float, qty: int) -> dict:

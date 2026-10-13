@@ -1,16 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 import { createChart, LineStyle } from "lightweight-charts";
 import { baseOptions } from "./chartOptions.js";
-import { useTheme } from "../../hooks/useTheme.js";
+import { useTheme, withAlpha } from "../../hooks/useTheme.js";
 import { signed } from "../../lib/format.js";
 
 /**
  * TradingView-style candlestick chart (lightweight-charts) of one symbol with every trade the strategy took in it:
  * an arrow at each buy and sell, and a line from entry to exit (green = profit, red = loss, dashed = still open).
  * Drag to pan, scroll to zoom, hover for the crosshair. The time axis spans the whole run, so playback fills it from the left.
+ * bars[i] = [open, high, low, close, volume?] | null (older results have no volume); showVolume draws volume bars along the bottom.
  * bars[i] = [open, high, low, close] | null; calendar[i] = "YYYY-MM-DD"; trades = [{ i0, i1, entry, exit, pnl, q }].
  */
-export default function PriceChart({ symbol, bars, calendar, first, last, at, trades, fitKey }) {
+export default function PriceChart({ symbol, bars, calendar, first, last, at, trades, fitKey, showVolume = true }) {
   const colors = useTheme();
   const box = useRef(null);
   const api = useRef({});
@@ -22,11 +23,14 @@ export default function PriceChart({ symbol, bars, calendar, first, last, at, tr
     const candles = chart.addCandlestickSeries({
       upColor: colors.gain, downColor: colors.loss, borderUpColor: colors.gain, borderDownColor: colors.loss, wickUpColor: colors.gain, wickDownColor: colors.loss,
     });
+    const volume = chart.addHistogramSeries({ priceFormat: { type: "volume" }, priceScaleId: "vol", lastValueVisible: false, priceLineVisible: false });
+    chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
     chart.subscribeCrosshairMove((p) => {
       const d = p.seriesData.get(candles);
-      setHover(d ? { ...d, time: p.time } : null);
+      const v = p.seriesData.get(volume);
+      setHover(d ? { ...d, volume: v?.value, time: p.time } : null);
     });
-    api.current = { chart, candles, lines: [], priceLine: null };
+    api.current = { chart, candles, volume, lines: [], priceLine: null };
     lastRange.current = "";
     return () => { chart.remove(); api.current = {}; };
   }, [colors, symbol]);
@@ -37,6 +41,11 @@ export default function PriceChart({ symbol, bars, calendar, first, last, at, tr
     const data = [];
     for (let i = first; i <= at; i++) if (bars[i]) data.push({ time: calendar[i], open: bars[i][0], high: bars[i][1], low: bars[i][2], close: bars[i][3] });
     candles.setData(data);
+    const hasVol = showVolume && bars.some((b) => b && b[4] != null);
+    const vols = [];
+    if (hasVol) for (let i = first; i <= at; i++) if (bars[i] && bars[i][4] != null) vols.push({ time: calendar[i], value: bars[i][4], color: withAlpha(bars[i][3] >= bars[i][0] ? colors.gain : colors.loss, 0.45) });
+    api.current.volume.setData(vols);
+    candles.priceScale().applyOptions({ scaleMargins: hasVol ? { top: 0.06, bottom: 0.24 } : { top: 0.06, bottom: 0.06 } });
 
     const markers = [];
     for (const t of trades) {
@@ -65,9 +74,9 @@ export default function PriceChart({ symbol, bars, calendar, first, last, at, tr
       const span = calendar.slice(first, last + 1).length;
       chart.timeScale().setVisibleLogicalRange({ from: -1, to: span + 1 });
     }
-  }, [colors, symbol, bars, calendar, first, last, at, trades, fitKey]);
+  }, [colors, symbol, bars, calendar, first, last, at, trades, fitKey, showVolume]);
 
-  const bar = hover ?? (bars[at] ? { open: bars[at][0], high: bars[at][1], low: bars[at][2], close: bars[at][3], time: calendar[at] } : null);
+  const bar = hover ?? (bars[at] ? { open: bars[at][0], high: bars[at][1], low: bars[at][2], close: bars[at][3], volume: bars[at][4], time: calendar[at] } : null);
   return (
     <div className="tv">
       {bar && (
@@ -75,6 +84,7 @@ export default function PriceChart({ symbol, bars, calendar, first, last, at, tr
           <b>{symbol}</b><span>{String(bar.time)}</span>
           <span>O <i>{bar.open.toFixed(2)}</i></span><span>H <i>{bar.high.toFixed(2)}</i></span><span>L <i>{bar.low.toFixed(2)}</i></span>
           <span>C <i className={bar.close >= bar.open ? "up" : "down"}>{bar.close.toFixed(2)}</i></span>
+          {showVolume && bar.volume != null && <span>Vol <i>{Math.round(bar.volume).toLocaleString("en-IN")}</i></span>}
         </div>
       )}
       <div ref={box} className="tv-box" />
