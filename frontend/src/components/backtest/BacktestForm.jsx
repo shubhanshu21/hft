@@ -79,7 +79,13 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
           <div className="field"><label htmlFor="capital">Starting money (INR)</label><input id="capital" type="number" min="10000" step="1000" value={f.capital} onChange={set("capital")} /></div>
           <div className="field"><label htmlFor="slip">Slippage per side (basis points)</label><input id="slip" type="number" min="0" max="100" step="0.5" value={f.slippage_bp} onChange={set("slippage_bp")} disabled={crypto} />
             <span className="hint">5 bp = 0.05%, charged when buying and again when selling. Currency: 0, because its cost model already includes the real bid-ask spread.</span></div>
-          <div className="field"><label htmlFor="risk">Risk per trade (% of account)</label><input id="risk" type="number" min="0.1" max="10" step="0.1" value={f.risk_pct} onChange={set("risk_pct")} disabled={crypto} /></div>
+          <div className="field"><label htmlFor="risk">Risk per trade (% of account)</label><input id="risk" type="number" min="0.1" max="10" step="0.1" value={f.risk_pct} onChange={set("risk_pct")} disabled={crypto} />
+            {+f.risk_pct > 3 && !crypto && (
+              <span className="warn" role="alert">
+                High risk: one losing trade can cost about {(+f.risk_pct).toFixed(1)}% of the account, and positions get {(+f.risk_pct / 2).toFixed(1)}x bigger than the tested 2%.
+                Profits AND losses grow together: at 10% the currency strategy made +64% in 2026 but lost 87% in 2013-22. Check other years before trusting it.
+              </span>
+            )}</div>
           <div className="field"><label htmlFor="maxpos">Most holdings at once</label><input id="maxpos" type="number" min="1" max="10" value={f.max_positions} onChange={set("max_positions")} disabled={crypto} /></div>
           <div className="field"><label htmlFor="lev">Leverage</label><input id="lev" type="number" min="1" max="40" step="0.5" value={f.leverage} onChange={set("leverage")} disabled={crypto} />
             <span className="hint">Cash shares: 1. Currency futures: 20 (margin is about 2-3% of the contract).</span></div>
