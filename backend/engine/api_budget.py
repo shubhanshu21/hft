@@ -6,7 +6,7 @@ CANDLES -- 50 requests/second, 500/minute and **2,000 per 30 minutes**; breachin
 Measured 2026-09-25: one scan of the 52-symbol universe makes ~57 calls (one candle fetch per symbol plus occasional quote samples), so a 30-second cadence needs
 ~3,400 calls per 30 minutes during equity hours -- 70% over the limit (no 429 was ever seen, so enforcement is lax, but the rule is written down). The loop also kept
 fetching candles for markets that had closed. This module meters the calls (services/broker/upstox_broker.api_calls_in_window) and says whether a class of work may
-spend more, with headroom for everything else this process does (margin refresh, token probe, the dashboard is separate and makes none):
+spend more, with headroom for everything else this process does (margin refresh, token probe):
 
   essential   exits of open positions and the few currency symbols -- allowed until the HARD limit
   entry       equity entry scans (49 symbols)                                   -- PACED: at most ENTRY_PACE calls in any minute, and under the SOFT 30-min limit

@@ -90,7 +90,7 @@ from services.utils.market_holidays import get_trading_holidays
 
 log = get_logger("live_dryrun")
 
-from engine import api_budget, blocked_log, heartbeat, live_prices, margin_rates, sandbox_rehearsal
+from engine import api_budget, heartbeat, margin_rates, sandbox_rehearsal
 IST = ZoneInfo("Asia/Kolkata")
 DEFAULT_SCAN_INTERVAL_SECONDS = 60  # 1-minute scan for fast SL/TP trailing & new bar detection
 DEFAULT_RISK_PCT = 5.0
@@ -802,13 +802,10 @@ class DryRunner(RiskGates):
             sig_result = strat.entry(EntryContext(capital=sizing_capital, **ctx)) if sizing_capital > 0 else None
         if not sig_result:
             # Margin is one pool. If part of it is held by open positions, a signal that could not be sized to the FREE margin leaves no trace
-            # (zero lots -> no signal). Re-ask with the whole account: a signal there was blocked by margin, not absent (engine/blocked_log.py).
+            # (zero lots -> no signal). Re-ask with the whole account: a signal there was blocked by margin, not absent.
             if self.positions and sizing_capital < self.capital * 0.95:
                 shadow = strat.entry(EntryContext(capital=self.capital, **ctx))
                 if shadow:
-                    blocked_log.record(sym, market, "margin_pool", f"free margin Rs{max(sizing_capital, 0):,.0f} of Rs{self.capital:,.0f}; a {shadow.direction} "
-                                       f"signal for {shadow.qty} lot(s) could not be sized", list(self.positions.values()),
-                                       bar_ts=str(candles[-1]["timestamp"]) if candles else None, direction=shadow.direction, wanted_qty=shadow.qty, got_qty=0)
                     log.info("%s: %s signal blocked by margin held by %s (free Rs%s of Rs%s).", sym, shadow.direction, ", ".join(self.positions),
                              f"{max(sizing_capital, 0):,.0f}", f"{self.capital:,.0f}")
             return False
@@ -833,10 +830,6 @@ class DryRunner(RiskGates):
         # Ask Upstox what THIS exact order would block, right now (margins and lot sizes change at the broker's discretion).
         fit = margin_rates.confirm_order(self.broker, sym, SYMBOL_MAP.get(sym), sig_result.qty,
                                          "BUY" if sig_result.direction == "long" else "SELL", sizing_capital, now=None)
-        if fit["qty"] < 1 or fit["note"]:
-            blocked_log.record(sym, market, "margin_check" if fit["qty"] < 1 else "margin_cut", fit["note"] or "margin could not be verified with Upstox",
-                               list(self.positions.values()), bar_ts=str(candles[-1]["timestamp"]) if candles else None, direction=sig_result.direction,
-                               wanted_qty=sig_result.qty, got_qty=fit["qty"])
         if fit["qty"] < 1:
             log.info("%s: %s entry skipped -- %s.", sym, market, fit["note"] or "margin check")
             return False
@@ -898,7 +891,6 @@ class DryRunner(RiskGates):
         candles = self._candles(sym, strat)
         if not candles:
             return
-        live_prices.update(sym, candles[-1]["close"], now)               # for the dashboard's unrealised P&L (it never calls Upstox itself)
         armed_key = "armed_be" if "armed_be" in pos else "armed_trail"
         before = (pos["current_stop"], pos.get(armed_key), pos.get("trail_bar_ts"))
         decision = strat.manage(pos, ExitContext(symbol=sym, candles=candles, now=now, data=self._market_data()))
@@ -916,7 +908,6 @@ class DryRunner(RiskGates):
         """Shared exit path for SL/TP/timeout/EOD exits AND the manual Telegram
         kill switch (force_exit_all) -- one place that writes the DB order/
         position/trade/snapshot records, updates capital, and alerts."""
-        live_prices.prune([s for s in self.positions if s != sym])
         # 1. Calculate Exact Itemized Costs (the strategy's own cost model: intraday vs delivery, per market)
         strat = self._strategy_of(pos, sym)
         # Rehearse the closing order against Upstox's sandbox (background; off unless UPSTOX_SANDBOX_TOKEN is set): paper trading is never affected.
