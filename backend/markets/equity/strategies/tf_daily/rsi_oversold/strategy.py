@@ -5,8 +5,12 @@ Rules (fixed before testing, daily bars, long only, delivery):
   * signal: yesterday RSI was below 30 and today it closed back above 30 (the dip is turning), AND the close is above the 200-day EMA
     (a dip inside an uptrend, not a falling knife);
   * entry at the next open (the engine fills it), stop 2.5 ATR under the close;
-  * exit at the close when RSI rises above 70 (was 60 until 2026-10-13: 30/70 tested +4.3% vs -0.4% over 2023-26, 41 trades each),
-    or after 15 trading days if nothing else happened.
+  * exit at the close when the price closes back above its 20-day average (where the dip started), or after 15 trading days if nothing else
+    happened. RSI is used ONLY for the entry (2026-10-13, user: "this should be only used for entry signals"). Exits compared, chosen on 2023-25:
+    back above the 20-day average +7.2% (59% winners, worst fall -4.8%) vs RSI 70 +6.8%, 2R target +3.4%, 1.5R +1.1%, ATR trailing stop +1.9%;
+    then judged on 2026: -2.1% vs RSI 70 -2.8% (8 trades).
+  * take profit at +5% if that comes first (user: "if we got enough profits then we should exit"). Chosen on 2023-25 among +3/4/5/6%:
+    +5% gave +9.5% (vs +7.2% without), worst fall -2.7%; judged on 2026: -1.6% (vs -2.1% without).
 No tested edge is claimed; it is here to be judged on the page with real fees and slippage. Not switched on for trading (default_enabled stays False).
 """
 from __future__ import annotations
@@ -17,7 +21,8 @@ import pandas as pd
 from core.strategy import EntryContext, ExitContext, ExitDecision, Signal, Strategy
 from markets.equity.costs import compute_nse_equity_delivery_costs
 
-RSI_LEN, OVERSOLD, EXIT_RSI, STOP_ATR, MAX_HOLD_DAYS = 14, 30.0, 70.0, 2.5, 15
+RSI_LEN, OVERSOLD, EXIT_SMA, STOP_ATR, MAX_HOLD_DAYS = 14, 30.0, 20, 2.5, 15
+TAKE_PROFIT_PCT = 5.0       # sell as soon as the trade is up this much (chosen on 2023-25 from 3/4/5/6%)
 
 
 def rsi(close: pd.Series, n: int = RSI_LEN) -> pd.Series:
@@ -59,12 +64,13 @@ class RsiOversoldEquity(Strategy):
         qty = int(min(ctx.capital * ctx.risk_pct / 100 / dist, ctx.capital / entry))
         if qty < 1:
             return None
-        return Signal(symbol=ctx.symbol, direction="long", entry_price=entry, stop_loss=stop, qty=qty, stop_dist=dist, setup_type="rsi oversold bounce")
+        return Signal(symbol=ctx.symbol, direction="long", entry_price=entry, stop_loss=stop, qty=qty, stop_dist=dist, setup_type="rsi oversold bounce",
+                      target_price=entry * (1 + TAKE_PROFIT_PCT / 100))
 
     def manage(self, pos: dict, ctx: ExitContext) -> ExitDecision | None:
         df = pd.DataFrame(ctx.candles)
-        if rsi(df["close"]).iloc[-1] > EXIT_RSI:
-            return ExitDecision(float(df["close"].iloc[-1]), "rsi_recovered")
+        if df["close"].iloc[-1] > df["close"].rolling(EXIT_SMA).mean().iloc[-1]:
+            return ExitDecision(float(df["close"].iloc[-1]), "back_above_20_day_average")
         if (ctx.now - pos["entry_time"]).days >= MAX_HOLD_DAYS * 7 // 5:           # 15 trading days is about 21 calendar days
             return ExitDecision(float(df["close"].iloc[-1]), "time_stop")
         return None
