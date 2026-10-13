@@ -10,13 +10,17 @@ import pandas as pd
 
 from core.paths import ARCHIVE_ROOT
 from markets.crypto.strategies.tf_1hour import router
-from markets.crypto.experiments.momentum_study import SYMBOLS, load
 from markets.crypto.strategies.tf_1hour.momentum import COST_SIDE, ensemble_position
 
+SYMBOLS = ("BTCUSDT", "ETHUSDT", "SOLUSDT")
 PERP_SIDE = 0.0009
 BAND = 0.10
 TRAIN_END, TEST_START = "2023-12-31", "2024-01-01"
 BPY = 365 * 24
+
+
+def load(sym: str, interval: str) -> pd.DataFrame:
+    return pd.read_csv(ARCHIVE_ROOT / "crypto" / f"{sym}_{interval}.csv", parse_dates=["timestamp"]).set_index("timestamp")
 
 
 def banded(target: np.ndarray, band: float = BAND) -> np.ndarray:

@@ -1,0 +1,33 @@
+.ctrl button.main{min-width:132px}
+.ctrl input[type=range]{flex:1 1 220px;min-width:0;accent-color:var(--accent)}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}
+.stat .l{font-size:.6875rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.stat .v{font-family:var(--font-num);font-size:1.125rem;font-weight:500;margin-top:2px;font-variant-numeric:tabular-nums}
+.pos{display:grid;grid-template-columns:1fr 84px;gap:8px;padding:10px 0;border-top:1px solid var(--line);align-items:center}
+.pos:first-of-type{border-top:0}
+.pos .s{font-weight:600}
+.pos .d{font-family:var(--font-num);font-size:.75rem;color:var(--muted);font-variant-numeric:tabular-nums}
+.pos .p{font-family:var(--font-num);font-size:.875rem;font-variant-numeric:tabular-nums}
+.feed{max-height:420px;overflow-y:auto}
+.trade{display:grid;grid-template-columns:78px 52px minmax(0,1fr) auto;gap:10px;padding:8px 0;border-top:1px solid var(--line);align-items:baseline;font-size:.8125rem}
+.trade:first-child{border-top:0}
+.trade .dt{font-family:var(--font-num);color:var(--muted);font-size:.75rem}
+.trade .why{color:var(--muted);font-size:.75rem;margin-top:2px}
+.trade .pnl{font-family:var(--font-num);font-variant-numeric:tabular-nums;text-align:right}
+.pill{font-family:var(--font-num);font-size:.6875rem;font-weight:600;padding:2px 6px;border-radius:4px;text-align:center}
+.pill.buy{background:var(--gain-bg);color:var(--gain)} .pill.sell{background:var(--loss-bg);color:var(--loss)}
+.pill.sell.win{background:var(--gain-bg);color:var(--gain)}
+.chart-head{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px}
+.chart-head h2{margin:0}
+.legend{display:flex;gap:12px;font-size:.6875rem;color:var(--muted)}
+.cost-table{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.run-bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.run-bar select{min-width:0;max-width:100%;flex:1 1 280px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;max-height:96px;overflow-y:auto}
+.chip{font-family:var(--font-num);font-size:.75rem;padding:4px 9px;border-radius:999px}
+.chip.on{border-color:var(--accent);background:var(--grid)}
+.chip .count{color:var(--muted)}
+.table-wrap{overflow-x:auto;margin-top:10px}
+.trades-table{width:100%;border-collapse:collapse;font-size:.8125rem;font-variant-numeric:tabular-nums}
+.trades-table th{font-size:.6875rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);text-align:left;font-weight:600;padding:6px 10px 6px 0;border-bottom:1px solid var(--line);white-space:nowrap}
+.trades-table td{padding:6px 10px 6px 0;border-bottom:1px solid var(--line);font-family:var(--font-num);white-space:nowrap}

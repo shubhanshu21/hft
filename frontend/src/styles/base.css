@@ -1,0 +1,16 @@
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--font-ui);padding-inline:16px;padding-block:20px 40px}
+h1{font-size:1.25rem;margin:0;font-weight:600;text-wrap:balance}
+h2{font-size:.75rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:0 0 10px;font-weight:600}
+svg{display:block;width:100%;height:auto}
+svg text{font-family:var(--font-num);font-size:11px;fill:var(--muted)}
+button,select,input[type=text],input[type=number],input[type=date],input[type=password]{font:inherit;font-size:.875rem;color:var(--fg);background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:7px 10px}
+button{cursor:pointer}
+button.main{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+button:disabled{opacity:.55;cursor:not-allowed}
+button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.up{color:var(--gain)} .down{color:var(--loss)}
+.note{color:var(--muted);font-size:.75rem;line-height:1.5}
+.none{color:var(--muted);font-size:.875rem;padding:8px 0}
+.error{color:var(--loss);font-size:.875rem}
+@media (prefers-reduced-motion:reduce){*{scroll-behavior:auto}}

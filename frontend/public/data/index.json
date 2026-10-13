@@ -1,0 +1,7 @@
+[
+ {
+  "file": "pairs_cash_2026.json",
+  "title": "Pairs trading in cash shares, 2026",
+  "blurb": "NIFTY 50 stocks bought in plain cash shares. Rupees 1,00,000 start, at most 3 holdings, real Upstox delivery fees and 5 bp slippage on each side. Pairs were chosen using data up to 2025 only."
+ }
+]
