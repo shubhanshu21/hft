@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import Panel from "../ui/Panel.jsx";
-import { getToken, setToken } from "../../api/client.js";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const MARKET_LABEL = { equity: "Equity (NIFTY 50 stocks)", currency: "Currency (NSE)", crypto: "Crypto (Binance)" };
@@ -14,7 +13,6 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
   const [all, setAll] = useState(true);
   const [chosen, setChosen] = useState([]);
   const [f, setF] = useState({ start: "2023-01-01", end: today(), capital: 100000, slippage_bp: 5, risk_pct: 2, max_positions: 3, leverage: 1 });
-  const [token, setTok] = useState(getToken());
 
   useEffect(() => { const o = strategies.filter((s) => s.market === market); setName(o[0]?.name ?? ""); setChosen([]); setAll(true); }, [market, strategies]);
 
@@ -24,11 +22,10 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
 
   const submit = (e) => {
     e.preventDefault();
-    setToken(token);
     onSubmit({
       market, strategy: name, symbols: all ? strategy.symbols : chosen,
       start: f.start, end: f.end, capital: +f.capital, slippage_bp: +f.slippage_bp, risk_pct: +f.risk_pct, max_positions: +f.max_positions, leverage: +f.leverage,
-    }, token);
+    });
   };
 
   return (
@@ -76,12 +73,6 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
         </p>
       </Panel>
 
-      <Panel title="Access">
-        <div className="form-grid">
-          <div className="field"><label htmlFor="token">Access token</label><input id="token" type="password" autoComplete="off" value={token} onChange={(e) => setTok(e.target.value)} required />
-            <span className="hint">Set as BACKTEST_TOKEN on the server. Kept in this browser only.</span></div>
-        </div>
-      </Panel>
       <div><button className="main" type="submit" disabled={busy || !strategy?.supported}>{busy ? "Running..." : "Run backtest"}</button></div>
     </form>
   );

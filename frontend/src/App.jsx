@@ -6,9 +6,11 @@ import { useHashRoute } from "./hooks/useHashRoute.js";
 export default function App() {
   const [page = "results", id] = useHashRoute();
   return (
-    <div className="wrap">
+    <div className="shell">
       <AppHeader page={page} />
-      {page === "new" ? <NewBacktestPage /> : <ResultsPage runId={id ? decodeURIComponent(id) : undefined} />}
+      <main className="page">
+        {page === "new" ? <NewBacktestPage /> : <ResultsPage runId={id ? decodeURIComponent(id) : undefined} />}
+      </main>
     </div>
   );
 }

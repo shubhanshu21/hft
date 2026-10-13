@@ -9,7 +9,6 @@ ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m engine.backtest_api
 Restart=on-failure
 RestartSec=5
 # Reads archived candles and runs strategy code only: no Upstox calls, no paper-trading database, no orders.
-# A run needs BACKTEST_TOKEN from backend/.env.
 
 [Install]
 WantedBy=default.target

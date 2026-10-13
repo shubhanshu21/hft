@@ -3,11 +3,12 @@
     GET  /api/strategies         what can be run: market, name, timeframe, whether the web backtester supports it, symbols
     GET  /api/backtests          saved runs, newest first (summary only)
     GET  /api/backtests/<id>     one run: status, params, and the full replay result when finished
-    POST /api/backtests          start a run (JSON body, needs  Authorization: Bearer <BACKTEST_TOKEN>)
+    POST /api/backtests          start a run (JSON body)
 
 It only reads archived candles and runs the strategy code; it never talks to Upstox, touches the paper-trading database or places an order.
 Fees (the strategy's cost model) and slippage are always charged. One run at a time; results are saved in var/backtests/<id>.json.
-Binds to 127.0.0.1 -- nginx publishes /api/ -- and a run needs the token because it uses the server's CPU.
+Binds to 127.0.0.1 -- nginx publishes /api/. No login: a run only uses CPU, so it is limited to one at a time, one start per address every
+COOLDOWN_S seconds, and the newest MAX_SAVED runs are kept.
 """
 from __future__ import annotations
 
@@ -15,7 +16,6 @@ import argparse
 import json
 import os
 import re
-import secrets
 import threading
 import time
 import traceback
@@ -34,8 +34,11 @@ from markets.equity.universe import NIFTY50_SYMBOLS
 RUNS_DIR = VAR_DIR / "backtests"
 CURRENCY = ["USDINR", "EURINR", "GBPINR", "JPYINR"]
 LIMITS = {"capital": (10_000, 10_000_000), "slippage_bp": (0, 100), "risk_pct": (0.1, 10), "max_positions": (1, 10), "leverage": (1, 10)}
+COOLDOWN_S = 5
+MAX_SAVED = 200
 _lock = threading.Lock()
 _running: dict | None = None
+_last_start: dict[str, float] = {}
 
 
 def universe(market: str) -> list[str]:
@@ -49,6 +52,12 @@ def catalog() -> list[dict]:
     rows.append({"market": "crypto", "name": "router", "timeframe": "1 hours", "supported": True, "symbols": universe("crypto"), "intraday": False,
                  "summary": "The live crypto trend router (BTC regime picks long spot or short perpetuals). Runs with its own cost and funding model."})
     return rows
+
+
+def prune() -> None:
+    files = sorted(RUNS_DIR.glob("*.json"), key=lambda f: f.stat().st_mtime, reverse=True)
+    for f in files[MAX_SAVED:]:
+        f.unlink(missing_ok=True)
 
 
 def save(run: dict) -> None:
@@ -73,6 +82,8 @@ def summaries() -> list[dict]:
         except ValueError:
             continue
         out.append({k: r.get(k) for k in ("id", "status", "created", "market", "strategy", "params", "error")} | {"metrics": (r.get("result") or {}).get("metrics")})
+    if _running:
+        out = [r for r in out if r["id"] != _running["id"]] + [{k: _running.get(k) for k in ("id", "status", "created", "market", "strategy", "params", "error", "progress")} | {"metrics": None}]
     return sorted(out, key=lambda r: r["created"] or "", reverse=True)
 
 
@@ -125,7 +136,8 @@ def work(run: dict) -> None:
             def progress(i, n):
                 run["progress"] = round(i / n * 100)
             run["result"] = run_backtest(registry.get(run["market"], run["strategy"]), p["symbols"], p["start"], p["end"], capital=p["capital"], slippage_bp=p["slippage_bp"],
-                                         risk_pct=p["risk_pct"], max_positions=int(p["max_positions"]), leverage=p["leverage"], progress=progress)
+                                         risk_pct=p["risk_pct"], max_positions=int(p["max_positions"]), leverage=p["leverage"], progress=progress,
+                                         on_snapshot=lambda snap: run.__setitem__("partial", snap))
         run["status"] = "done"
     except BacktestError as e:
         run["status"], run["error"] = "failed", str(e)
@@ -133,7 +145,9 @@ def work(run: dict) -> None:
         traceback.print_exc()
         run["status"], run["error"] = "failed", f"{type(e).__name__}: {e}"
     run["progress"] = 100
+    run.pop("partial", None)
     save(run)
+    prune()
     with _lock:
         _running = None
 
@@ -143,7 +157,7 @@ def start(body: dict) -> dict:
     spec = validate(body)
     with _lock:
         if _running is not None:
-            raise RuntimeError("Another backtest is still running; try again in a minute")
+            raise RuntimeError(f"Another backtest is still running ({_running['strategy']}, {_running.get('progress', 0)}% done). Wait for it to finish; the New backtest page shows it live.")
         run = {"id": uuid.uuid4().hex[:12], "status": "queued", "created": datetime.now(timezone.utc).isoformat(timespec="seconds"), "progress": 0, **spec}
         _running = run
     save(run)
@@ -153,8 +167,6 @@ def start(body: dict) -> dict:
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "hft-backtest"
-    token: str | None = None
-
     def _send(self, status: int, payload) -> None:
         body = json.dumps(payload, default=str).encode()
         self.send_response(status)
@@ -172,18 +184,21 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, summaries())
         m = re.fullmatch(r"/api/backtests/([0-9a-f]{12})", path)
         if m:
-            run = load(m.group(1)) or (_running if _running and _running["id"] == m.group(1) else None)
+            live = _running if _running and _running["id"] == m.group(1) else None
+            if live:                                           # running now: progress and the partial result so far (trades, candles, equity)
+                return self._send(200, {k: v for k, v in live.items() if k != "partial"} | {"result": live.get("partial")})
+            run = load(m.group(1))
             if run:
-                live = _running if _running and _running["id"] == run["id"] else None
-                return self._send(200, {**run, "progress": live["progress"] if live else run.get("progress", 100)})
+                return self._send(200, run)
         self._send(HTTPStatus.NOT_FOUND, {"error": "not found"})
 
     def do_POST(self) -> None:                                     # noqa: N802
         if urlparse(self.path).path.rstrip("/") != "/api/backtests":
             return self._send(HTTPStatus.NOT_FOUND, {"error": "not found"})
-        given = (self.headers.get("Authorization") or "").removeprefix("Bearer ").strip()
-        if not self.token or not secrets.compare_digest(given, self.token):
-            return self._send(HTTPStatus.UNAUTHORIZED, {"error": "A valid access token is needed to run a backtest"})
+        who = self.headers.get("X-Real-IP") or self.client_address[0]
+        now = time.time()
+        if now - _last_start.get(who, 0) < COOLDOWN_S:
+            return self._send(HTTPStatus.TOO_MANY_REQUESTS, {"error": "Please wait a few seconds before starting another backtest"})
         try:
             size = int(self.headers.get("Content-Length") or 0)
             if size > 20_000:
@@ -193,12 +208,25 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(HTTPStatus.TOO_MANY_REQUESTS, {"error": str(e)})
         except (ValueError, TypeError) as e:
             return self._send(HTTPStatus.BAD_REQUEST, {"error": str(e)})
+        _last_start[who] = now
         self._send(HTTPStatus.ACCEPTED, {"id": run["id"], "status": run["status"]})
 
     do_PUT = do_DELETE = do_PATCH = lambda self: self._send(HTTPStatus.METHOD_NOT_ALLOWED, {"error": "method not allowed"})
 
     def log_message(self, fmt, *args) -> None:                     # quiet
         pass
+
+
+def fail_orphans() -> None:
+    """A run still marked queued/running when the service starts was killed by a restart: mark it failed so nothing shows it as running."""
+    for f in RUNS_DIR.glob("*.json") if RUNS_DIR.exists() else []:
+        try:
+            r = json.loads(f.read_text())
+        except ValueError:
+            continue
+        if r.get("status") in ("queued", "running"):
+            r["status"], r["error"] = "failed", "Interrupted by a server restart"
+            save(r)
 
 
 def main() -> int:
@@ -208,9 +236,8 @@ def main() -> int:
     ap.add_argument("--host", default=os.environ.get("BACKTEST_HOST", "127.0.0.1"))
     ap.add_argument("--port", type=int, default=int(os.environ.get("BACKTEST_PORT", "8000")))
     args = ap.parse_args()
-    token = (os.environ.get("BACKTEST_TOKEN") or "").strip()
-    Handler.token = token or None
-    print(f"backtest api on http://{args.host}:{args.port}  (running a backtest {'needs the token' if token else 'is DISABLED: set BACKTEST_TOKEN in .env'})", flush=True)
+    fail_orphans()
+    print(f"backtest api on http://{args.host}:{args.port}", flush=True)
     ThreadingHTTPServer((args.host, args.port), Handler).serve_forever()
     return 0
 

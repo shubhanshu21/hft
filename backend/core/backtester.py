@@ -45,7 +45,7 @@ def _candles(df: pd.DataFrame) -> list[dict]:
 
 def run_backtest(strategy: Strategy, symbols: list[str], start: str, end: str, *, capital: float = 100_000.0, slippage_bp: float = 5.0,
                  risk_pct: float = 2.0, max_positions: int = 3, leverage: float = 1.0,
-                 progress: Callable[[int, int], None] | None = None) -> dict:
+                 progress: Callable[[int, int], None] | None = None, on_snapshot: Callable[[dict], None] | None = None, snapshot_every: int = 4) -> dict:
     if tuple(strategy.timeframe) != ("days", 1):
         raise BacktestError(f"{strategy.market}/{strategy.name} reads {strategy.timeframe} bars; the web backtester runs daily-bar strategies only")
     if strategy.market not in DAILY_FILE:
@@ -77,6 +77,18 @@ def run_backtest(strategy: Strategy, symbols: list[str], start: str, end: str, *
     out = {"days": [], "equity": [], "events": [], "pos": []}
     day_index = {d: i for i, d in enumerate(days)}
     last_close = {s: None for s in frames}
+    bars_cache: dict[str, list] = {}                           # [o, h, l, c] per calendar day, built once per symbol the first time it trades
+    all_days = [d.strftime("%Y-%m-%d") for d in days]
+
+    def bars_of(s: str) -> list:
+        if s not in bars_cache:
+            bars_cache[s] = [_bar(frames[s], d) for d in days]
+        return bars_cache[s]
+
+    def snapshot(n: int) -> dict:
+        seen = sorted({e["sym"] for evs in out["events"] for e in evs} | set(book))
+        return {"live": True, "days_all": all_days, "days": list(out["days"]), "equity": list(out["equity"]), "events": list(out["events"]), "pos": list(out["pos"]),
+                "bars": {x: bars_of(x)[: n + 1] for x in seen}, "metrics": metrics(out["equity"], capital, closed, n + 1, len(book))}
 
     def equity_at(close_of: dict) -> float:
         return cash + sum((close_of[s] - p["entry_price"]) * p["dir"] * p["qty"] * lot[s] for s, p in book.items() if close_of.get(s))
@@ -159,12 +171,15 @@ def run_backtest(strategy: Strategy, symbols: list[str], start: str, end: str, *
         out["pos"].append([{"sym": s, "q": p["qty"] * lot[s], "e": round(p["entry_price"], 4), "px": round(mark[s], 4), "start": p["entry_i"]} for s, p in book.items()])
         if progress and n % 10 == 0:
             progress(n, len(days))
+        if on_snapshot and (n % snapshot_every == 0):
+            on_snapshot(snapshot(n))
 
     # still open at the end: marked at the last close, not counted as closed
     traded = sorted({e["sym"] for evs in out["events"] for e in evs} | set(book))
-    out["bars"] = {s: [_bar(frames[s], d) for d in days] for s in traded}            # [open, high, low, close] per day, null before the first candle / on a holiday
+    out["bars"] = {s: bars_of(s) for s in traded}            # [open, high, low, close] per day, null before the first candle / on a holiday
     out["metrics"] = metrics(out["equity"], capital, closed, len(days), len(book))
     out["skipped_symbols"] = skipped
+    out["days_all"] = all_days
     return out
 
 
@@ -204,6 +219,7 @@ def metrics(equity: list[int], capital: float, closed: list[dict], n_days: int, 
         "max_drawdown_pct": round(dd * 100, 2), "trades": len(closed), "wins": len(wins),
         "win_rate_pct": round(len(wins) / len(closed) * 100, 1) if closed else 0.0,
         "profit_factor": round(gross_win / gross_loss, 2) if gross_loss > 0 else (None if not closed else math.inf if gross_win else 0.0),
+        "closed_profit": round(sum(c["net"] for c in closed)), "open_profit": round(final - capital - sum(c["net"] for c in closed)),
         "gross_profit": round(sum(c["gross"] for c in closed)), "fees": round(sum(c["fees"] for c in closed)),
         "slippage": round(sum(c["slip"] for c in closed)), "avg_hold_days": round(sum(c["days"] for c in closed) / len(closed), 1) if closed else 0.0,
         "open_at_end": still_open, "trading_days": n_days,

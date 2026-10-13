@@ -1,5 +1,7 @@
 *{box-sizing:border-box}
-body{background:var(--bg);color:var(--fg);font-family:var(--font-ui);padding-inline:16px;padding-block:20px 40px}
+html,body{height:100%}
+body{background:var(--bg);color:var(--fg);font-family:var(--font-ui);margin:0;padding:0}
+#root{min-height:100%}
 h1{font-size:1.25rem;margin:0;font-weight:600;text-wrap:balance}
 h2{font-size:.75rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:0 0 10px;font-weight:600}
 svg{display:block;width:100%;height:auto}
