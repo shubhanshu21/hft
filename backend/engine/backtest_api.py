@@ -34,7 +34,7 @@ from markets.equity.universe import NIFTY50_SYMBOLS
 
 RUNS_DIR = VAR_DIR / "backtests"
 CURRENCY = ["USDINR", "EURINR", "GBPINR", "JPYINR"]
-LIMITS = {"capital": (10_000, 10_000_000), "slippage_bp": (0, 100), "risk_pct": (0.1, 10), "max_positions": (1, 10), "leverage": (1, 10),
+LIMITS = {"capital": (10_000, 10_000_000), "slippage_bp": (0, 100), "risk_pct": (0.1, 10), "max_positions": (1, 10), "leverage": (1, 40),
           "trail_stop_pct": (0, 30), "trail_after_pct": (0, 50), "profit_trail_pct": (0, 20)}
 COOLDOWN_S = 5
 MAX_SAVED = 200

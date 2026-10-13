@@ -81,7 +81,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
             <span className="hint">5 bp = 0.05%, charged when buying and again when selling. Currency: 0, because its cost model already includes the real bid-ask spread.</span></div>
           <div className="field"><label htmlFor="risk">Risk per trade (% of account)</label><input id="risk" type="number" min="0.1" max="10" step="0.1" value={f.risk_pct} onChange={set("risk_pct")} disabled={crypto} /></div>
           <div className="field"><label htmlFor="maxpos">Most holdings at once</label><input id="maxpos" type="number" min="1" max="10" value={f.max_positions} onChange={set("max_positions")} disabled={crypto} /></div>
-          <div className="field"><label htmlFor="lev">Leverage</label><input id="lev" type="number" min="1" max="10" step="0.5" value={f.leverage} onChange={set("leverage")} disabled={crypto} />
+          <div className="field"><label htmlFor="lev">Leverage</label><input id="lev" type="number" min="1" max="40" step="0.5" value={f.leverage} onChange={set("leverage")} disabled={crypto} />
             <span className="hint">Cash shares: 1. Currency futures: 20 (margin is about 2-3% of the contract).</span></div>
         </div>
         <p className="fees-box">
