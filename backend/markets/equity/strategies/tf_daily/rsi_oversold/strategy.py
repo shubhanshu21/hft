@@ -5,7 +5,8 @@ Rules (fixed before testing, daily bars, long only, delivery):
   * signal: yesterday RSI was below 30 and today it closed back above 30 (the dip is turning), AND the close is above the 200-day EMA
     (a dip inside an uptrend, not a falling knife);
   * entry at the next open (the engine fills it), stop 2.5 ATR under the close;
-  * exit at the close when RSI rises above 60, or after 15 trading days if nothing else happened.
+  * exit at the close when RSI rises above 70 (was 60 until 2026-10-13: 30/70 tested +4.3% vs -0.4% over 2023-26, 41 trades each),
+    or after 15 trading days if nothing else happened.
 No tested edge is claimed; it is here to be judged on the page with real fees and slippage. Not switched on for trading (default_enabled stays False).
 """
 from __future__ import annotations
@@ -16,7 +17,7 @@ import pandas as pd
 from core.strategy import EntryContext, ExitContext, ExitDecision, Signal, Strategy
 from markets.equity.costs import compute_nse_equity_delivery_costs
 
-RSI_LEN, OVERSOLD, EXIT_RSI, STOP_ATR, MAX_HOLD_DAYS = 14, 30.0, 60.0, 2.5, 15
+RSI_LEN, OVERSOLD, EXIT_RSI, STOP_ATR, MAX_HOLD_DAYS = 14, 30.0, 70.0, 2.5, 15
 
 
 def rsi(close: pd.Series, n: int = RSI_LEN) -> pd.Series:
