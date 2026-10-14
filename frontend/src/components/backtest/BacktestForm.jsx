@@ -18,8 +18,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
   const safeRisk = Math.max(3, strategy?.default_risk_pct ?? 0);
   const [all, setAll] = useState(true);
   const [chosen, setChosen] = useState([]);
-  const [f, setF] = useState({ ...yearRange(THIS_YEAR), capital: 100000, slippage_bp: 5, risk_pct: 2, max_positions: 3, leverage: 1, trail_stop_pct: 8, trail_after_pct: 5, profit_trail_pct: 0, pyramid_pct: "", label: "" });
-  const [useTrail, setUseTrail] = useState(false);       // off: strategies bring their own exits (trend_ema_cross has a built-in trailing stop)
+  const [f, setF] = useState({ ...yearRange(THIS_YEAR), capital: 100000, slippage_bp: 5, risk_pct: 2, max_positions: 3, leverage: 1, label: "" });
   const [year, setYear] = useState(String(THIS_YEAR));       // "custom" once the dates are edited by hand
 
   useEffect(() => { const o = strategies.filter((s) => s.market === market); setName(o[0]?.name ?? ""); setChosen([]); setAll(true);
@@ -36,8 +35,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
     onSubmit({
       market, strategy: name, symbols: all ? strategy.symbols : chosen,
       start: f.start, end: f.end, capital: +f.capital, slippage_bp: +f.slippage_bp, risk_pct: +f.risk_pct, max_positions: +f.max_positions, leverage: +f.leverage,
-      pyramid_pct: f.pyramid_pct === "" ? null : +f.pyramid_pct, label: f.label,
-      trail_stop_pct: useTrail ? +f.trail_stop_pct : 0, trail_after_pct: useTrail ? +f.trail_after_pct : 0, profit_trail_pct: useTrail ? +f.profit_trail_pct : 0,
+      label: f.label,   // exits, trailing stops and adding to winners are the strategy's own (the extra overrides were removed from the form)
     });
   };
 
@@ -95,25 +93,6 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
         <p className="fees-box">
           {"Every trade is charged the strategy's full cost model (brokerage, STT, exchange charges, GST, stamp duty, SEBI fees) and the slippage above on entry and exit. Stops that gap are filled at the open, not at the stop price. Fees cannot be switched off."}
         </p>
-      </Panel>
-
-      <Panel title="Add to winning trades">
-        <div className="form-grid">
-          <div className="field"><label htmlFor="pyr">Buy a second lot when the trade is up (%)</label><input id="pyr" type="number" min="0" max="30" step="0.5" placeholder="strategy default" value={f.pyramid_pct} onChange={set("pyramid_pct")} />
-            <span className="hint">Empty = the strategy's own setting. 0 = never. Both lots share the stop and are sold together; each buy pays its own fees.</span></div>
-        </div>
-      </Panel>
-
-      <Panel title="Trailing stop and trailing profit">
-        <label className="check" htmlFor="usetrail"><input id="usetrail" type="checkbox" checked={useTrail} onChange={(e) => setUseTrail(e.target.checked)} /> Add an extra trailing stop and trailing profit on top of the strategy's own exits (ready-made values below)</label>
-        <div className="form-grid">
-          <div className="field"><label htmlFor="tstop">Trailing stop (% below the best price)</label><input id="tstop" type="number" min="0" max="30" step="0.5" value={f.trail_stop_pct} onChange={set("trail_stop_pct")} disabled={!useTrail} />
-            <span className="hint">Wide on purpose: a tight trail is hit by ordinary daily moves. The stop follows the price up and never moves down.</span></div>
-          <div className="field"><label htmlFor="tafter">Start trailing after profit of (%)</label><input id="tafter" type="number" min="0" max="50" step="0.5" value={f.trail_after_pct} onChange={set("trail_after_pct")} disabled={!useTrail} />
-            <span className="hint">0 = trail from the first day.</span></div>
-          <div className="field"><label htmlFor="ptrail">Trailing profit (% give-back)</label><input id="ptrail" type="number" min="0" max="20" step="0.5" value={f.profit_trail_pct} onChange={set("profit_trail_pct")} disabled={!useTrail} />
-            <span className="hint">0 = sell at the strategy's target (default: in tests, holding past the target lost money). Above 0 = at the target keep holding and sell when the price falls this % from its high.</span></div>
-        </div>
       </Panel>
 
       <div><button className="main" type="submit" disabled={busy || !strategy?.supported}>{busy ? "Running..." : "Run backtest"}</button></div>
