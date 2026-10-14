@@ -26,6 +26,7 @@ STEPS = [                            # (name, argv, exit codes that count as suc
     ("mcx data", [PY, "-m", "markets.commodity.data", "--topup"], {0}),          # recorded only: MCX is not traded since 2026-10-12
     ("currency data", [PY, "-m", "markets.currency.data", "--topup"], {0}),
     ("equity data", [PY, "-m", "markets.equity.data", "--topup"], {0}),
+    ("equity daily candles", [PY, "-m", "markets.equity.download_daily_weekly", "--topup", "--tf", "day"], {0}),   # trend_ema_cross reads these for its market check
     ("research data", [PY, "-m", "engine.research_data", "all", "--max-minutes", "40"], {0}),     # 1-minute stocks/indexes, futures/options OI, NSE participant OI;
                                                                                                 # stops inside STEP_TIMEOUT_S and resumes next night (a 2026-10-09 first backfill was killed at 45 min)
     ("currency daily series", [PY, "-m", "markets.currency.daily_series"], {0}),
@@ -37,7 +38,7 @@ STEPS = [                            # (name, argv, exit codes that count as suc
 ]
 # representative archive files whose newest candle date must not lag (market, file)
 FRESHNESS = [("commodity", "CRUDEOILM_1minute.csv"), ("commodity", "GOLD_1minute.csv"), ("commodity", "SILVER_1minute.csv"),
-             ("currency", "USDINR_1minute.csv"), ("equity", "RELIANCE_5minute.csv"), ("equity", "TATASTEEL_5minute.csv")]
+             ("currency", "USDINR_1minute.csv"), ("equity", "RELIANCE_5minute.csv"), ("equity", "TATASTEEL_5minute.csv"), ("equity", "RELIANCE_daily.csv")]
 IST = ZoneInfo("Asia/Kolkata")
 
 
