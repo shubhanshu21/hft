@@ -49,9 +49,9 @@ export default function PriceChart({ symbol, bars, calendar, first, last, at, tr
 
     const markers = [];
     for (const t of trades) {
-      markers.push({ time: calendar[t.i0], position: "belowBar", shape: "arrowUp", color: colors.accent, text: `BUY ${t.entry.toFixed(2)}` });
-      for (const a of t.adds ?? []) markers.push({ time: calendar[a.i], position: "belowBar", shape: "arrowUp", color: colors.accent, text: `ADD ${a.px.toFixed(2)}` });
-      if (t.i1 != null) markers.push({ time: calendar[t.i1], position: "aboveBar", shape: "arrowDown", color: t.pnl >= 0 ? colors.gain : colors.loss, text: `SELL ${signed(t.pnl)}` });
+      markers.push({ time: calendar[t.i0], position: "belowBar", shape: "arrowUp", color: colors.accent, text: `BUY ${t.qty ?? ""} @ ${t.entry.toFixed(2)}` });
+      for (const a of t.adds ?? []) markers.push({ time: calendar[a.i], position: "belowBar", shape: "arrowUp", color: colors.accent, text: `ADD ${a.q ?? ""} @ ${a.px.toFixed(2)}` });
+      if (t.i1 != null) markers.push({ time: calendar[t.i1], position: "aboveBar", shape: "arrowDown", color: t.pnl >= 0 ? colors.gain : colors.loss, text: `SELL ${t.soldQty ?? ""} ${signed(t.pnl)}` });
     }
     candles.setMarkers(markers.filter((m) => m.time >= calendar[first]).sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0)));
 
