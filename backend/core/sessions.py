@@ -22,12 +22,13 @@ from datetime import date, datetime, timedelta, timezone
 log = logging.getLogger("sessions")
 IST = timezone(timedelta(hours=5, minutes=30))
 
-UPSTOX_EXCHANGE = {"currency": "CDS", "equity": "NSE"}
+UPSTOX_EXCHANGE = {"currency": "CDS", "equity": "NSE", "commodity": "MCX"}
 
 # Fallback ONLY (minutes since midnight IST): used until Upstox has answered once. Never overrides an Upstox answer.
 DEFAULT_WINDOWS: dict[str, tuple[int, int]] = {
     "currency": (9 * 60, 17 * 60),           # NSE currency 09:00-17:00
     "equity": (9 * 60 + 15, 15 * 60 + 30),   # NSE equity 09:15-15:30
+    "commodity": (9 * 60, 23 * 60 + 30),     # MCX 09:00-23:30 (23:55 in US winter time; Upstox's daily hours refresh updates it)
 }
 SESSION_WINDOWS = DEFAULT_WINDOWS            # older name, kept for imports
 
@@ -36,12 +37,12 @@ SESSION_WINDOWS = DEFAULT_WINDOWS            # older name, kept for imports
 #   equity:    exit 14:55 (Upstox announced 15:00 in 2021, later sources say 15:15; 14:55 is inside both), last entry 14:45
 # Currency was 16:40 / 16:50 until 2026-09-24: USDINR backtest PF 1.00 -> 1.08 at 5x and 1.48 -> 1.57 at 42x when moved
 # (markets/currency/experiments/squareoff_study.py); equity 15:15 -> 14:55 is PF-neutral (markets/equity/experiments/squareoff_study.py).
-SQUAREOFF_BEFORE_CLOSE_MIN = {"currency": 35, "equity": 35}
-LAST_ENTRY_BEFORE_CLOSE_MIN = {"currency": 50, "equity": 45}
-UPSTOX_ANNOUNCED_AUTO_SQUAREOFF = {"currency": (16, 30), "equity": (15, 0)}    # earliest announced; used by the tests
+SQUAREOFF_BEFORE_CLOSE_MIN = {"currency": 35, "equity": 35, "commodity": 35}
+LAST_ENTRY_BEFORE_CLOSE_MIN = {"currency": 50, "equity": 45, "commodity": 50}
+UPSTOX_ANNOUNCED_AUTO_SQUAREOFF = {"currency": (16, 30), "equity": (15, 0), "commodity": (23, 0)}    # earliest announced; used by the tests
 
 # The feature pipeline anchors `minutes_since_open` at these clock minutes (markets/*/features.py), independent of what Upstox reports as the open.
-FEATURE_ANCHOR = {"currency": 9 * 60, "equity": 9 * 60 + 15}
+FEATURE_ANCHOR = {"currency": 9 * 60, "equity": 9 * 60 + 15, "commodity": 9 * 60}
 
 # Static defaults, minutes AFTER the market's open, for the historical backtests (which have no "today" to ask Upstox about).
 CURRENCY_LAST_ENTRY_MIN = DEFAULT_WINDOWS["currency"][1] - LAST_ENTRY_BEFORE_CLOSE_MIN["currency"] - DEFAULT_WINDOWS["currency"][0]       # 430

@@ -6,7 +6,7 @@ const THIS_YEAR = new Date().getFullYear();
 const FIRST_YEAR = 2022;                    // the archived daily candles start in September 2022
 const YEARS = Array.from({ length: THIS_YEAR - FIRST_YEAR + 1 }, (_, i) => THIS_YEAR - i);
 const yearRange = (y) => ({ start: `${y}-01-01`, end: y === THIS_YEAR ? today() : `${y}-12-31` });
-const MARKET_LABEL = { equity: "Equity (NIFTY 50 stocks)", currency: "Currency (NSE)", crypto: "Crypto (Binance)" };
+const MARKET_LABEL = { equity: "Equity (NIFTY 50 stocks)", currency: "Currency (NSE)", commodity: "Commodity (MCX)", crypto: "Crypto (Binance)" };
 
 export default function BacktestForm({ strategies, onSubmit, busy }) {
   const markets = useMemo(() => [...new Set(strategies.map((s) => s.market))], [strategies]);
@@ -23,7 +23,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
   const [year, setYear] = useState(String(THIS_YEAR));       // "custom" once the dates are edited by hand
 
   useEffect(() => { const o = strategies.filter((s) => s.market === market); setName(o[0]?.name ?? ""); setChosen([]); setAll(true);
-    setF((x) => ({ ...x, slippage_bp: market === "currency" ? 0 : 5, leverage: market === "currency" ? 20 : 1 }));   // currency: costs include the real spread; futures margin is ~2-3%
+    setF((x) => ({ ...x, slippage_bp: market === "currency" ? 0 : market === "commodity" ? 3 : 5, leverage: market === "currency" ? 20 : market === "commodity" ? 10 : 1 }));   // currency: costs include the real spread; futures margin is ~2-3%
   }, [market, strategies]);
 
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });

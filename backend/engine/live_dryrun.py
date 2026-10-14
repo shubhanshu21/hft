@@ -52,7 +52,7 @@ from services.broker.feed_streamer import UpstoxFeedStreamer
 from services.broker.upstox_broker import UpstoxBroker, token_invalid_event
 from engine.database import TradingDB
 from markets.currency.costs import CURRENCY_SPECS
-from core.symbols import is_currency as _is_currency, is_equity as _is_equity, market_of
+from core.symbols import COMMODITY_SYMBOLS, is_commodity as _is_commodity, is_currency as _is_currency, is_equity as _is_equity, market_of
 from core import entry_pullback
 from core import registry, sessions
 from core.risk import RiskGates
@@ -75,7 +75,7 @@ _SYMBOL_LEVERAGE_OVERRIDE = {"GBPINR": 3.5}
 
 
 def _get_market(sym: str) -> str:
-    """Classify a trading symbol into its asset class: 'equity' or 'currency' (ValueError for anything else)."""
+    """Classify a trading symbol into its asset class: 'equity', 'currency' or 'commodity' (ValueError for anything else)."""
     return market_of(sym)
 
 
@@ -83,7 +83,7 @@ def _is_market_session_open(sym: str, now: datetime) -> bool:
     return sessions.is_open(_get_market(sym), now)
 
 
-from services.broker.instruments import build_currency_map, get_instrument_key
+from services.broker.instruments import build_currency_map, build_mcx_commodity_map, get_instrument_key
 from services.utils.logger import get_logger, setup_logger
 from services.utils import telegram
 from services.utils.market_holidays import get_trading_holidays
@@ -111,7 +111,13 @@ def _build_symbol_map() -> dict[str, str]:
         if key:
             equity_map[sym] = key
     try:
-        return {**build_currency_map(), **equity_map}
+        mcx = build_mcx_commodity_map()                       # nearest-expiry MCX contracts; only the ones gold_crude trades
+        commodity_map = {s: mcx[s] for s in COMMODITY_SYMBOLS if s in mcx}
+    except Exception as _e:
+        log.warning("Could not load the MCX master: %s", _e)
+        commodity_map = {}
+    try:
+        return {**build_currency_map(), **equity_map, **commodity_map}
     except Exception as _e:
         log.warning("Could not load Upstox master; falling back to hardcoded keys: %s", _e)
         return {
@@ -418,6 +424,7 @@ class DryRunner(RiskGates):
         self.segment_enabled: dict[str, bool] = {
             "currency": os.environ.get("ENABLE_CURRENCY_TRADING", "true").lower() in ("1", "true", "yes"),
             "equity": os.environ.get("ENABLE_EQUITY_TRADING", os.environ.get("DRYRUN_INCLUDE_EQUITY", "true")).lower() in ("1", "true", "yes"),
+            "commodity": os.environ.get("ENABLE_COMMODITY_TRADING", "false").lower() in ("1", "true", "yes"),
         }
 
         # Sector & Correlation Risk Gate
@@ -462,6 +469,9 @@ class DryRunner(RiskGates):
         if market == "currency":
             r = float(os.environ.get("CURRENCY_RISK_PCT", self.risk_pct))
             l = float(os.environ.get("CURRENCY_LEVERAGE", self.leverage))
+        elif market == "commodity":
+            r = float(os.environ.get("COMMODITY_RISK_PCT", self.risk_pct))
+            l = float(os.environ.get("COMMODITY_LEVERAGE", self.leverage))
         else:
             r = float(os.environ.get("EQUITY_RISK_PCT", self.risk_pct))
             l = float(os.environ.get("EQUITY_LEVERAGE", self.leverage))
@@ -486,6 +496,9 @@ class DryRunner(RiskGates):
             stop_dist = abs(pos["entry_price"] - pos.get("sl", pos["current_stop"]))
             if _is_equity(sym):
                 multiplier = 1  # shares, no lot multiplier
+            elif _is_commodity(sym):
+                from markets.commodity.costs import lot_units
+                multiplier = lot_units(sym)
             else:
                 multiplier = CURRENCY_SPECS.get(sym.upper(), {}).get("lot_size", 1000)
             total_risk_rupees += stop_dist * pos["qty"] * multiplier
@@ -1204,6 +1217,9 @@ def refresh_margin_rates(broker, runner) -> None:
             market = _get_market(sym)
             if market == "equity":
                 return price
+            if market == "commodity":
+                from markets.commodity.costs import lot_units
+                return price * lot_units(sym)
             from markets.currency.costs import get_contract_multiplier as cur_mult
             return price * cur_mult(sym)
         keys = {s: SYMBOL_MAP[s] for s in runner.symbols if SYMBOL_MAP.get(s)}
@@ -1354,9 +1370,9 @@ def main():
     broker = UpstoxBroker(access_token=token, dry_run=True)
 
     symbols = args.symbols or ["USDINR"]
-    unknown = [s for s in symbols if not (_is_currency(s) or _is_equity(s))]
-    if unknown:                                          # MCX commodity was removed 2026-10-12; any other symbol is a config error
-        print(f"{RED}ERROR: not an NSE currency pair or NIFTY50 stock: {', '.join(unknown)}. Fix DRYRUN_SYMBOLS / --symbols.{R}")
+    unknown = [s for s in symbols if not (_is_currency(s) or _is_equity(s) or _is_commodity(s))]
+    if unknown:                                          # MCX: only the contracts in core.symbols.COMMODITY_SYMBOLS (gold_crude)
+        print(f"{RED}ERROR: not an NSE currency pair, NIFTY50 stock or traded MCX contract: {', '.join(unknown)}. Fix DRYRUN_SYMBOLS / --symbols.{R}")
         sys.exit(1)
     # NSE equity intraday scalper wired in 2026-09-19 (see
     # markets/equity/strategies/tf_5min/scalping/entry_signal.py's module docstring) -- opt-in via
@@ -1371,6 +1387,8 @@ def main():
         market_mode = "NSE CURRENCY / NSE EQUITY"
     else:
         market_mode = "NSE CURRENCY"
+    if any(_is_commodity(s) for s in symbols):
+        market_mode += " / MCX"
 
     direction_mode = "long" if args.long_only else args.direction
     runner = DryRunner(broker, db, symbols, args.capital, args.risk_pct, args.leverage,

@@ -28,7 +28,7 @@ from core.exits import bar_exit
 from core.paths import ARCHIVE_ROOT
 from core.strategy import EntryContext, ExitContext, MarketData, Strategy
 
-DAILY_FILE = {"equity": "equity/{sym}_daily.csv", "currency": "currency/{sym}_daily_adj.csv"}   # currency: back-adjusted futures series from 2012 (markets/currency/daily_series.py)
+DAILY_FILE = {"equity": "equity/{sym}_daily.csv", "currency": "currency/{sym}_daily_adj.csv", "commodity": "commodity/{sym}_daily_adj.csv"}   # currency: back-adjusted futures series from 2012 (markets/currency/daily_series.py)
 
 
 class BacktestError(ValueError):
@@ -50,8 +50,8 @@ def _market_universe(market: str) -> list[str]:
     if market == "equity":
         from markets.equity.universe import NIFTY50_SYMBOLS
         return list(NIFTY50_SYMBOLS)
-    from core.symbols import CURRENCY_SYMBOLS
-    return sorted(CURRENCY_SYMBOLS)
+    from core.symbols import COMMODITY_SYMBOLS, CURRENCY_SYMBOLS
+    return sorted(COMMODITY_SYMBOLS if market == "commodity" else CURRENCY_SYMBOLS)
 
 
 def load_daily(market: str, symbol: str) -> pd.DataFrame:

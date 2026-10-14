@@ -48,6 +48,9 @@ _last_start: dict[str, float] = {}
 
 
 def universe(market: str) -> list[str]:
+    if market == "commodity":
+        from core.symbols import COMMODITY_SYMBOLS
+        return sorted(COMMODITY_SYMBOLS)
     return list(NIFTY50_SYMBOLS) if market == "equity" else CURRENCY if market == "currency" else ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
 
 

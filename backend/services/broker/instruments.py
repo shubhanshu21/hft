@@ -228,6 +228,7 @@ def _load_mcx_master() -> None:
     for base, rows in candidates.items():
         rows.sort(key=lambda r: r.get("expiry", ""))
         _MCX_KEY_MAP[base] = rows[0]["instrument_key"]
+        _MCX_EXPIRY[base] = str(rows[0].get("expiry", ""))[:10]
         log.info("Resolved MCX %s -> %s (%s, Expiry: %s)", base, rows[0]["instrument_key"], rows[0]["tradingsymbol"], rows[0].get("expiry"))
 
 
@@ -340,6 +341,15 @@ def build_index_futures_map() -> dict[str, str]:
     if _INDEX_FUT_KEY_MAP:
         return _INDEX_FUT_KEY_MAP
     return {}
+
+
+_MCX_EXPIRY: dict[str, str] = {}
+
+
+def mcx_expiry(symbol: str) -> str | None:
+    """Expiry date (YYYY-MM-DD) of the MCX contract build_mcx_commodity_map() resolves for `symbol` (the nearest one), or None."""
+    build_mcx_commodity_map()
+    return _MCX_EXPIRY.get(symbol.upper()) or None
 
 
 def build_mcx_commodity_map() -> dict[str, str]:

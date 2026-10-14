@@ -28,7 +28,8 @@ STEPS = [                            # (name, argv, exit codes that count as suc
     ("equity data", [PY, "-m", "markets.equity.data", "--topup"], {0}),
     ("research data", [PY, "-m", "engine.research_data", "all", "--max-minutes", "40"], {0}),     # 1-minute stocks/indexes, futures/options OI, NSE participant OI;
                                                                                                 # stops inside STEP_TIMEOUT_S and resumes next night (a 2026-10-09 first backfill was killed at 45 min)
-    ("currency daily series", [PY, "-m", "markets.currency.daily_series"], {0}),    # back-adjusted daily futures for currency backtests (from research data)
+    ("currency daily series", [PY, "-m", "markets.currency.daily_series"], {0}),
+    ("commodity daily series", [PY, "-m", "markets.commodity.daily_series"], {0}),     # gold / crude for gold_crude (runs after "mcx data")    # back-adjusted daily futures for currency backtests (from research data)
     ("db backup", [PY, "-m", "engine.backup_db"], {0}),
     ("db backup verify", [PY, "-m", "engine.backup_db", "--verify"], {0}),      # open the newest backup: a backup nobody has opened is a hope
     ("cost drift", [PY, "-m", "engine.cost_drift"], {0, 1}),                    # our charges vs Upstox's calculator; 1 = alerted itself
