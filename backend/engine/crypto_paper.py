@@ -359,6 +359,7 @@ def run_cycle(con: sqlite3.Connection, symbols=DEFAULT_SYMBOLS, now: datetime | 
         log.info("decision on the %s bar (regime %s): targets %s; %d trade(s)", last_bar, regime, {s: round(t, 2) for s, t in targets.items()}, len(fills))
         if fills:
             alert(f"<b>CRYPTO {executor.name}</b> ({leverage:g}x, regime {regime}) " + "; ".join(f"{f['side']} {f['qty']:.5g} {f['symbol']} @ {f['price']:,.2f} ({f['reason']})" for f in fills) + f"\nEquity {equity:,.0f} USDT vs buy&hold {buy_hold:,.0f}")
+    daily_summary(con, now, equity, buy_hold, capital, qty, prices, symbols, alert)
     import json
     con.execute("INSERT OR REPLACE INTO equity(ts, equity, cash, buy_hold, holdings_json) VALUES(?,?,?,?,?)",
                 (now.isoformat(timespec="seconds"), equity, cash, buy_hold, json.dumps({s: qty[s] for s in symbols})))
@@ -366,6 +367,22 @@ def run_cycle(con: sqlite3.Connection, symbols=DEFAULT_SYMBOLS, now: datetime | 
     set_state(con, "strategy", strategy)
     con.commit()
     return {"equity": equity, "cash": cash, "buy_hold": buy_hold, "fills": fills, "targets": targets, "bar": last_bar, "prices": prices}
+
+
+def daily_summary(con, now: datetime, equity: float, buy_hold: float, capital: float, qty: dict, prices: dict, symbols, alert) -> None:
+    """Once a day, from 09:00 IST, a Telegram summary even when nothing traded (2026-10-14, user: no notifications because it rarely trades)."""
+    ist = now.astimezone(timezone(timedelta(hours=5, minutes=30)))
+    day = ist.strftime("%Y-%m-%d")
+    if ist.hour < 9 or get_state(con, "last_summary_date") == day:
+        return
+    n_trades = con.execute("SELECT COUNT(*) FROM trades").fetchone()[0]
+    last = con.execute("SELECT ts FROM trades ORDER BY id DESC LIMIT 1").fetchone()
+    held = "; ".join(f"{s.replace('USDT', '')} {qty[s]:.5g} (${qty[s] * prices[s]:,.0f})" for s in symbols if qty.get(s))
+    alert(f"<b>CRYPTO daily</b> {day}\nEquity {equity:,.2f} USDT ({(equity / capital - 1) * 100:+.2f}% since start) vs buy&hold {buy_hold:,.2f}\n"
+          f"Regime {get_state(con, 'regime', '?')}; holding {held or 'nothing'}\n"
+          f"Targets {get_state(con, 'last_targets', '')}; {n_trades} trades so far, last {str(last[0])[:16] if last else '-'}. "
+          f"It trades only when a target moves 10 points or more.")
+    set_state(con, "last_summary_date", day)
 
 
 def status(con) -> str:
