@@ -8,7 +8,7 @@ from pathlib import Path
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 
 VAR_DIR = BACKEND_ROOT / "var"
-ARCHIVE_ROOT = VAR_DIR / "archive"   # per-market: ARCHIVE_ROOT / "currency" | "equity" | "index_futures" ("commodity": MCX candles, still recorded though MCX is no longer traded)
+ARCHIVE_ROOT = VAR_DIR / "archive"   # per-market: ARCHIVE_ROOT / "currency" | "equity" | "index_futures"
 CACHE_DIR = VAR_DIR / "cache"
 LOG_DIR = VAR_DIR / "logs"
 DB_DIR = VAR_DIR / "db"              # paper_trading.db, backups/, lock + control files

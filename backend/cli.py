@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-cli.py — Master CLI for the paper-trading framework (NSE currency and equity; crypto runs on its own engine).
+cli.py — Master CLI for the paper-trading framework (NSE currency and equity).
 
 Strategies live in markets/<market>/strategies/<timeframe>/<name>/ (markets/README.md lists them). The 5-minute scalpers
 (commodity, currency, equity) were deleted on 2026-10-10 after losing money once costs and real fills were counted, and MCX commodity
-trading was removed entirely on 2026-10-12 (MCX data is still recorded: markets/commodity/data.py, engine/depth_recorder.py) -- see git history.
+trading was removed entirely on 2026-10-12, crypto and the gold_crude MCX strategy on 2026-10-14 (MCX data is still downloaded:
+markets/commodity/data.py, engine/depth_recorder.py) -- see git history.
 
 Usage Examples:
     # 1. Swing research across markets (documented rules, train/test, costs)
@@ -171,13 +172,13 @@ def main():
     # must be set in .env. This command exists to be the deliberate,
     # hard-to-fat-finger human-confirmation step, not a switch on its own.
     p_arm = subparsers.add_parser("arm-live-trading", help="Arm one of the three live-trading gates (see safety_gate.py)")
-    p_arm.add_argument("--component", required=True, choices=["upstox", "binance", "ALL"])
+    p_arm.add_argument("--component", required=True, choices=["upstox", "ALL"])
     p_arm.add_argument("--confirm", required=True,
                         help='Must exactly equal "I UNDERSTAND THIS PLACES REAL ORDERS WITH REAL MONEY"')
     p_arm.set_defaults(func=cmd_arm_live_trading)
 
     p_disarm = subparsers.add_parser("disarm-live-trading", help="Remove the armed-state gate (always safe)")
-    p_disarm.add_argument("--component", default=None, choices=["upstox", "binance", "ALL", None])
+    p_disarm.add_argument("--component", default=None, choices=["upstox", "ALL", None])
     p_disarm.set_defaults(func=cmd_disarm_live_trading)
 
     p_new = subparsers.add_parser("new-strategy", help="Create a new strategy file from a template (see docs/ADDING_A_STRATEGY.md)")

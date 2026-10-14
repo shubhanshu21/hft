@@ -23,14 +23,14 @@ from core.paths import ARCHIVE_ROOT
 PY = sys.executable
 STEP_TIMEOUT_S = 45 * 60
 STEPS = [                            # (name, argv, exit codes that count as success)
-    ("mcx data", [PY, "-m", "markets.commodity.data", "--topup"], {0}),          # recorded only: MCX is not traded since 2026-10-12
+    ("mcx data", [PY, "-m", "markets.commodity.data", "--topup"], {0}),          # data download only: MCX is not traded
     ("currency data", [PY, "-m", "markets.currency.data", "--topup"], {0}),
     ("equity data", [PY, "-m", "markets.equity.data", "--topup"], {0}),
     ("equity daily candles", [PY, "-m", "markets.equity.download_daily_weekly", "--topup", "--tf", "day"], {0}),   # trend_ema_cross reads these for its market check
     ("research data", [PY, "-m", "engine.research_data", "all", "--max-minutes", "40"], {0}),     # 1-minute stocks/indexes, futures/options OI, NSE participant OI;
                                                                                                 # stops inside STEP_TIMEOUT_S and resumes next night (a 2026-10-09 first backfill was killed at 45 min)
-    ("currency daily series", [PY, "-m", "markets.currency.daily_series"], {0}),
-    ("commodity daily series", [PY, "-m", "markets.commodity.daily_series"], {0}),     # gold / crude for gold_crude (runs after "mcx data")    # back-adjusted daily futures for currency backtests (from research data)
+    ("currency daily series", [PY, "-m", "markets.currency.daily_series"], {0}),     # back-adjusted daily futures for currency backtests (from research data)
+    ("commodity daily series", [PY, "-m", "markets.commodity.daily_series"], {0}),     # daily gold / crude series for research (runs after "mcx data")
     ("db backup", [PY, "-m", "engine.backup_db"], {0}),
     ("db backup verify", [PY, "-m", "engine.backup_db", "--verify"], {0}),      # open the newest backup: a backup nobody has opened is a hope
     ("cost drift", [PY, "-m", "engine.cost_drift"], {0, 1}),                    # our charges vs Upstox's calculator; 1 = alerted itself

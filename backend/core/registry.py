@@ -19,7 +19,7 @@ from functools import lru_cache
 import markets
 from core.strategy import Strategy
 
-MARKETS = ("currency", "equity", "commodity")
+MARKETS = ("currency", "equity")
 
 
 TIMEFRAME_FOLDERS = {("minutes", 5): "tf_5min", ("minutes", 15): "tf_15min", ("hours", 1): "tf_1hour", ("minutes", 60): "tf_1hour",

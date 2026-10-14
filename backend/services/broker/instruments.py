@@ -346,12 +346,6 @@ def build_index_futures_map() -> dict[str, str]:
 _MCX_EXPIRY: dict[str, str] = {}
 
 
-def mcx_expiry(symbol: str) -> str | None:
-    """Expiry date (YYYY-MM-DD) of the MCX contract build_mcx_commodity_map() resolves for `symbol` (the nearest one), or None."""
-    build_mcx_commodity_map()
-    return _MCX_EXPIRY.get(symbol.upper()) or None
-
-
 def build_mcx_commodity_map() -> dict[str, str]:
     """Return {trading_symbol: instrument_key} for active MCX Mini & Standard commodity futures."""
     ensure_master()

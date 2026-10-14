@@ -48,20 +48,14 @@ _last_start: dict[str, float] = {}
 
 
 def universe(market: str) -> list[str]:
-    if market == "commodity":
-        from core.symbols import COMMODITY_SYMBOLS
-        return sorted(COMMODITY_SYMBOLS)
-    return list(NIFTY50_SYMBOLS) if market == "equity" else CURRENCY if market == "currency" else ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+    return list(NIFTY50_SYMBOLS) if market == "equity" else CURRENCY
 
 
 def catalog() -> list[dict]:
-    rows = [{"market": m, "name": n, "timeframe": f"{s.timeframe[1]} {s.timeframe[0]}", "supported": tuple(s.timeframe) == ("days", 1), "symbols": universe(m),
+    return [{"market": m, "name": n, "timeframe": f"{s.timeframe[1]} {s.timeframe[0]}", "supported": tuple(s.timeframe) == ("days", 1), "symbols": universe(m),
              "summary": (s.__doc__ or "").strip().split("\n")[0], "intraday": s.intraday,
              "default_risk_pct": getattr(s, "default_risk_pct", None)}
             for (m, n), s in sorted(registry.discover().items())]
-    rows.append({"market": "crypto", "name": "router", "timeframe": "1 hours", "supported": True, "symbols": universe("crypto"), "intraday": False,
-                 "summary": "The live crypto trend router (BTC regime picks long spot or short perpetuals). Runs with its own cost and funding model."})
-    return rows
 
 
 def prune() -> None:
@@ -129,19 +123,6 @@ def validate(body: dict) -> dict:
     return {"market": market, "strategy": name, "params": p}
 
 
-def crypto_result(params: dict) -> dict:
-    """The crypto router as a replay: daily equity from the hourly returns of the live router backtest (its own costs and funding included)."""
-    from markets.crypto.backtest import run
-    r = run(1.0)["port"].loc[params["start"]: params["end"]]
-    eq = (1 + r).cumprod() * params["capital"]
-    daily = eq.resample("1D").last().dropna()
-    from core.backtester import metrics
-    m = metrics([round(v) for v in daily], params["capital"], [], len(daily), 0)
-    m["trading_days"] = len(daily)
-    return {"days": [d.strftime("%Y-%m-%d") for d in daily.index], "equity": [round(v) for v in daily], "events": [[] for _ in daily], "pos": [[] for _ in daily],
-            "prices": {}, "metrics": m | {"note": "Continuous holding: no discrete trades. Costs and funding are inside the return."}, "skipped_symbols": []}
-
-
 def paper_summary() -> dict:
     """The paper-trading account, read-only (SQLite opened mode=ro). Open positions are valued at the latest daily close in the archive."""
     import sqlite3
@@ -179,16 +160,13 @@ def work(run: dict) -> None:
         run["status"] = "running"
         save(run)
         p = run["params"]
-        if run["market"] == "crypto":
-            run["result"] = crypto_result(p)
-        else:
-            def progress(i, n):
-                run["progress"] = round(i / n * 100)
-            run["result"] = run_backtest(registry.get(run["market"], run["strategy"]), p["symbols"], p["start"], p["end"], capital=p["capital"], slippage_bp=p["slippage_bp"],
-                                         risk_pct=p["risk_pct"], max_positions=int(p["max_positions"]), leverage=p["leverage"], progress=progress,
-                                         trail_stop_pct=p["trail_stop_pct"], trail_after_pct=p["trail_after_pct"], profit_trail_pct=p["profit_trail_pct"],
-                                         pyramid_pct=p.get("pyramid_pct"),
-                                         on_snapshot=lambda snap: run.__setitem__("partial", snap))
+        def progress(i, n):
+            run["progress"] = round(i / n * 100)
+        run["result"] = run_backtest(registry.get(run["market"], run["strategy"]), p["symbols"], p["start"], p["end"], capital=p["capital"], slippage_bp=p["slippage_bp"],
+                                     risk_pct=p["risk_pct"], max_positions=int(p["max_positions"]), leverage=p["leverage"], progress=progress,
+                                     trail_stop_pct=p["trail_stop_pct"], trail_after_pct=p["trail_after_pct"], profit_trail_pct=p["profit_trail_pct"],
+                                     pyramid_pct=p.get("pyramid_pct"),
+                                     on_snapshot=lambda snap: run.__setitem__("partial", snap))
         run["status"] = "done"
     except BacktestError as e:
         run["status"], run["error"] = "failed", str(e)

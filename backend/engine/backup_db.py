@@ -33,21 +33,11 @@ KEEP_HOURLY = 48
 KEEP_BACKUPS = KEEP_DAILY                         # kept for older imports
 TABLES = ("accounts", "positions", "trades", "orders")
 
-# crypto_paper.db (engine/crypto_paper.py) was added 2026-09-28 and was never
-# wired into this nightly job -- found 2026-10-01 while reviewing open issues:
-# the Upstox paper account has 14 days of daily snapshots + 48 hours of hourly
-# ones, crypto had none at all. Same backup API, same backup directory, a
-# distinct filename prefix ("crypto_paper" vs the default "paper_trading") so
-# pruning one never touches the other, and its own schema for verification
-# (no "accounts" table -- see engine/crypto_paper.py's ledger).
-CRYPTO_DB_PATH = DB_DIR / "crypto_paper.db"
-CRYPTO_TABLES = ("state", "holdings", "trades", "equity")
 # Registry main() iterates for the plain (no --db) daily/hourly/verify/list paths.
 # (label, db_path, tables, required_table) -- required_table is what verify_backup()
 # checks for to confirm a file is actually THIS database, not just any valid SQLite file.
 DATABASES = {
     "main": ("paper_trading", DB_PATH, TABLES, "accounts"),
-    "crypto": ("crypto_paper", CRYPTO_DB_PATH, CRYPTO_TABLES, "equity"),
 }
 
 log = get_logger("backup_db")
@@ -70,7 +60,7 @@ def _prune(backup_dir: Path, pattern: str, keep: int) -> None:
 
 def backup_once(db_path: Path = DB_PATH, backup_dir: Path = BACKUP_DIR, kind: str = "daily", now: datetime | None = None, label: str | None = None) -> Path | None:
     """kind: 'daily' -> paper_trading_<date>.db, 'hourly' -> hourly_<date>_<HHMM>.db, or any other tag (e.g. 'pre_reset') -> <tag>_<date>_<HHMMSS>.db (never pruned).
-    `label` (added for crypto_paper.db, see DATABASES): None keeps the exact filenames above (the original, still-tested default for the main paper-trading DB);
+    `label` (a filename prefix, see DATABASES): None keeps the exact filenames above (the original, still-tested default for the main paper-trading DB);
     given, daily/hourly are named "<label>_<date>.db" / "<label>_hourly_<date>_<HHMM>.db" instead, and pruned by their own non-overlapping patterns, so a second
     database's backups never collide with or get counted against the first's KEEP_DAILY/KEEP_HOURLY."""
     if not db_path.exists():
@@ -101,7 +91,7 @@ def list_backups(backup_dir: Path = BACKUP_DIR) -> list[Path]:
 
 def verify_backup(path: Path, tables: tuple[str, ...] = TABLES, required: str = "accounts") -> dict:
     """Open a snapshot read-only, run SQLite's integrity check and count rows. Raises ValueError if it is unusable.
-    `tables`/`required` default to the main paper-trading DB's schema; pass CRYPTO_TABLES/"equity" for crypto_paper.db backups (see DATABASES)."""
+    `tables`/`required` default to the main paper-trading DB's schema (see DATABASES)."""
     con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
     try:
         result = con.execute("PRAGMA integrity_check").fetchone()[0]

@@ -1,9 +1,9 @@
-"""Daily series for the traded MCX contracts, for daily-bar strategies.  Run:  python3 -m markets.commodity.daily_series
+"""Daily series for MCX gold and crude (data only, nothing trades MCX).  Run:  python3 -m markets.commodity.daily_series
 
 Real MCX prices are on disk only from May 2026 (our own recording, var/archive/commodity/<SYM>_1day.csv). Before that, the world price converted to
 rupees stands in (var/archive/global/XAUUSD / LIGHTCMDUSD 5-minute x the nearest USDINR future), scaled so it meets the real MCX price where both exist
 (the scale absorbs import duty and the Indian premium). Writes var/archive/commodity/<SYM>_daily_adj.csv (timestamp, open, high, low, close, volume),
-the file core/backtester.py and the live gold_crude strategy read.
+kept for research only: MCX is not traded (commodity strategies removed 2026-10-14; only these data jobs remain).
   GOLDPETAL: rupees per gram = MCX GOLDTEN (per 10 g) / 10;  CRUDEOILM: rupees per barrel.
 """
 from __future__ import annotations
