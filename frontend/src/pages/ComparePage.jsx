@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createChart } from "lightweight-charts";
+import Pager from "../components/ui/Pager.jsx";
+import { usePaged } from "../hooks/usePaged.js";
 import Panel from "../components/ui/Panel.jsx";
 import { baseOptions } from "../components/charts/chartOptions.js";
 import { getRun, listRuns } from "../api/client.js";
@@ -15,6 +17,7 @@ export default function ComparePage() {
   const palette = [colors.accent, colors.gain, colors.loss, colors.muted];
   const [runs, setRuns] = useState([]);
   const [picked, setPicked] = useState([]);
+  const runsPaged = usePaged(runs, 10);
   const [data, setData] = useState({});
   const box = useRef(null);
 
@@ -47,7 +50,7 @@ export default function ComparePage() {
       <Panel title="Saved runs">
         {!runs.length && <div className="none">No saved runs yet. Run a backtest first.</div>}
         <div className="pick-list">
-          {runs.map((r) => (
+          {runsPaged.rows.map((r) => (
             <label key={r.id} className="check">
               <input type="checkbox" checked={picked.includes(r.id)} onChange={() => toggle(r.id)} disabled={!picked.includes(r.id) && picked.length >= MAX} />
               {picked.includes(r.id) && <span className="swatch" style={{ background: palette[picked.indexOf(r.id)] }} />}
@@ -55,6 +58,7 @@ export default function ComparePage() {
             </label>
           ))}
         </div>
+        <Pager paged={runsPaged} />
       </Panel>
       {picked.length > 0 && (
         <>

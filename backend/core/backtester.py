@@ -236,7 +236,8 @@ def run_backtest(strategy: Strategy, symbols: list[str], start: str, end: str, *
                 if sig is None or sig.qty < 1 or (sig.direction == "short" and not strategy.allow_short):
                     continue
                 pending.append({"symbol": s, "direction": sig.direction, "qty": sig.qty, "stop": sig.stop_loss, "tp": sig.target_price or None,
-                                "state": dict(sig.exit_state), "note": sig.setup_type.replace("_", " ")})
+                                "state": dict(sig.exit_state), "note": sig.setup_type.replace("_", " "), "rank": float(sig.diagnostics.get("rank", 0.0))})
+            pending.sort(key=lambda x: -x["rank"])                     # a strategy may rank same-day signals (diagnostics["rank"]); stable: unranked keep list order
 
         out["days"].append(d.strftime("%Y-%m-%d"))
         out["equity"].append(round(equity_at(mark)))

@@ -4,6 +4,9 @@ import Panel from "../components/ui/Panel.jsx";
 import Stat from "../components/ui/Stat.jsx";
 import { baseOptions } from "../components/charts/chartOptions.js";
 import { getPaper } from "../api/client.js";
+import StrategyStatus from "../components/paper/StrategyStatus.jsx";
+import Pager from "../components/ui/Pager.jsx";
+import { usePaged } from "../hooks/usePaged.js";
 import { useTheme } from "../hooks/useTheme.js";
 import { inr, signed, tone } from "../lib/format.js";
 
@@ -15,6 +18,8 @@ export default function PaperPage() {
   const [d, setD] = useState(null);
   const [error, setError] = useState("");
   const box = useRef(null);
+  const posPaged = usePaged(d?.positions ?? [], 10);
+  const tradePaged = usePaged(d?.trades ?? [], 15);
 
   useEffect(() => {
     const load = () => getPaper().then((x) => { setD(x); setError(""); }).catch((e) => setError(e.message));
@@ -53,25 +58,26 @@ export default function PaperPage() {
         <Stat label="Fees paid" value={inr(d.stats.fees)} />
         <Stat label="Open now" value={d.positions.length} />
       </Panel>
+      <StrategyStatus />
       <Panel title="Holding now">
         {!d.positions.length ? <div className="none">No open positions. The strategy only buys between 9:15 and 10:00 when its rules are met.</div> : (
           <div className="table-wrap"><table className="trades-table">
             <thead><tr><th>Stock</th><th>Strategy</th><th>Bought</th><th>Qty</th><th>Buy price</th><th>Stop now</th><th>Last close</th><th>Not sold yet</th></tr></thead>
-            <tbody>{d.positions.map((p) => {
+            <tbody>{posPaged.rows.map((p) => {
               const u = p.last_close != null ? (p.last_close - p.entry_price) * p.qty * (p.direction === "short" ? -1 : 1) : null;
               return <tr key={p.symbol}><td>{p.symbol}</td><td>{p.strategy}</td><td>{when(p.entry_time)}</td><td>{p.qty}</td><td>{p.entry_price.toFixed(2)}</td>
                 <td>{p.current_stop?.toFixed(2)}</td><td>{p.last_close?.toFixed(2) ?? "-"} <span className="note">{p.last_date}</span></td><td className={u != null ? tone(u) : ""}>{u != null ? signed(u) : "-"}</td></tr>;
             })}</tbody>
-          </table></div>)}
+          </table><Pager paged={posPaged} /></div>)}
       </Panel>
       <Panel title="Account value by day">{d.equity.length ? <div ref={box} className="tv-box" /> : <div className="none">No daily snapshots yet.</div>}</Panel>
       <Panel title="Closed trades">
         {!d.trades.length ? <div className="none">No closed trades yet.</div> : (
           <div className="table-wrap"><table className="trades-table">
             <thead><tr><th>Stock</th><th>Bought</th><th>Sold</th><th>Qty</th><th>Buy</th><th>Sell</th><th>Fees</th><th>Profit after fees</th><th>Why it ended</th></tr></thead>
-            <tbody>{d.trades.map((t, i) => <tr key={i}><td>{t.symbol}</td><td>{when(t.entry_dt)}</td><td>{when(t.exit_dt)}</td><td>{t.qty}</td><td>{t.entry_price?.toFixed(2)}</td>
+            <tbody>{tradePaged.rows.map((t, i) => <tr key={i}><td>{t.symbol}</td><td>{when(t.entry_dt)}</td><td>{when(t.exit_dt)}</td><td>{t.qty}</td><td>{t.entry_price?.toFixed(2)}</td>
               <td>{t.exit_price?.toFixed(2)}</td><td>{inr(t.total_friction ?? 0)}</td><td className={tone(t.net_pnl ?? 0)}>{signed(t.net_pnl ?? 0)}</td><td>{(t.exit_reason ?? "").replace(/_/g, " ")}</td></tr>)}</tbody>
-          </table></div>)}
+          </table><Pager paged={tradePaged} /></div>)}
       </Panel>
     </div>
   );

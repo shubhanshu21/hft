@@ -58,3 +58,6 @@ button.danger{background:var(--loss);border-color:var(--loss);color:#fff;font-we
 .pick-list{display:flex;flex-direction:column;gap:6px;max-height:280px;overflow-y:auto}
 .swatch{display:inline-block;width:10px;height:10px;border-radius:2px;vertical-align:middle;margin-right:4px}
 .run-bar input[type=text]{min-width:0;flex:0 1 220px}
+.pager{display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:10px 0 2px;font-size:.8125rem;color:var(--muted)}
+.pager button{padding:4px 10px}
+.pager button:disabled{opacity:.4;cursor:default}

@@ -6,6 +6,7 @@
     POST /api/backtests          start a run (JSON body; optional label)
     POST /api/backtests/<id>/label   rename a saved run (JSON body with label)
     GET  /api/paper              the paper-trading account (read-only): balance, open positions, trades, daily account value
+    GET  /api/equity-status      what trend_ema_cross is waiting for: market health, and each of its stocks' distance from a signal
     DELETE /api/backtests/<id>   delete one saved run;  DELETE /api/backtests  delete every saved run (the one running now is kept)
 
 It only reads archived candles and runs the strategy code; it never talks to Upstox, touches the paper-trading database or places an order.
@@ -38,7 +39,7 @@ from markets.equity.universe import NIFTY50_SYMBOLS
 
 RUNS_DIR = VAR_DIR / "backtests"
 CURRENCY = ["USDINR", "EURINR", "GBPINR"]
-LIMITS = {"capital": (10_000, 10_000_000), "slippage_bp": (0, 100), "risk_pct": (0.1, 10), "max_positions": (1, 10), "leverage": (1, 40),
+LIMITS = {"capital": (10_000, 1_000_000_000), "slippage_bp": (0, 100), "risk_pct": (0.1, 10), "max_positions": (1, 10), "leverage": (1, 40),
           "trail_stop_pct": (0, 30), "trail_after_pct": (0, 50), "profit_trail_pct": (0, 20)}
 COOLDOWN_S = 5
 MAX_SAVED = 200
@@ -222,6 +223,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, catalog())
         if path == "/api/backtests":
             return self._send(200, summaries())
+        if path == "/api/equity-status":
+            try:
+                from engine.strategy_status import equity_status
+                return self._send(200, equity_status())
+            except Exception as e:                                       # a missing archive file must not break the page
+                return self._send(HTTPStatus.SERVICE_UNAVAILABLE, {"error": f"status unavailable: {type(e).__name__}"})
         if path == "/api/paper":
             try:
                 return self._send(200, paper_summary())

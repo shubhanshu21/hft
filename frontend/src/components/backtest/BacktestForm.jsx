@@ -76,7 +76,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
 
       <Panel title="Money, fees and slippage">
         <div className="form-grid">
-          <div className="field"><label htmlFor="capital">Starting money (INR)</label><input id="capital" type="number" min="10000" step="1000" value={f.capital} onChange={set("capital")} /></div>
+          <div className="field"><label htmlFor="capital">Starting money (INR)</label><input id="capital" type="number" min="10000" max="1000000000" step="1" value={f.capital} onChange={set("capital")} /></div>
           {market !== "currency" && (
             <div className="field"><label htmlFor="slip">Slippage per side (basis points)</label><input id="slip" type="number" min="0" max="100" step="0.5" value={f.slippage_bp} onChange={set("slippage_bp")} />
               <span className="hint">5 bp = 0.05%, charged when buying and again when selling.</span></div>
