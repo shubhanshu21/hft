@@ -102,3 +102,6 @@ ehthumbs.db
 Thumbs.db
 
 .ruff_cache/
+
+# lib/ above is for Python build output; the React app keeps its helpers in frontend/src/lib
+!frontend/src/lib/
