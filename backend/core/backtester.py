@@ -211,10 +211,12 @@ def run_backtest(strategy: Strategy, symbols: list[str], start: str, end: str, *
                 cost = trade_costs(strategy, s, p["direction"], leg_px, exit_px, leg_q)
                 g = (exit_px - leg_px) * p["dir"] * leg_q * lot[s]
                 f = float(cost.get("total", g - cost["net"]))
-                gross += g; fees += f; net += float(cost.get("net", g - f))
-                slip_cost += (abs(leg_px - leg_ref) + abs(exit_px - price)) * leg_q * lot[s]
+                model_slip = float(cost.get("slippage", 0.0))           # the cost model's own spread estimate: slippage, not a fee
+                gross += g; fees += f - model_slip; net += float(cost.get("net", g - f))
+                slip_cost += (abs(leg_px - leg_ref) + abs(exit_px - price)) * leg_q * lot[s] + model_slip
             cash += net
-            events.append({"t": "sell", "sym": s, "q": p["qty"] * lot[s], "px": round(exit_px, 4), "pnl": round(net), "fees": round(fees), "slip": round(slip_cost),
+            gross = net + fees + slip_cost                               # the profit had there been no fees and no slippage
+            events.append({"t": "sell", "sym": s, "q": p["qty"] * lot[s], "px": round(exit_px, 4), "pnl": round(net, 2), "fees": round(fees, 2), "slip": round(slip_cost, 2),
                            "days": n - p["entry_i"], "why": why, "entry": round(p["entry_price"], 4)})
             closed.append({"net": net, "fees": fees, "slip": slip_cost, "gross": gross, "days": n - p["entry_i"]})
             del book[s]

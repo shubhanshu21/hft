@@ -25,6 +25,8 @@ export default function ReplayView({ result, title, blurb, params, live = false,
   const start = result.metrics?.start_capital ?? result.equity[0];
   const eq = result.equity[player.cur], change = eq - start;
   const bench = result.benchmark?.[player.cur];
+  const totals = tally(result, player.cur), nOpen = result.pos[player.cur].length;
+  const openPnl = change - totals.profit;                 // what the still-open trades are worth today versus their buy price, after costs so far
   return (
     <>
       <div className="page-head">
@@ -36,13 +38,16 @@ export default function ReplayView({ result, title, blurb, params, live = false,
           <div className="date">{live ? "Running: " : ""}{longDate(result.days[player.cur])}</div>
           <div className="eq">{inr(eq)}</div>
           <div className="chg"><span className={tone(change)}>{signed(change)} ({pct(change / start * 100)})</span> since start</div>
+          {nOpen > 0 && Math.abs(openPnl) >= 1 && (
+            <div className="chg muted">= {signed(totals.profit)} from sold trades {openPnl >= 0 ? "+" : "−"} {inr(Math.abs(openPnl))} {openPnl >= 0 ? "gain" : "loss"} on {nOpen} open trade{nOpen > 1 ? "s" : ""} (not sold yet)</div>
+          )}
           {bench != null && <div className="chg muted">Buy and hold: {pct((bench / start - 1) * 100)}</div>}
         </div>
       </div>
       <SettingsChips params={params} />
       {result.metrics && <MetricsGrid metrics={result.metrics} />}
       {!live && <PlayerControls player={{ ...player, count }} />}
-      <StatsStrip totals={tally(result, player.cur)} open={result.pos[player.cur].length} />
+      <StatsStrip totals={totals} open={nOpen} />
       <div className="replay-grid">
         <div className="replay-main">
           <div id="price-chart"><PriceChartPanel result={result} at={player.cur} focus={focus} onSelect={select} /></div>

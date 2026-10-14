@@ -52,7 +52,7 @@ def universe(market: str) -> list[str]:
 
 
 def catalog() -> list[dict]:
-    return [{"market": m, "name": n, "timeframe": f"{s.timeframe[1]} {s.timeframe[0]}", "supported": tuple(s.timeframe) == ("days", 1), "symbols": universe(m),
+    return [{"market": m, "name": n, "timeframe": f"{s.timeframe[1]} {s.timeframe[0]}", "supported": tuple(s.timeframe) == ("days", 1), "symbols": list(getattr(s, "universe", None) or universe(m)),
              "summary": (s.__doc__ or "").strip().split("\n")[0], "intraday": s.intraday,
              "default_risk_pct": getattr(s, "default_risk_pct", None)}
             for (m, n), s in sorted(registry.discover().items())]
@@ -98,7 +98,7 @@ def validate(body: dict) -> dict:
         raise ValueError("Unknown market or strategy")
     if not known[(market, name)]["supported"]:
         raise ValueError(f"{market}/{name} uses {known[(market, name)]['timeframe']} bars; the web backtester runs daily-bar strategies")
-    allowed = universe(market)
+    allowed = known[(market, name)]["symbols"]                     # a strategy may name its own instruments (niftybees_ml: NIFTYBEES)
     symbols = [str(s).upper() for s in body.get("symbols") or allowed]
     if not symbols or any(s not in allowed for s in symbols):
         raise ValueError("Symbols must come from the market's list")
@@ -108,6 +108,16 @@ def validate(body: dict) -> dict:
         if not lo <= v <= hi:
             raise ValueError(f"{key} must be between {lo} and {hi}")
         p[key] = v
+    # Leverage is not the user's choice: delivery shares are bought with the account's own cash (1x); futures use the margin Upstox really
+    # charges (engine/margin_rates, refreshed by the paper trader), the lowest of the chosen symbols. The strategy's own caps still apply.
+    strat = registry.get(market, name)
+    if not getattr(strat, "uses_leverage", False):
+        p["leverage"] = 1.0
+    else:
+        from engine import margin_rates
+        p["leverage"] = round(min(min(margin_rates.real_leverage(s) or 40.0 for s in symbols), LIMITS["leverage"][1]), 1)
+    if market == "currency":
+        p["slippage_bp"] = 0.0              # the currency cost model already charges the measured bid-ask spread; extra slippage would count it twice
     pyr = body.get("pyramid_pct")
     if pyr in (None, ""):
         p["pyramid_pct"] = None                                         # the strategy's own setting

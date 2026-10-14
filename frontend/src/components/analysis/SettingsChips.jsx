@@ -5,8 +5,8 @@ export default function SettingsChips({ params }) {
     ["Start money", `₹${Number(params.capital).toLocaleString("en-IN")}`],
     ["Risk per trade", `${params.risk_pct}%`],
     ["Most holdings", params.max_positions],
-    ["Leverage", `${params.leverage}x`],
-    ["Slippage", `${params.slippage_bp} bp`],
+    ...(params.leverage > 1 ? [["Upstox margin", `${params.leverage}x`]] : []),
+    ...(params.market === "currency" ? [] : [["Slippage", `${params.slippage_bp} bp`]]),      // currency: the cost model already has the real spread
     ["Symbols", params.symbols?.length],
     ["Extra trailing stop", params.trail_stop_pct ? `${params.trail_stop_pct}% after ${params.trail_after_pct}%` : "off"],
     ["Trailing profit", params.profit_trail_pct ? `${params.profit_trail_pct}%` : "off"],

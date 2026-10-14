@@ -22,7 +22,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
   const [year, setYear] = useState(String(THIS_YEAR));       // "custom" once the dates are edited by hand
 
   useEffect(() => { const o = strategies.filter((s) => s.market === market); setName(o[0]?.name ?? ""); setChosen([]); setAll(true);
-    setF((x) => ({ ...x, slippage_bp: market === "currency" ? 0 : 5, leverage: market === "currency" ? 20 : 1 }));   // currency: costs include the real spread; futures margin is ~2-3%
+    setF((x) => ({ ...x, slippage_bp: market === "currency" ? 0 : 5 }));   // currency: costs include the real spread; futures margin is ~2-3%
   }, [market, strategies]);
 
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
@@ -34,7 +34,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
     e.preventDefault();
     onSubmit({
       market, strategy: name, symbols: all ? strategy.symbols : chosen,
-      start: f.start, end: f.end, capital: +f.capital, slippage_bp: +f.slippage_bp, risk_pct: +f.risk_pct, max_positions: +f.max_positions, leverage: +f.leverage,
+      start: f.start, end: f.end, capital: +f.capital, slippage_bp: market === "currency" ? 0 : +f.slippage_bp, risk_pct: +f.risk_pct, max_positions: +f.max_positions,
       label: f.label,   // exits, trailing stops and adding to winners are the strategy's own (the extra overrides were removed from the form)
     });
   };
@@ -64,7 +64,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
         </div>
         {strategy && (
           <div className="field">
-            <label htmlFor="all"><input id="all" type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} /> All {strategy.symbols.length} symbols</label>
+            <label className="check" htmlFor="all"><input id="all" type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} /> All {strategy.symbols.length} symbols</label>
             {!all && (
               <div className="symbols">
                 {strategy.symbols.map((s) => <label key={s}><input type="checkbox" checked={chosen.includes(s)} onChange={() => toggle(s)} /> {s}</label>)}
@@ -77,8 +77,10 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
       <Panel title="Money, fees and slippage">
         <div className="form-grid">
           <div className="field"><label htmlFor="capital">Starting money (INR)</label><input id="capital" type="number" min="10000" step="1000" value={f.capital} onChange={set("capital")} /></div>
-          <div className="field"><label htmlFor="slip">Slippage per side (basis points)</label><input id="slip" type="number" min="0" max="100" step="0.5" value={f.slippage_bp} onChange={set("slippage_bp")} />
-            <span className="hint">5 bp = 0.05%, charged when buying and again when selling. Currency: 0, because its cost model already includes the real bid-ask spread.</span></div>
+          {market !== "currency" && (
+            <div className="field"><label htmlFor="slip">Slippage per side (basis points)</label><input id="slip" type="number" min="0" max="100" step="0.5" value={f.slippage_bp} onChange={set("slippage_bp")} />
+              <span className="hint">5 bp = 0.05%, charged when buying and again when selling.</span></div>
+          )}
           <div className="field"><label htmlFor="risk">Risk per trade (% of account)</label><input id="risk" type="number" min="0.1" max="10" step="0.1" value={f.risk_pct} onChange={set("risk_pct")} />
             {+f.risk_pct > safeRisk && (
               <span className="warn" role="alert">
@@ -87,11 +89,9 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
               </span>
             )}</div>
           <div className="field"><label htmlFor="maxpos">Most holdings at once</label><input id="maxpos" type="number" min="1" max="10" value={f.max_positions} onChange={set("max_positions")} /></div>
-          <div className="field"><label htmlFor="lev">Leverage</label><input id="lev" type="number" min="1" max="40" step="0.5" value={f.leverage} onChange={set("leverage")} />
-            <span className="hint">Cash shares: 1. Currency futures: 20 (margin is about 2-3% of the contract).</span></div>
         </div>
         <p className="fees-box">
-          {"Every trade is charged the strategy's full cost model (brokerage, STT, exchange charges, GST, stamp duty, SEBI fees) and the slippage above on entry and exit. Stops that gap are filled at the open, not at the stop price. Fees cannot be switched off."}
+          {"Every trade is charged the strategy's full cost model (brokerage, STT, exchange charges, GST, stamp duty, SEBI fees) and slippage on entry and exit (currency: the real bid-ask spread, built into its cost model). Stops that gap are filled at the open, not at the stop price. Fees cannot be switched off. Leverage is set for you: shares are bought with your own money (1x); currency futures use the margin Upstox really charges (about 34-41x), and the strategy caps itself at 20x in total."}
         </p>
       </Panel>
 
