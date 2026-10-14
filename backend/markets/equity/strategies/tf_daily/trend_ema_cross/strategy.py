@@ -26,6 +26,11 @@ Indian market-health check; instead an ETF is bought only when its price is at m
   stocks only Rs2,49,558 (worst fall -12.7%; 2025 -1.4%, 2026 +12.2%) -> with ETFs and the premium rules Rs2,88,327 (-9.7%; 2025 +15.1%, 2026 +11.5%).
   Without the premium rules it showed Rs3,58,267, but about half of that was the premium growing, not the trend.
 
+Dead-money rule (2026-10-14, user "ok"): a trade still below its buy price after 20 trading days is sold. Best 20 + ETFs: Rs2,88,327 -> Rs2,88,502
+(no real change); all 49 + ETFs: Rs1,54,169 -> Rs1,84,500, worst fall -14.3% -> -9.4%. It protects weaker lists (the list is re-ranked each
+January). Tested and rejected: maximum holds (60 / 90 days), a trail that loosens or tightens with time, IBD's 8-week hold.
+Live, the rule is checked on completed days, so the sale happens at about the next morning's price (the backtest sells at that day's close).
+
 Paper trading (engine/live_dryrun.py, switched on 2026-10-13 with EQUITY_STRATEGIES=trend_ema_cross). The runner differs from the backtester, so:
   * the runner's candles include today's still-forming daily bar: entry() and the trailing stop ignore it and use completed days only;
   * due(): entries are looked at only in the first 45 minutes of the session, so the buy lands near the open as in the backtest;
@@ -54,6 +59,7 @@ ENTRY_WINDOW = (time(9, 15), time(10, 0))       # live: buy near the open, like 
 BEST_SYMBOLS = ("ADANIPORTS", "BPCL", "COALINDIA", "IOC", "SBILIFE", "ONGC", "TITAN", "WIPRO", "EICHERMOT", "SUNPHARMA",
                 "INFY", "ASIANPAINT", "APOLLOHOSP", "HEROMOTOCO", "MARUTI", "TCS", "BAJAJFINSV", "BRITANNIA", "RELIANCE", "HCLTECH")   # ranked on 2023-25
 GLOBAL_ETFS = tuple(sorted(GLOBAL_ETF_SYMBOLS))            # US / Hong Kong ETFs on NSE (2026-10-14): no Indian market-health check, premium guard instead
+DEAD_MONEY_DAYS = 20                                     # sell a trade still not in profit after 20 trading days (2026-10-14)
 PREMIUM_BUY_MAX, PREMIUM_SELL_MAX = 3.0, 15.0              # % above NAV (markets/equity/etf_premium.py): buy only at or below 3%, sell above 15%
 
 
@@ -181,6 +187,10 @@ class TrendEmaCrossEquity(Strategy):
         bars = completed(candles, ctx.now)[-WINDOW:]
         if len(bars) < 20:
             return None
+        entry_day = pos["entry_time"].strftime("%Y-%m-%d") if hasattr(pos.get("entry_time"), "strftime") else ""
+        held = sum(1 for b in bars if _day(b) >= entry_day)
+        if held >= DEAD_MONEY_DAYS and float(bars[-1]["close"]) < pos["entry_price"]:
+            return ExitDecision(float(candles[-1]["close"]), "time_stop_no_progress")   # dead money: free the slot for a fresh signal
         if ctx.symbol in GLOBAL_ETFS:
             prem = premium(ctx.symbol, _day(bars[-1]))
             if prem is not None and prem > PREMIUM_SELL_MAX:
