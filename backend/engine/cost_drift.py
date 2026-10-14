@@ -17,21 +17,26 @@ UNDER_TOL = 0.03          # model cheaper than Upstox by more than 3%
 OVER_TOL = 0.10           # model dearer than Upstox by more than 10%
 
 
-def upstox_round_trip(api, key: str, qty_units: int, price: float) -> float | None:
-    """Upstox's total charges for BUY then SELL of `qty_units` at `price`, intraday (MIS)."""
+def upstox_round_trip(api, key: str, qty_units: int, price: float, product: str = "I") -> float | None:
+    """Upstox's total charges for BUY then SELL of `qty_units` at `price`; product "I" intraday, "D" delivery / carried overnight.
+    Upstox leaves the depository (DP) charge out of this total, so the delivery comparison adds it from `dp_plan`."""
     try:
-        legs = [api.get_brokerage(key, qty_units, "I", side, price, "2.0").data.charges.total for side in ("BUY", "SELL")]
-        return float(sum(legs))
+        legs = [api.get_brokerage(key, qty_units, product, side, price, "2.0").data.charges for side in ("BUY", "SELL")]
+        dp = (legs[1].dp_plan.min_expense or 0.0) * 1.18 if product == "D" and legs[1].dp_plan else 0.0
+        return float(sum(c.total for c in legs)) + dp
     except Exception:
         return None
 
 
-def model_round_trip(sym: str, market: str, lots: int, price: float) -> float:
+def model_round_trip(sym: str, market: str, lots: int, price: float, product: str = "I") -> float:
     """Our model's statutory charges (slippage excluded) for a flat round trip at `price`."""
     import core.slippage as sl
     from unittest.mock import patch
     with patch.object(sl, "_cache", {}), patch.object(sl, "_cache_loaded_at", 1e18):
-        if market == "equity":
+        if market == "equity" and product == "D":
+            from markets.equity.costs import compute_nse_equity_delivery_costs
+            r = compute_nse_equity_delivery_costs("long", price, price, lots, symbol=sym)
+        elif market == "equity":
             from markets.equity.costs import compute_nse_equity_costs
             r = compute_nse_equity_costs("long", price, price, lots, symbol=sym)
         else:
@@ -57,14 +62,17 @@ def check(broker, keys: dict[str, str], market_of, lots_for=None, price_of=None)
         else:
             from markets.currency.costs import get_contract_multiplier as cur
             units = lots * cur(sym)
-        up = upstox_round_trip(api, key, units, float(price))
-        if not up:
-            rows.append({"symbol": sym, "status": "no-data", "why": "Upstox brokerage calculator unavailable"})
-            continue
-        mod = model_round_trip(sym, market, lots, float(price))
-        ratio = mod / up
-        status = "UNDERSTATES" if ratio < 1 - UNDER_TOL else "overstates" if ratio > 1 + OVER_TOL else "ok"
-        rows.append({"symbol": sym, "upstox": round(up, 2), "model": round(mod, 2), "ratio": round(ratio, 3), "status": status})
+        # equity: intraday and delivery (trend_ema_cross holds overnight); currency futures are carried overnight ("D", same charges as intraday)
+        for product in (("I", "D") if market == "equity" else ("D",)):
+            label = f"{sym} {'delivery' if product == 'D' and market == 'equity' else 'intraday' if product == 'I' else 'overnight'}"
+            up = upstox_round_trip(api, key, units, float(price), product)
+            if not up:
+                rows.append({"symbol": label, "status": "no-data", "why": "Upstox brokerage calculator unavailable"})
+                continue
+            mod = model_round_trip(sym, market, lots, float(price), product)
+            ratio = mod / up
+            status = "UNDERSTATES" if ratio < 1 - UNDER_TOL else "overstates" if ratio > 1 + OVER_TOL else "ok"
+            rows.append({"symbol": label, "upstox": round(up, 2), "model": round(mod, 2), "ratio": round(ratio, 3), "status": status})
     return rows
 
 
@@ -72,9 +80,9 @@ def format_rows(rows: list[dict]) -> str:
     lines = []
     for r in rows:
         if "ratio" in r:
-            lines.append(f"  {r['symbol']:<10s} Upstox Rs{r['upstox']:8.2f}  model Rs{r['model']:8.2f}  model/Upstox {r['ratio']:.3f}  {r['status']}")
+            lines.append(f"  {r['symbol']:<18s} Upstox Rs{r['upstox']:8.2f}  model Rs{r['model']:8.2f}  model/Upstox {r['ratio']:.3f}  {r['status']}")
         else:
-            lines.append(f"  {r['symbol']:<10s} {r['status']}: {r['why']}")
+            lines.append(f"  {r['symbol']:<18s} {r['status']}: {r['why']}")
     return "\n".join(lines)
 
 

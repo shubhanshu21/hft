@@ -65,10 +65,10 @@ def compute_nse_equity_costs(direction: str, entry: float, exit_p: float, qty: i
 # STT 0.1% on BOTH buy and sell, stamp duty 0.015% on the buy side, DP charge Rs18.50 + 18% GST per scrip on each sell,
 # brokerage the lower of 0.1% or Rs20 per order (some aggregators list delivery brokerage as Rs0; Rs20 is the
 # conservative reading). Exchange / SEBI fees are the same constants as above. Intraday rates above are unchanged.
-DELIVERY_RATES_LAST_VERIFIED = "2026-09-23"
+DELIVERY_RATES_LAST_VERIFIED = "2026-10-14"
 DELIVERY_STT_PCT_BOTH_SIDES = 0.1
 DELIVERY_STAMP_DUTY_PCT_BUY = 0.015
-DELIVERY_DP_CHARGE = 18.50            # per scrip per sell day, before GST
+DELIVERY_DP_CHARGE = 20.0             # per scrip per sell day, before GST (Upstox ChargeApi 2026-10-14: dp_plan DP4A, min_expense Rs20)
 DELIVERY_BROKERAGE_PCT = 0.1
 DELIVERY_BROKERAGE_CAP = 30.0             # Upstox calculator 2026-09-24: Rs30 on a Rs1.2 lakh delivery order
 
