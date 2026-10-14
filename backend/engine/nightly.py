@@ -27,6 +27,7 @@ STEPS = [                            # (name, argv, exit codes that count as suc
     ("currency data", [PY, "-m", "markets.currency.data", "--topup"], {0}),
     ("equity data", [PY, "-m", "markets.equity.data", "--topup"], {0}),
     ("equity daily candles", [PY, "-m", "markets.equity.download_daily_weekly", "--topup", "--tf", "day"], {0}),   # trend_ema_cross reads these for its market check
+    ("niftybees daily candles", [PY, "-m", "markets.equity.download_daily_weekly", "--topup", "--tf", "day", "--symbols", "NIFTYBEES"], {0}),   # niftybees_ml
     ("research data", [PY, "-m", "engine.research_data", "all", "--max-minutes", "40"], {0}),     # 1-minute stocks/indexes, futures/options OI, NSE participant OI;
                                                                                                 # stops inside STEP_TIMEOUT_S and resumes next night (a 2026-10-09 first backfill was killed at 45 min)
     ("currency daily series", [PY, "-m", "markets.currency.daily_series"], {0}),     # back-adjusted daily futures for currency backtests (from research data)
@@ -35,10 +36,11 @@ STEPS = [                            # (name, argv, exit codes that count as suc
     ("db backup verify", [PY, "-m", "engine.backup_db", "--verify"], {0}),      # open the newest backup: a backup nobody has opened is a hope
     ("cost drift", [PY, "-m", "engine.cost_drift"], {0, 1}),                    # our charges vs Upstox's calculator; 1 = alerted itself
     ("trade audit", [PY, "-m", "engine.trade_audit"], {0, 1}),          # 1 = flagged trades: alerted by the audit itself
+    ("paper vs backtest", [PY, "-m", "engine.paper_vs_backtest"], {0, 1}),   # did paper take the backtest's trades? 1 = differences, alerted itself
 ]
 # representative archive files whose newest candle date must not lag (market, file)
 FRESHNESS = [("commodity", "CRUDEOILM_1minute.csv"), ("commodity", "GOLD_1minute.csv"), ("commodity", "SILVER_1minute.csv"),
-             ("currency", "USDINR_1minute.csv"), ("equity", "RELIANCE_5minute.csv"), ("equity", "TATASTEEL_5minute.csv"), ("equity", "RELIANCE_daily.csv")]
+             ("currency", "USDINR_1minute.csv"), ("equity", "RELIANCE_5minute.csv"), ("equity", "TATASTEEL_5minute.csv"), ("equity", "RELIANCE_daily.csv"), ("equity", "NIFTYBEES_daily.csv")]
 IST = ZoneInfo("Asia/Kolkata")
 
 

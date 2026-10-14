@@ -4,7 +4,8 @@ from __future__ import annotations
 from markets.equity.universe import NIFTY50_SYMBOLS
 
 CURRENCY_SYMBOLS = {"USDINR", "EURINR", "GBPINR"}          # JPYINR removed 2026-10-14 (user: "remove JPY totally")
-EQUITY_SYMBOLS = set(NIFTY50_SYMBOLS)
+ETF_SYMBOLS = {"NIFTYBEES"}                                # Nifty 50 ETF, traded by niftybees_ml (2026-10-14)
+EQUITY_SYMBOLS = set(NIFTY50_SYMBOLS) | ETF_SYMBOLS
 
 
 def is_currency(sym: str) -> bool:
