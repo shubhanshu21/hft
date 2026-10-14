@@ -19,6 +19,13 @@ Trailing stop 3.0 -> 3.25 ATR (2026-10-14, user chose it after an exit study of 
   'lock the profit' exits (2-2.5 ATR, tighten after a gain or after N days, % give-back) all earned less in total. A backtest of 2023-25 with this list is NOT a fair test (the list was chosen on those years). Re-rank it each
 January on the latest three years. The market check still uses all 49 stocks.
 
+US / Hong Kong ETFs (2026-10-14, user: "ok then add the strategy" / "do what is best"): the same rules also trade MON100, MAFANG, MASPTOP50,
+HNGSNGBEES and MAHKTECH (NSE-listed, rupees, delivery) -- trend-following research: different markets trend at different times. These skip the
+Indian market-health check; instead an ETF is bought only when its price is at most 3% above the fund's NAV and sold if that premium passes 15%
+(RBI's overseas cap made them trade up to +58% above NAV in 2026). Best 20 + the 5 ETFs, Rs1 lakh, 2023-01 -> 2026-10-13, real fees:
+  stocks only Rs2,49,558 (worst fall -12.7%; 2025 -1.4%, 2026 +12.2%) -> with ETFs and the premium rules Rs2,88,327 (-9.7%; 2025 +15.1%, 2026 +11.5%).
+  Without the premium rules it showed Rs3,58,267, but about half of that was the premium growing, not the trend.
+
 Paper trading (engine/live_dryrun.py, switched on 2026-10-13 with EQUITY_STRATEGIES=trend_ema_cross). The runner differs from the backtester, so:
   * the runner's candles include today's still-forming daily bar: entry() and the trailing stop ignore it and use completed days only;
   * due(): entries are looked at only in the first 45 minutes of the session, so the buy lands near the open as in the backtest;
@@ -36,6 +43,7 @@ from core.paths import ARCHIVE_ROOT
 from core.strategy import EntryContext, ExitContext, ExitDecision, Signal, Strategy
 from markets.equity.costs import compute_nse_equity_delivery_costs
 from markets.equity.universe import NIFTY50_SYMBOLS
+from core.symbols import GLOBAL_ETF_SYMBOLS
 
 FAST, SLOW, LONG = 20, 50, 200
 MIN_BREADTH_PCT = 50.0
@@ -45,6 +53,8 @@ WINDOW = 260                    # bars used for the averages, the same in the ba
 ENTRY_WINDOW = (time(9, 15), time(10, 0))       # live: buy near the open, like the backtest's next-open fill
 BEST_SYMBOLS = ("ADANIPORTS", "BPCL", "COALINDIA", "IOC", "SBILIFE", "ONGC", "TITAN", "WIPRO", "EICHERMOT", "SUNPHARMA",
                 "INFY", "ASIANPAINT", "APOLLOHOSP", "HEROMOTOCO", "MARUTI", "TCS", "BAJAJFINSV", "BRITANNIA", "RELIANCE", "HCLTECH")   # ranked on 2023-25
+GLOBAL_ETFS = tuple(sorted(GLOBAL_ETF_SYMBOLS))            # US / Hong Kong ETFs on NSE (2026-10-14): no Indian market-health check, premium guard instead
+PREMIUM_BUY_MAX, PREMIUM_SELL_MAX = 3.0, 15.0              # % above NAV (markets/equity/etf_premium.py): buy only at or below 3%, sell above 15%
 
 
 def _day(candle: dict) -> str:
@@ -63,6 +73,20 @@ def atr(df: pd.DataFrame, n: int = 14) -> float:
     prev = df["close"].shift()
     tr = pd.concat([df["high"] - df["low"], (df["high"] - prev).abs(), (df["low"] - prev).abs()], axis=1).max(axis=1)
     return float(tr.rolling(n).mean().iloc[-1])
+
+
+@lru_cache(maxsize=16)
+def _premiums(symbol: str, stamp: float) -> pd.Series:
+    path = ARCHIVE_ROOT / "etf" / f"{symbol}_premium.csv"
+    return pd.read_csv(path, index_col=0, parse_dates=True)["premium_pct"] if path.exists() else pd.Series(dtype=float)
+
+
+def premium(symbol: str, day: str) -> float | None:
+    """The ETF's premium over NAV (%) on the newest archived day on or before `day` (YYYY-MM-DD); None when unknown."""
+    path = ARCHIVE_ROOT / "etf" / f"{symbol}_premium.csv"
+    p = _premiums(symbol, path.stat().st_mtime if path.exists() else 0.0)
+    p = p[p.index <= pd.Timestamp(day)]
+    return float(p.iloc[-1]) if len(p) else None
 
 
 @lru_cache(maxsize=64)
@@ -107,13 +131,14 @@ class TrendEmaCrossEquity(Strategy):
     lookback_days = 400              # calendar days: enough for ~260 trading days and the 200-day EMA
     max_positions = MAX_POSITIONS
     id_prefix = "TRD"
+    universe = tuple(NIFTY50_SYMBOLS) + GLOBAL_ETFS     # what the web backtester offers
 
     def trades(self, symbol: str) -> bool:
         """Only the 20 best stocks of 2023-25 (an EQUITY_TREND_EMA_CROSS_SYMBOLS list in .env still overrides it)."""
         import os
         if os.environ.get("EQUITY_TREND_EMA_CROSS_SYMBOLS", "").strip():
             return super().trades(symbol)
-        return symbol.upper() in BEST_SYMBOLS
+        return symbol.upper() in BEST_SYMBOLS or symbol.upper() in GLOBAL_ETFS
 
     def due(self, now: datetime) -> bool:
         """Live: look for new entries only in the first 45 minutes of the session (the backtester never calls this)."""
@@ -129,7 +154,11 @@ class TrendEmaCrossEquity(Strategy):
         last = float(c.iloc[-1])
         if not (fast.iloc[-2] <= slow.iloc[-2] and fast.iloc[-1] > slow.iloc[-1] and last > long_.iloc[-1]):
             return None
-        if breadth(ctx) < MIN_BREADTH_PCT:
+        if ctx.symbol in GLOBAL_ETFS:                                # a foreign market: the Indian market-health check does not apply
+            prem = premium(ctx.symbol, _day(bars[-1]))
+            if prem is None or prem > PREMIUM_BUY_MAX:
+                return None                                          # price too far above the fund's real value (or unknown)
+        elif breadth(ctx) < MIN_BREADTH_PCT:
             return None                                              # weak market: most stocks below their 50-day average
         stop = last - STOP_ATR * atr(df)
         dist = last - stop
@@ -152,6 +181,10 @@ class TrendEmaCrossEquity(Strategy):
         bars = completed(candles, ctx.now)[-WINDOW:]
         if len(bars) < 20:
             return None
+        if ctx.symbol in GLOBAL_ETFS:
+            prem = premium(ctx.symbol, _day(bars[-1]))
+            if prem is not None and prem > PREMIUM_SELL_MAX:
+                return ExitDecision(float(candles[-1]["close"]), "premium_too_high")   # sell before a premium collapse can hit
         entry_day = pos["entry_time"].strftime("%Y-%m-%d") if hasattr(pos.get("entry_time"), "strftime") else ""
         since = [b["high"] for b in bars if _day(b) >= entry_day]
         if since:

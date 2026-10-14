@@ -99,7 +99,7 @@ def validate(body: dict) -> dict:
         raise ValueError("Unknown market or strategy")
     if not known[(market, name)]["supported"]:
         raise ValueError(f"{market}/{name} uses {known[(market, name)]['timeframe']} bars; the web backtester runs daily-bar strategies")
-    allowed = known[(market, name)]["symbols"]                     # a strategy may name its own instruments (niftybees_ml: NIFTYBEES)
+    allowed = known[(market, name)]["symbols"]                     # a strategy may name its own instruments (trend_ema_cross: NIFTY 50 + US/HK ETFs)
     symbols = [str(s).upper() for s in body.get("symbols") or allowed]
     if not symbols or any(s not in allowed for s in symbols):
         raise ValueError("Symbols must come from the market's list")

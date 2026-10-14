@@ -105,8 +105,9 @@ def _build_symbol_map() -> dict[str, str]:
     day-rollover loop) -- a value cached once at process startup would
     silently keep resolving an expired instrument_key for as long as the
     process runs without restarting."""
+    from core.symbols import ETF_SYMBOLS
     equity_map = {}
-    for sym in NIFTY50_SYMBOLS:
+    for sym in list(NIFTY50_SYMBOLS) + sorted(ETF_SYMBOLS):
         key = get_instrument_key(sym)
         if key:
             equity_map[sym] = key

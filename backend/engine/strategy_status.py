@@ -43,6 +43,22 @@ def equity_status(history_days: int = 30) -> dict:
             state, order = f"20-day average {abs(gap):.1f}% below the 50-day: needs to cross up", 1
         stocks.append({"symbol": sym, "close": round(float(px.iloc[-1]), 2), "above_200": above_long, "gap_pct": round(gap, 2),
                        "last_cross": last_cross_day, "state": state, "order": order})
+    for sym in T.GLOBAL_ETFS:                                            # foreign-market ETFs: no market-health rule, a premium rule instead
+        d = _daily(sym).tail(T.WINDOW); px = d["close"]
+        fast, slow, long_ = (px.ewm(span=n, adjust=False).mean() for n in (T.FAST, T.SLOW, T.LONG))
+        above_long, gap = bool(px.iloc[-1] > long_.iloc[-1]), float(fast.iloc[-1] / slow.iloc[-1] - 1) * 100
+        prem = T.premium(sym, str(d.index[-1].date()))
+        up = fast > slow; lc = up & ~up.shift(fill_value=True)
+        if prem is None or prem > T.PREMIUM_BUY_MAX:
+            state, order = f"ETF {prem:+.1f}% above its real value (limit {T.PREMIUM_BUY_MAX:.0f}%): not buyable" if prem is not None else "ETF premium unknown: not buyable", 3
+        elif not above_long:
+            state, order = "ETF below its 200-day average: not eligible", 3
+        elif gap > 0:
+            state, order = f"ETF uptrend already running (premium {prem:+.1f}%)", 2
+        else:
+            state, order = f"ETF 20-day average {abs(gap):.1f}% below the 50-day (premium {prem:+.1f}%)", 1
+        stocks.append({"symbol": sym, "close": round(float(px.iloc[-1]), 2), "above_200": above_long, "gap_pct": round(gap, 2),
+                       "last_cross": str(lc[lc].index[-1].date()) if lc.any() else None, "state": state, "order": order})
     stocks.sort(key=lambda s: (s["order"], -s["gap_pct"] if s["order"] == 1 else 0))
     return {"strategy": "trend_ema_cross", "as_of": str(as_of.date()), "breadth": round(float(breadth.iloc[-1]), 1), "need": T.MIN_BREADTH_PCT,
             "breadth_history": [{"date": str(t.date()), "value": round(float(v), 1)} for t, v in breadth.tail(history_days).items()],

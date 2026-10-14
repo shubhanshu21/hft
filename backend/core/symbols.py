@@ -4,7 +4,8 @@ from __future__ import annotations
 from markets.equity.universe import NIFTY50_SYMBOLS
 
 CURRENCY_SYMBOLS = {"USDINR", "EURINR", "GBPINR"}          # JPYINR removed 2026-10-14 (user: "remove JPY totally")
-ETF_SYMBOLS = {"NIFTYBEES"}                                # Nifty 50 ETF, traded by niftybees_ml (2026-10-14)
+GLOBAL_ETF_SYMBOLS = {"MON100", "MAFANG", "MASPTOP50", "HNGSNGBEES", "MAHKTECH"}   # US / Hong Kong ETFs on NSE, traded by trend_ema_cross (2026-10-14)
+ETF_SYMBOLS = set(GLOBAL_ETF_SYMBOLS)                       # niftybees_ml and NIFTYBEES removed 2026-10-14 (no ML version beat buy and hold)
 EQUITY_SYMBOLS = set(NIFTY50_SYMBOLS) | ETF_SYMBOLS
 
 
