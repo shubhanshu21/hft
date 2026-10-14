@@ -1,7 +1,8 @@
 """currency / rsi_range -- fade the extremes of a managed currency: buy when RSI says oversold, short when it says overbought, exit back at the mean.
 
 Rules ("M1", fixed before testing 2026-10-13), daily bars of the back-adjusted futures series (markets/currency/daily_series.py), long and short:
-  * buy when RSI(14) is below 30, short when it is above 70 (decided on the close, filled at the next open);
+  * buy when RSI(14) is below 30, short when it is above 70 (decided on the close, filled at the next open), but only when the close is also in
+    the bottom 25% (buy) / top 25% (short) of the last 20 days' high-low range (added 2026-10-14, see below);
   * exit when the close is back at the 20-day average, or after about 15 trading days; stop 2.5 ATR(14) from the entry;
   * size: 4% of the account at risk per trade (default_risk_pct), in whole lots; costs: NSE currency futures INCLUDING the measured bid-ask spread (markets/currency/costs.py),
     so run it with the backtester's slippage at 0 (the page sets 0 for currency; 5 bp would be ~16 USDINR ticks per side).
@@ -18,6 +19,10 @@ Paper trading (2026-10-14, user: "run it for live dryrun"; CURRENCY_STRATEGIES=r
   * the runner does not watch a strategy's stop, so manage() sells when today's price touches it; lots are capped at 20x the account / 3 positions.
 Pairs: USDINR, EURINR, GBPINR. JPYINR was removed from the project (2026-10-14): with correct per-100-yen math it lost (2023-26 -26%) because the
 yen trends on Japan's policy rather than being held in a range by the RBI.
+Range filter (2026-10-14, user "ok" after research): Rs10 lakh, 4% risk, Upstox margin, real costs incl. spread, 2023-01 -> 2026-10-14:
+  no filter Rs16,94,331 (worst fall -25.3%, 75 trades) -> outer 25% of 20 days Rs18,52,449 (-18.0%, 70 trades); better or equal in every year
+  (2024 +9.8% -> +15.5%, 2025 -8.4% -> -6.3%, 2026 +27.2% -> +29.3%) and for every setting tried (outer 15-35%, 10/20/40 days). It skips the
+  few RSI extremes that came while the price was still mid-range; the exact gain rests on those few trades.
 REAL MONEY: not allowed without a genuine currency exposure under the RBI rule of April 2024 -- research and paper only.
 """
 from __future__ import annotations
@@ -37,6 +42,7 @@ MEAN_DAYS, STOP_ATR, MAX_HOLD_DAYS = 20, 2.5, 15
 LEVERAGE_CAP, MAX_POSITIONS = 20.0, 3
 PAIRS = ("USDINR", "EURINR", "GBPINR")
 ENTRY_WINDOW = (time(9, 0), time(9, 45))
+RANGE_DAYS, RANGE_OUTER = 20, 0.25          # buy only in the bottom 25% of the last 20 days' range, short only in the top 25% (2026-10-14)
 
 
 def _day(c: dict) -> str:
@@ -116,6 +122,10 @@ class RsiRangeCurrency(Strategy):
         d = 1 if r < LOW else (-1 if r > HIGH else 0)
         if d == 0:
             return None
+        lo, hi = float(df["low"].iloc[-RANGE_DAYS:].min()), float(df["high"].iloc[-RANGE_DAYS:].max())
+        pos = (float(df["close"].iloc[-1]) - lo) / (hi - lo) if hi > lo else 0.5
+        if (d == 1 and pos > RANGE_OUTER) or (d == -1 and pos < 1 - RANGE_OUTER):
+            return None                                              # RSI is stretched but the price is still mid-range: often keeps going
         last = float(df["close"].iloc[-1])
         stop = last - d * STOP_ATR * atr(df)
         dist = abs(last - stop)
