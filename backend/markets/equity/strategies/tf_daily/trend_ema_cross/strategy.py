@@ -4,13 +4,19 @@ Rules (fixed before testing; "T4B" in the 2026-10-13 trend comparison), daily ba
   * entry: the 20-day EMA crosses above the 50-day EMA, the close is above the 200-day EMA, and at least 50% of the 49 NIFTY stocks are
     above their own 50-day EMA (a healthy market). All of it on COMPLETED daily bars: decided on a day's close, bought at the next open;
   * size: 2% of the account at risk, never more than a third of the account in one stock, at most 3 stocks at once;
-  * stop: 2.5 ATR(14) under the buy; then a 3-ATR trailing stop under the highest price since the buy (a Chandelier stop) that only moves up.
+  * stop: 2.5 ATR(14) under the buy; then a 3.25-ATR trailing stop under the highest price since the buy (a Chandelier stop) that only moves up
+    (3 ATR until 2026-10-14, see below).
     No profit target and no time limit, so a big rally can run.
 Tested on the 49 stocks, Rs1 lakh, Upstox delivery fees and 5 bp slippage, chosen among 8 trend designs on 2023-25:
   2023-25 +29.7% (54 trades, 41% winners, profit factor 1.65, worst fall -18.4%); judged on 2026: +8.3% (12 trades, 58% winners).
 Stocks traded (2026-10-13, user: "only use those"): the 20 stocks whose signals made the most in 2023-25 (BEST_SYMBOLS below). Ranked on 2023-25 only,
 then judged on 2026: top 20 +11.2% (9 trades) vs all 49 +8.3%, and it beat all 8 random groups of 20 stocks (-8.6% to +10.9%); top 10 and top 15 also
-beat every random group of their size. A backtest of 2023-25 with this list is NOT a fair test (the list was chosen on those years). Re-rank it each
+beat every random group of their size.
+Trailing stop 3.0 -> 3.25 ATR (2026-10-14, user chose it after an exit study of 26 rules, best 20, 2023-01 -> 2026-10-13, Rs1 lakh, real fees):
+  3.0 ATR: 2023 +42.6% | 2024 +33.5% | 2025 -0.5% | 2026 +14.0% -> Rs2,16,023, worst fall -12.0%, 43 trades
+  3.25 ATR: 2023 +42.2% | 2024 +58.6% | 2025 -1.4% | 2026 +12.2% -> Rs2,49,558, worst fall -12.7%, 40 trades
+  The gain is mostly two 2023-24 PSU rallies held longer (COALINDIA +Rs11.5k, IOC +Rs11.7k); in 2025-26 3.25 did slightly worse. Tighter or
+  'lock the profit' exits (2-2.5 ATR, tighten after a gain or after N days, % give-back) all earned less in total. A backtest of 2023-25 with this list is NOT a fair test (the list was chosen on those years). Re-rank it each
 January on the latest three years. The market check still uses all 49 stocks.
 
 Paper trading (engine/live_dryrun.py, switched on 2026-10-13 with EQUITY_STRATEGIES=trend_ema_cross). The runner differs from the backtester, so:
@@ -33,7 +39,7 @@ from markets.equity.universe import NIFTY50_SYMBOLS
 
 FAST, SLOW, LONG = 20, 50, 200
 MIN_BREADTH_PCT = 50.0
-STOP_ATR, TRAIL_ATR = 2.5, 3.0
+STOP_ATR, TRAIL_ATR = 2.5, 3.25          # trail 3.0 -> 3.25 on 2026-10-14 (user: "add it"), see the module docstring
 MAX_POSITIONS = 3
 WINDOW = 260                    # bars used for the averages, the same in the backtester and live
 ENTRY_WINDOW = (time(9, 15), time(10, 0))       # live: buy near the open, like the backtest's next-open fill

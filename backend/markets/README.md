@@ -32,7 +32,7 @@ crypto folders"; git history has them). MCX DATA IS STILL DOWNLOADED (user: "kee
 
 | market | folder | what it does | status |
 |---|---|---|---|
-| equity | `strategies/tf_daily/trend_ema_cross/` | 20/50 EMA cross above the 200 EMA in a healthy market (breadth >= 50%), 2.5-ATR stop then 3-ATR trailing stop; 20 best stocks, max 3 | paper (`hft-dryrun.service`), 2% risk |
+| equity | `strategies/tf_daily/trend_ema_cross/` | 20/50 EMA cross above the 200 EMA in a healthy market (breadth >= 50%), 2.5-ATR stop then 3.25-ATR trailing stop (3 until 2026-10-14); 20 best stocks, max 3 | paper (`hft-dryrun.service`), 2% risk |
 | currency | `strategies/tf_daily/rsi_range/` | RSI(14) < 30 buy / > 70 short, exit at the 20-day average or ~15 days, 2.5-ATR stop | paper, 4% risk (RBI rule: research/paper only) |
 
 Tested and rejected (in the docs, `var/reports/` and git history): intraday and scalping ideas in every market
