@@ -107,7 +107,7 @@ def _load_master() -> None:
 def _load_currency_master() -> None:
     """NSE currency derivatives (NCD_FO/FUTCUR) live in the SAME NSE.csv.gz master as
     equities -- not a separate file like MCX. Added 2026-09-18 for USDINR/EURINR/
-    GBPINR/JPYINR futures, same nearest-expiry-per-base-symbol pattern as
+    GBPINR futures, same nearest-expiry-per-base-symbol pattern as
     _load_mcx_master()."""
     global _CURRENCY_KEY_MAP
     if not _CACHE_FILE.exists():
@@ -134,7 +134,7 @@ def _load_currency_master() -> None:
             if not m:
                 continue
             base = m.group(1)
-            if base in ("USDINR", "EURINR", "GBPINR", "JPYINR"):
+            if base in ("USDINR", "EURINR", "GBPINR"):
                 candidates.setdefault(base, []).append(row)
 
     _CURRENCY_KEY_MAP = {}

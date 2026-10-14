@@ -310,7 +310,7 @@ NSE_API_HEADERS = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/53
 GLOBAL_1M = {"ES=F": "SP500_FUT", "YM=F": "DOW_FUT", "NQ=F": "NASDAQ_FUT", "DX-Y.NYB": "DXY", "CL=F": "WTI", "BZ=F": "BRENT", "GC=F": "GOLD",
              "SI=F": "SILVER", "HG=F": "COPPER", "^TNX": "US10Y", "INR=X": "USDINR_SPOT", "^VIX": "US_VIX",
              # fair value of the thin rupee crosses: EURINR ~ EURUSD x USDINR (docs/CURRENCY_RESEARCH.md, ML section)
-             "EURUSD=X": "EURUSD", "GBPUSD=X": "GBPUSD", "JPY=X": "USDJPY", "CNH=X": "USDCNH", "EURINR=X": "EURINR_SPOT", "GBPINR=X": "GBPINR_SPOT"}
+             "EURUSD=X": "EURUSD", "GBPUSD=X": "GBPUSD", "CNH=X": "USDCNH", "EURINR=X": "EURINR_SPOT", "GBPINR=X": "GBPINR_SPOT"}
 
 
 def append_unique(path: Path, df: pd.DataFrame, keys: list[str]) -> int:
@@ -512,7 +512,7 @@ def parse_currency_bhavcopy(content: bytes, day: date) -> pd.DataFrame:
 
 
 def job_currency_daily(start="2012-01-02") -> None:
-    """Every NSE currency future (USDINR, EURINR, GBPINR, JPYINR and the cross pairs), every day: OHLC, settlement, open interest, volume.
+    """Every NSE currency future (USDINR, EURINR, GBPINR and the cross pairs), every day: OHLC, settlement, open interest, volume.
     Real futures prices (they include the forward premium, so carry can be measured), years beyond Upstox's ~4 months."""
     import requests
     have = read_gz(CURRENCY_DAILY) if CURRENCY_DAILY.exists() else pd.DataFrame(columns=CURRENCY_DAILY_COLS)

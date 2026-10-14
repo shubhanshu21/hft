@@ -2,7 +2,7 @@
 """
 backend/real_currency_data.py — REAL NSE Currency Derivatives Historical Data (via Upstox).
 
-Mirrors markets/commodity/data.py exactly, for USDINR/EURINR/GBPINR/JPYINR
+Mirrors markets/commodity/data.py exactly, for USDINR/EURINR/GBPINR
 currency futures (NCD_FO segment) instead of MCX commodities. Same
 constraint applies and was verified empirically 2026-09-18 the same way:
 currency futures are ALSO monthly-expiry contracts, not continuously
@@ -35,7 +35,7 @@ from services.utils.logger import get_logger, setup_logger
 
 ARCHIVE_DIR = ARCHIVE_ROOT / "currency"
 
-SYMBOLS = ["USDINR", "EURINR", "GBPINR", "JPYINR"]
+SYMBOLS = ["USDINR", "EURINR", "GBPINR"]
 
 INTERVALS = [
     ("minutes", 1, "1minute"),
@@ -132,7 +132,7 @@ def build_all_real_currency_archives(topup: bool = False) -> None:
 
 if __name__ == "__main__":
     setup_logger("", log_file=str(LOG_DIR / "real_currency_data.log"))
-    parser = argparse.ArgumentParser(description="Real NSE currency derivatives data (USDINR/EURINR/GBPINR/JPYINR) via Upstox")
+    parser = argparse.ArgumentParser(description="Real NSE currency derivatives data (USDINR/EURINR/GBPINR) via Upstox")
     parser.add_argument("--topup", action="store_true", help="Incremental top-up instead of a full backfill")
     args = parser.parse_args()
     build_all_real_currency_archives(topup=args.topup)

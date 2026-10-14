@@ -2,7 +2,7 @@
 
 > **Status 2026-10-12 — read first.** MCX commodity was **removed** (user: "remove commodity section totally"): its strategies, cost model, features, engine support and tests are deleted (git history has them). MCX **data is still recorded**: the nightly candle top-up (`markets/commodity/data.py`) and the order-book recorder (`engine/depth_recorder.py`). The 5-minute scalpers of every market were deleted on 2026-10-10, so **no strategy trades** in the paper daemon, which is disabled (`hft-dryrun.service`); only the crypto slow-momentum paper trader runs. Sections below that describe MCX trading, the scalpers or `cli.py backtest` are history. `backend/markets/README.md` lists what exists now.
 
-An institutional-grade, 100% configurable **quantitative trading framework for Indian markets**, built for **MCX Commodity Futures** (removed 2026-10-12, see above), **NSE Currency Derivatives** (USDINR/EURINR/GBPINR/JPYINR), and **NSE Equities** (Cash/MIS), trading through Upstox.
+An institutional-grade, 100% configurable **quantitative trading framework for Indian markets**, built for **MCX Commodity Futures** (removed 2026-10-12, see above), **NSE Currency Derivatives** (USDINR/EURINR/GBPINR), and **NSE Equities** (Cash/MIS), trading through Upstox.
 
 > **Update 2026-09-28:** crypto is back as a PAPER-ONLY slow-momentum trader (BTC/ETH/SOL spot on Binance public data, `engine/crypto_paper.py`, see `docs/CRYPTO_MOMENTUM.md`), added only after a held-out test found a real risk-adjusted edge for slow trend rules; fast crypto scalping and options remain removed.
 >
@@ -140,7 +140,6 @@ Same feature engine and entry-rule shape as commodities, with pair-specific thre
 | **`USDINR`** | Live | 45 trades, 48.9% win, PF 3.13, +₹13,854 | **258/258 credible (≥15 trade) combos profitable (100%)** — the most robust result in this project |
 | **`GBPINR`** | Live | 17 trades, 41.2% win, PF 2.87, +₹4,679 | **192/192 (100%)** |
 | **`EURINR`** | Live | 43 trades, 39.5% win, PF 2.23, +₹9,721 | 201/359 (56%) — still a real, majority-robust edge |
-| `JPYINR` | Not added | — | 0/375 combos reached the 15-trade credibility bar — youngest contract, not enough real days yet. Not a negative finding, just insufficient data; revisit once its archive grows. |
 
 **Important shape difference from commodities**: all three live pairs win *under 50%* of trades but are solidly profitable (profit factors 2.2–3.8x) — winners run 2-4x bigger than losers, the opposite payoff shape from crude/gold's 65-70%-win-rate/tight-R:R style. Don't judge these by win rate alone.
 

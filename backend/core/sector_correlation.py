@@ -101,7 +101,7 @@ class SectorCorrelationGate:
         sym_clean = symbol.upper().strip()
         if sym_clean in NIFTY_SECTOR_MAP:
             return NIFTY_SECTOR_MAP[sym_clean]
-        if any(cur in sym_clean for cur in ["USDINR", "EURINR", "GBPINR", "JPYINR"]):
+        if any(cur in sym_clean for cur in ["USDINR", "EURINR", "GBPINR"]):
             return "CURRENCY"
         if any(idx in sym_clean for idx in ["NIFTY", "BANKNIFTY", "FINNIFTY"]):
             return "INDEX_DERIVATIVES"

@@ -12,7 +12,7 @@ import pandas as pd
 
 from core.paths import ARCHIVE_ROOT
 
-PAIRS = ("USDINR", "EURINR", "GBPINR", "JPYINR")
+PAIRS = ("USDINR", "EURINR", "GBPINR")
 SOURCE = ARCHIVE_ROOT / "currency" / "futures_daily.csv.gz"
 
 

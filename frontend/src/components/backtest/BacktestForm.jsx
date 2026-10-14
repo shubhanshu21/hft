@@ -14,6 +14,8 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
   const options = strategies.filter((s) => s.market === market);
   const [name, setName] = useState(options[0]?.name ?? "");
   const strategy = options.find((s) => s.name === name) ?? options[0];
+  useEffect(() => { if (strategy) setF((x) => ({ ...x, risk_pct: strategy.default_risk_pct ?? 2 })); }, [strategy?.market, strategy?.name]);   // start from the risk the strategy was tested with
+  const safeRisk = Math.max(3, strategy?.default_risk_pct ?? 0);
   const [all, setAll] = useState(true);
   const [chosen, setChosen] = useState([]);
   const [f, setF] = useState({ ...yearRange(THIS_YEAR), capital: 100000, slippage_bp: 5, risk_pct: 2, max_positions: 3, leverage: 1, trail_stop_pct: 8, trail_after_pct: 5, profit_trail_pct: 0, pyramid_pct: "", label: "" });
@@ -81,9 +83,9 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
           <div className="field"><label htmlFor="slip">Slippage per side (basis points)</label><input id="slip" type="number" min="0" max="100" step="0.5" value={f.slippage_bp} onChange={set("slippage_bp")} disabled={crypto} />
             <span className="hint">5 bp = 0.05%, charged when buying and again when selling. Currency: 0, because its cost model already includes the real bid-ask spread.</span></div>
           <div className="field"><label htmlFor="risk">Risk per trade (% of account)</label><input id="risk" type="number" min="0.1" max="10" step="0.1" value={f.risk_pct} onChange={set("risk_pct")} disabled={crypto} />
-            {+f.risk_pct > 3 && !crypto && (
+            {+f.risk_pct > safeRisk && !crypto && (
               <span className="warn" role="alert">
-                High risk: one losing trade can cost about {(+f.risk_pct).toFixed(1)}% of the account, and positions get {(+f.risk_pct / 2).toFixed(1)}x bigger than the tested 2%.
+                High risk: one losing trade can cost about {(+f.risk_pct).toFixed(1)}% of the account, and positions get {(+f.risk_pct / (strategy?.default_risk_pct ?? 2)).toFixed(1)}x bigger than the tested {strategy?.default_risk_pct ?? 2}%.
                 Profits AND losses grow together: at 10% the currency strategy made +64% in 2026 but lost 87% in 2013-22. Check other years before trusting it.
               </span>
             )}</div>

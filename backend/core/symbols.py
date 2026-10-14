@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from markets.equity.universe import NIFTY50_SYMBOLS
 
-CURRENCY_SYMBOLS = {"USDINR", "EURINR", "GBPINR", "JPYINR"}
+CURRENCY_SYMBOLS = {"USDINR", "EURINR", "GBPINR"}          # JPYINR removed 2026-10-14 (user: "remove JPY totally")
 EQUITY_SYMBOLS = set(NIFTY50_SYMBOLS)
 
 

@@ -37,7 +37,7 @@ from core.paths import ARCHIVE_ROOT, BACKEND_ROOT, VAR_DIR
 from markets.equity.universe import NIFTY50_SYMBOLS
 
 RUNS_DIR = VAR_DIR / "backtests"
-CURRENCY = ["USDINR", "EURINR", "GBPINR", "JPYINR"]
+CURRENCY = ["USDINR", "EURINR", "GBPINR"]
 LIMITS = {"capital": (10_000, 10_000_000), "slippage_bp": (0, 100), "risk_pct": (0.1, 10), "max_positions": (1, 10), "leverage": (1, 40),
           "trail_stop_pct": (0, 30), "trail_after_pct": (0, 50), "profit_trail_pct": (0, 20)}
 COOLDOWN_S = 5
@@ -53,7 +53,8 @@ def universe(market: str) -> list[str]:
 
 def catalog() -> list[dict]:
     rows = [{"market": m, "name": n, "timeframe": f"{s.timeframe[1]} {s.timeframe[0]}", "supported": tuple(s.timeframe) == ("days", 1), "symbols": universe(m),
-             "summary": (s.__doc__ or "").strip().split("\n")[0], "intraday": s.intraday}
+             "summary": (s.__doc__ or "").strip().split("\n")[0], "intraday": s.intraday,
+             "default_risk_pct": getattr(s, "default_risk_pct", None)}
             for (m, n), s in sorted(registry.discover().items())]
     rows.append({"market": "crypto", "name": "router", "timeframe": "1 hours", "supported": True, "symbols": universe("crypto"), "intraday": False,
                  "summary": "The live crypto trend router (BTC regime picks long spot or short perpetuals). Runs with its own cost and funding model."})

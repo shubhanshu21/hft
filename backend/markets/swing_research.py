@@ -31,7 +31,7 @@ GRID = {
 }
 
 # ---- markets ---------------------------------------------------------------------------------------------------
-CURRENCY = {"INR=X": "USDINR", "EURINR=X": "EURINR", "GBPINR=X": "GBPINR", "JPYINR=X": "JPYINR"}
+CURRENCY = {"INR=X": "USDINR", "EURINR=X": "EURINR", "GBPINR=X": "GBPINR"}
 
 
 def _adjusted(df: pd.DataFrame) -> pd.DataFrame:

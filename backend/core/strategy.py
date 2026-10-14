@@ -113,6 +113,7 @@ class Strategy:
     lookback_days: int = 0              # >0 = fetch this many days of history (daily strategies); 0 = today's intraday candles
     default_enabled: bool = False       # True = runs without being named in <MARKET>_STRATEGIES
     max_positions: int | None = None    # cap on this strategy's concurrent open positions
+    default_risk_pct: float | None = None  # the risk per trade this strategy was sized for (the web form starts with it; None = the page's 2%)
     max_daily_losses: int | None = None # after this many losing trades on one symbol in a day, no new entry on it until tomorrow
                                         # (counted from the trades table, so a restart does not reset it)
     sector_cap: bool = False            # apply the per-sector position cap (equity)

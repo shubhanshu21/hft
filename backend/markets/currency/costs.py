@@ -30,7 +30,6 @@ CURRENCY_SPECS = {
     "USDINR": {"name": "US Dollar-Rupee (1,000 USD)", "lot_size": 1000, "tick_size": 0.0025, "margin_approx": 2000.0},
     "EURINR": {"name": "Euro-Rupee (1,000 EUR)", "lot_size": 1000, "tick_size": 0.0025, "margin_approx": 2500.0},
     "GBPINR": {"name": "British Pound-Rupee (1,000 GBP)", "lot_size": 1000, "tick_size": 0.0025, "margin_approx": 3000.0},
-    "JPYINR": {"name": "Japanese Yen-Rupee (100,000 JPY)", "lot_size": 100000, "tick_size": 0.0025, "margin_approx": 2000.0},
 }
 
 NCD_EXCHANGE_TXN_PCT = 0.00090   # NSE currency segment turnover fee
