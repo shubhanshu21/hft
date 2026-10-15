@@ -140,8 +140,10 @@ _live_cache: dict = {"at": 0.0, "keys": (), "prices": {}}
 
 
 def _live_prices(keys: list[str]) -> dict:
-    """Latest traded price per Upstox instrument key, one batch call at most every 30 s (the page polls each minute; Upstox allows 2,000 calls
-    per 30 minutes). Empty when there is no valid token or Upstox is unreachable; the caller then falls back to the last daily close."""
+    """Upstox market quote per instrument key -> {"ltp", "trade_time" (IST, of the last trade), "bid", "ask"}: one batch call at most every
+    30 s (the page polls each minute; Upstox allows 2,000 calls per 30 minutes). Thin contracts (EURINR / GBPINR futures trade a few hundred
+    lots a day) can keep the same last price for many minutes while the bid and ask still move. Empty when there is no valid token or
+    Upstox is unreachable; the caller then falls back to the last daily close."""
     keys = tuple(sorted(set(keys)))
     if not keys:
         return {}
@@ -151,11 +153,21 @@ def _live_prices(keys: list[str]) -> dict:
             return _live_cache["prices"]
     prices: dict = {}
     try:
+        import requests
         from engine.config import _load_access_token
-        from services.broker.upstox_broker import UpstoxBroker
         token = _load_access_token()
         if token:
-            prices = {k: v for k, v in UpstoxBroker(access_token=token, dry_run=True).get_ltp_batch(list(keys)).items() if v}
+            r = requests.get("https://api.upstox.com/v2/market-quote/quotes", params={"instrument_key": ",".join(keys)},
+                             headers={"Authorization": f"Bearer {token}", "Accept": "application/json"}, timeout=10)
+            r.raise_for_status()
+            for v in (r.json().get("data") or {}).values():
+                depth = v.get("depth") or {}
+                bid = next((x["price"] for x in depth.get("buy") or [] if x.get("price")), None)
+                ask = next((x["price"] for x in depth.get("sell") or [] if x.get("price")), None)
+                ltt = v.get("last_trade_time")
+                prices[v.get("instrument_token")] = {
+                    "ltp": v.get("last_price") or None, "bid": bid, "ask": ask,
+                    "trade_time": datetime.fromtimestamp(int(ltt) / 1000, IST).isoformat(timespec="seconds") if ltt else None}
     except Exception:
         traceback.print_exc()
     with _lock:
@@ -181,7 +193,9 @@ def _value_position(p: dict, live: dict) -> None:
     strat = registry.get(market, p["strategy"])
     lot = int(state.get("lot_size") or (strat.lot_size(p["symbol"]) if strat else 1) or 1)
     sign = -1 if p["direction"] == "short" else 1
-    price, source, as_of = live.get(p.get("instrument_key")), "live", datetime.now(IST).isoformat(timespec="seconds")
+    q = live.get(p.get("instrument_key")) or {}
+    price, source, as_of = q.get("ltp"), "live", q.get("trade_time")
+    p.update(bid=q.get("bid"), ask=q.get("ask"), checked_at=datetime.now(IST).isoformat(timespec="seconds") if q else None)
     if price is None:
         price, as_of = _last_close(p["symbol"], market)
         source = "last close"

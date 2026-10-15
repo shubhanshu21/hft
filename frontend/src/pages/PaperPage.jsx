@@ -74,7 +74,8 @@ export default function PaperPage() {
         {!d.positions.length
           ? <div className="none">No open trades. Equity buys only between 9:15 and 10:00 when its rules are met; currency checks at the 9:00 open.</div>
           : <div className="trade-cards">{d.positions.map((p) => <OpenTradeCard key={p.symbol} p={p} />)}</div>}
-        {d.positions.length > 0 && <p className="note">"Profit now" is the price move only. "If sold now" also takes off brokerage, taxes and the buy–sell price gap, the same way the paper trader books a sale.
+        {d.positions.length > 0 && <p className="note">"Last traded price" changes only when someone trades; EURINR and GBPINR futures trade a few hundred lots a day,
+          so it can stay the same for many minutes. "Buyers / sellers now" are the best live offers: selling now would get the buyers' price. "Profit now" is the price move only. "If sold now" also takes off brokerage, taxes and the buy–sell price gap, the same way the paper trader books a sale.
           The account changes only when a trade is sold.</p>}
       </Panel>
 

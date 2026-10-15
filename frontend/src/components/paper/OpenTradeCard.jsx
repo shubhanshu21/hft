@@ -29,7 +29,8 @@ export default function OpenTradeCard({ p }) {
         <div className="tc-ends"><span>stop {px(p.current_stop, d)}</span><span>bought {px(p.entry_price, d)}</span><span /></div>
       </div>
       <dl className="tc-grid">
-        <div><dt>Price now</dt><dd>{px(p.price_now, d)} <span className="note">{p.price_source === "live" ? `live ${time(p.price_time)}` : p.price_source ? `close ${p.price_time}` : ""}</span></dd></div>
+        <div><dt>Last traded price</dt><dd>{px(p.price_now, d)} <span className="note">{p.price_source === "live" ? `traded ${time(p.price_time)}` : p.price_source ? `close ${p.price_time}` : ""}</span></dd></div>
+        <div><dt>Buyers / sellers now</dt><dd>{p.bid != null || p.ask != null ? `${px(p.bid, d)} / ${px(p.ask, d)}` : "-"} <span className="note">{p.checked_at ? `checked ${time(p.checked_at)}` : ""}</span></dd></div>
         <div><dt>Move</dt><dd className={p.move_pct != null ? tone(p.move_pct) : ""}>{p.move_pct != null ? `${p.move_pct >= 0 ? "+" : ""}${p.move_pct.toFixed(2)}%` : "-"}</dd></div>
         <div><dt>If sold now, after fees</dt><dd className={p.net_if_sold != null ? tone(p.net_if_sold) : ""}>{p.net_if_sold != null ? signed(p.net_if_sold) : "-"}</dd></div>
         <div><dt>Fees to sell now</dt><dd>{p.fees_if_sold != null ? inr(p.fees_if_sold) : "-"}</dd></div>
