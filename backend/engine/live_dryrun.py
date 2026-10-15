@@ -597,26 +597,33 @@ class DryRunner(RiskGates):
                 w.writerow(["timestamp", "symbol", "bid", "ask", "spread", "mid", "spread_pct"])
             w.writerow([now.isoformat(), sym, bid, ask, round(spread, 4), round(mid, 4), round(spread_pct, 4)])
 
-    def _send_midday_summary(self, now: datetime) -> None:
-        """Booked profit alone is Rs0 on a day nothing was sold, so the summary also values every open position at the live price: profit so far,
-        what selling now would leave after the strategy's own fees, the stop, and the margin it blocks."""
-        self._midday_summary_sent = True
+    def free_cash(self) -> float:
+        """Booked capital minus the margin (or, for delivery shares, the money) the open positions block."""
+        return self.capital - sum(float(p.get("margin_used") or 0.0) for p in self.positions.values())
+
+    def strategy_risk_pct(self, strat, sym: str) -> float:
+        base, _ = self._get_segment_risk_and_leverage(sym)
+        override = os.environ.get(f"{strat.market.upper()}_{strat.name.upper()}_RISK_PCT")
+        return float(override) if override else base
+
+    def account_report(self) -> str:
+        """Account value with every open position at the live price: booked profit alone is Rs0 on a day nothing was sold. Shared by the
+        midday summary, the session-complete message and /status."""
+        def rs(v: float) -> str:
+            return f"{'+' if v >= 0 else '−'}₹{telegram.inr(v)}"
         booked = self.capital - self.day_start_capital
         keys = {sym: pos.get("instrument_key") or SYMBOL_MAP.get(sym) for sym, pos in self.positions.items()}
         try:
             ltp = self.broker.get_ltp_batch([k for k in keys.values() if k]) if keys else {}
         except Exception as e:
-            log.warning("midday summary: live prices unavailable: %s", e)
+            log.warning("account report: live prices unavailable: %s", e)
             ltp = {}
-        def rs(v: float) -> str:
-            return f"{'+' if v >= 0 else '−'}₹{abs(v):,.0f}"
-        lines, open_pnl, open_net, margin = [], 0.0, 0.0, 0.0
+        lines, open_pnl, open_net = [], 0.0, 0.0
         for sym, pos in self.positions.items():
             strat = self._strategy_of(pos, sym)
             lots = pos.get("lots", pos.get("qty", 1))
             lot = pos.get("lot_size") or strat.lot_size(sym)
             sign = 1 if pos["direction"] == "long" else -1
-            margin += float(pos.get("margin_used") or 0.0)
             size = f"{lots} lot{'s' if lots != 1 else ''}" if lot > 1 else f"{lots} shares"
             px = ltp.get(keys[sym])
             if px:
@@ -628,14 +635,17 @@ class DryRunner(RiskGates):
                              f"(after fees if sold now {rs(net)}; stop {pos['current_stop']:,.2f})")
             else:
                 lines.append(f"• {sym} {'BUY' if sign == 1 else 'SELL'} {size} @ {pos['entry_price']:,.2f}: price unavailable (stop {pos['current_stop']:,.2f})")
-        msg = (
-            f"📈 <b>MIDDAY SUMMARY</b> ({now.strftime('%H:%M')} IST)\n"
-            f"Account value now: <b>₹{self.capital + open_pnl:,.0f}</b> (booked ₹{self.capital:,.0f} + open {rs(open_pnl)})\n"
+        return (
+            f"Account value now: <b>₹{telegram.inr(self.capital + open_pnl)}</b> (booked ₹{telegram.inr(self.capital)} + open {rs(open_pnl)})\n"
             f"Sold today: {rs(booked)}\n"
             f"Open trades now: {rs(open_pnl)} ({rs(open_net)} after fees if all sold now)\n"
-            f"Margin blocked ₹{margin:,.0f} · free ₹{self.capital - margin:,.0f}\n\n"
+            f"Margin blocked ₹{telegram.inr(self.capital - self.free_cash())} · free ₹{telegram.inr(self.free_cash())}\n\n"
             + (f"<b>Open trades ({len(lines)})</b>\n" + "\n".join(lines) if lines else "No open trades.")
         )
+
+    def _send_midday_summary(self, now: datetime) -> None:
+        self._midday_summary_sent = True
+        msg = f"📈 <b>MIDDAY SUMMARY</b> ({now.strftime('%H:%M')} IST)\n" + self.account_report()
         print(f"\n{BOLD}{GR}{msg}{R}\n", flush=True)
         telegram.send(msg)
 
@@ -883,7 +893,7 @@ class DryRunner(RiskGates):
             "position_id": pos_id, "entry_order_id": entry_order_id, "strategy": strat.name,
             "time": now.strftime("%H:%M:%S"), "symbol": sym, "direction": direction,
             "entry_price": round(entry, strat.price_decimals), "sl": sl, **sig_result.alert_levels,
-            "qty": qty, "lots": qty, "setup_type": sig_result.setup_type,
+            "qty": qty, "lots": qty, "setup_type": sig_result.setup_type, "lot_size": sig_result.lot_size, "risk_pct": base_risk_pct,
             "trade_value": round(trade_val, 2),
             # Balance/capital only ever changes on a CLOSE (see _close_position -- self.capital +=
             # net_pnl), never on entry, so the "Balance" in the entry alert is realized equity, not
@@ -1052,7 +1062,8 @@ class DryRunner(RiskGates):
         print(f"  {BOLD}EXIT{R}  {WH}{sym:12s}{R} {pos['direction']:5s} "
               f"@ {YL}₹{exit_p:.2f}{R}  [{reason}]  "
               f"Net: {col}₹{net_pnl:+,.2f}{R} (Fees: ₹{cost_info['total']:.2f})  Cap: ₹{self.capital:,.2f}")
-        telegram.alert_exit(sym, pos, exit_p, reason, net_pnl, self.capital)
+        telegram.alert_exit(sym, pos, exit_p, reason, net_pnl, self.capital, gross=gross_pnl, fees=gross_pnl - net_pnl, now=now,
+                            lot_size=pos.get("lot_size") or strat.lot_size(sym))
 
         rec = {**pos, "exit_price": exit_p, "exit_reason": reason,
                "net_pnl": round(net_pnl, 2), "gross_pnl": round(gross_pnl, 2),
@@ -1133,7 +1144,7 @@ class DryRunner(RiskGates):
 # CLI & Terminal Output
 # ---------------------------------------------------------------------------
 
-def _print_sig(sig: dict, cap: float):
+def _print_sig(sig: dict, cap: float, free: float | None = None):
     # col and arrow must be derived locally here -- they are NOT in scope from
     # anywhere else in this module (col is defined only inside _close_position).
     # Bug fixed 2026-09-22: previously referenced undefined variables, causing
@@ -1152,7 +1163,7 @@ def _print_sig(sig: dict, cap: float):
     print(f"     VWAP: {sig['vwap_dist_pct']:+.3f}%  EMA: {sig['ema_slope_pct']:+.4f}%  "
           f"Cap now: ₹{cap:,.2f}")
     print(f"     {GY}[VIRTUAL EXECUTION -> RECORDED IN SQLITE DB - NO REAL BROKER ORDER]{R}")
-    telegram.alert_entry(sig, cap)
+    telegram.alert_entry(sig, cap, free)
 
 
 _token_failure_alerted = False
@@ -1282,22 +1293,14 @@ def handle_operator_command(runner, cmd: str, now: datetime, scan_n: int) -> str
             telegram.send(f"▶ <b>{seg.upper()} TRADING RESUMED</b> (manual) — evaluating new {seg} entries.")
             return f"resume:{seg}"
     if cmd in ("/status", "status"):
-        open_syms = list(runner.positions.keys())
         seg_status_str = ", ".join([f"{m.capitalize()}: {'🟢' if v else '🛑 PAUSED'}" for m, v in runner.segment_enabled.items()])
         regime_line = f"\nSegments: {seg_status_str}"
         if runner.use_equity_regime_filter:
             regime_line += f"\nEquity regime: {'🟢 OK' if runner.equity_regime_ok is not False else '🔴 BLOCKED'}"
-        pos_lines = ""
-        for sym, p in runner.positions.items():
-            pos_lines += f"\n  • {sym} {p['direction'].upper()} @ ₹{p['entry_price']:.2f} | stop ₹{p['current_stop']:.2f}"
         telegram.send(
-            f"📊 <b>DRYRUN STATUS</b>\n"
-            f"Balance: ₹{runner.capital:,.2f}\n"
-            f"Trading: {'🟢 ENABLED' if runner.trading_enabled else '🛑 HALTED'}\n"
-            f"Scan #{scan_n} @ {now.strftime('%H:%M:%S')} IST\n"
-            f"Open positions ({len(open_syms)}): {', '.join(open_syms) or 'none'}"
-            f"{pos_lines}"
-            f"{regime_line}"
+            f"📊 <b>DRYRUN STATUS</b> ({now.strftime('%H:%M')} IST)\n"
+            f"Trading: {'🟢 ENABLED' if runner.trading_enabled else '🛑 HALTED'}{regime_line}\n\n"
+            + runner.account_report()
         )
         return "status"
     return None
@@ -1420,13 +1423,17 @@ def main():
     print(f"  {GY}Symbols ({len(symbols)}):{R} {WH}{', '.join(symbols[:8])}{'...' if len(symbols)>8 else ''}{R}")
     print(f"{BOLD}{CY}{'='*75}{R}\n")
 
+    strat_lines = []
+    for m, strats in runner.strategies.items():
+        for st in strats:
+            mine = [x for x in symbols if _get_market(x) == m and st.trades(x)]
+            if mine:
+                strat_lines.append(f"• {m} <b>{st.name}</b>: {runner.strategy_risk_pct(st, mine[0]):g}% risk per trade, {len(mine)} symbols")
     telegram.send(
-        f"🟢 <b>DRYRUN DAEMON STARTED</b> — {market_mode}\n"
-        f"Capital: ₹{runner.capital:,.0f}  Risk: {args.risk_pct}%  Leverage: {args.leverage}x  "
-        f"Direction: {direction_mode.upper()}\n"
-        f"Symbols: {', '.join(symbols)}\n"
-        f"Trading is currently {'🟢 ENABLED' if runner.trading_enabled else '🛑 STOPPED (send /start to resume)'}.\n"
-        f"Send <b>/stop</b> to halt new entries and force-close all open positions, or <b>/start</b> to resume."
+        f"🟢 <b>DRYRUN DAEMON STARTED</b> (paper money, no real orders)\n"
+        f"Account: ₹{telegram.inr(runner.capital)}\n" + "\n".join(strat_lines) + "\n"
+        f"Trading is {'🟢 ENABLED' if runner.trading_enabled else '🛑 STOPPED (send /start to resume)'}. "
+        f"/stop halts new entries and closes all open trades; /start resumes; /status shows the account."
     )
 
     from engine.config import UpstoxConfig
@@ -1582,7 +1589,7 @@ def main():
                 sigs = runner.scan()
                 if sigs:
                     for s in sigs:
-                        _print_sig(s, runner.capital)
+                        _print_sig(s, runner.capital, runner.free_cash())
                 else:
                     open_s = list(runner.positions.keys())
                     if open_s:
@@ -1625,11 +1632,11 @@ def main():
         # closed earlier that day. The DB survives restarts; see
         # database.py's get_trades_for_date() docstring for the full story.
         todays_trades = db.get_trades_for_date(runner.today, args.account)
-        total_pnl = sum(t.get("net_pnl", 0) for t in todays_trades)
+        sold = "".join(f"\n• {t['symbol']} {t.get('strategy', '')}: {'+' if (t.get('net_pnl') or 0) >= 0 else '−'}₹{telegram.inr(t.get('net_pnl') or 0)} "
+                       f"({str(t.get('exit_reason', '')).replace('_', ' ')})" for t in todays_trades)
         telegram.send(
-            f"🏁 <b>SESSION COMPLETE</b> ({runner.today}) — {market_mode}\n"
-            f"Trades today: {len(todays_trades)}  Total PnL: ₹{total_pnl:+,.2f}\n"
-            f"Balance: ₹{runner.capital:,.2f}"
+            f"🏁 <b>SESSION COMPLETE</b> ({runner.today})\n"
+            f"Trades sold today: {len(todays_trades)}{sold}\n\n" + runner.account_report()
         )
 
         try:

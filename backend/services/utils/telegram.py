@@ -114,33 +114,67 @@ def alert_error(context: str, exc: Exception) -> None:
     send(f"🔴 <b>ERROR</b> — {context}\n<code>{type(exc).__name__}: {exc}</code>")
 
 
-def alert_entry(sig: dict, capital: float) -> None:
-    arrow = "🟢 LONG" if sig["direction"] == "long" else "🔴 SHORT"
-    stype = sig.get('setup_type', 'trend_breakout').replace('_', ' ').title()
-    tp_val = sig.get('tp')
-    tp_str = f"₹{tp_val:.2f}" if tp_val is not None else "Dynamic Trail"
-    # Leverage shown directly (trade_value / margin_used) instead of a raw
-    # margin rupee figure next to total balance -- those two numbers being
-    # side by side read as if margin were subtracted from balance, which it
-    # isn't (balance only moves on close). Leverage is the number that
-    # actually answers "how geared is this trade."
-    leverage = sig.get("leverage")
-    if leverage is None and sig.get("margin_used"):
-        leverage = sig["trade_value"] / sig["margin_used"]
-    lev_line = f"\nLeverage: {leverage:.1f}x  (Margin: ₹{sig['margin_used']:,.2f})" if leverage else ""
+def inr(v: float) -> str:
+    """Indian digit grouping without the sign: 100000 -> '1,00,000'."""
+    n = str(int(round(abs(v))))
+    head, tail = n[:-3], n[-3:]
+    while len(head) > 2:
+        tail = head[-2:] + "," + tail
+        head = head[:-2]
+    return (head + "," + tail) if head else tail
+
+
+def _rs(v: float) -> str:
+    return f"{'+' if v >= 0 else '−'}₹{inr(v)}"
+
+
+def _size(symbol: str, qty: int, lot: int) -> str:
+    """'2 lots = 2,000 EUR' for currency futures, '35 shares' for equity."""
+    if lot and lot > 1:
+        return f"{qty} lot{'s' if qty != 1 else ''} = {inr(qty * lot)} {symbol[:3]}"
+    return f"{qty} share{'s' if qty != 1 else ''}"
+
+
+def alert_entry(sig: dict, capital: float, free: float | None = None) -> None:
+    """A new paper trade: what was bought, how much money is at stake, where the stop is and what it would lose there."""
+    long_ = sig["direction"] == "long"
+    qty = sig.get("lots", sig["qty"])
+    lot = sig.get("lot_size") or (round(sig["trade_value"] / (qty * sig["entry_price"])) if qty and sig["entry_price"] else 1)
+    risk = abs(sig["entry_price"] - sig["sl"]) * qty * lot
+    tp = sig.get("tp")
+    margin = sig.get("margin_used")
+    if lot > 1 and margin:
+        money = f"Margin blocked: ₹{inr(margin)} ({sig['trade_value'] / margin:.0f}x of ₹{inr(sig['trade_value'])})"
+    else:
+        money = f"Money used: ₹{inr(sig['trade_value'])}"
     send(
-        f"📥 <b>ENTRY</b> {sig['symbol']} {arrow}\n"
-        f"Strategy: <b>{stype}</b>\n"
-        f"Price: ₹{sig['entry_price']:.2f}  Qty: {sig['qty']}\n"
-        f"SL: ₹{sig['sl']:.2f}  TP: {tp_str}{lev_line}\n"
-        f"Balance: ₹{capital:,.2f}"
+        f"📥 <b>{'BUY' if long_ else 'SELL'} {sig['symbol']}</b> ({sig.get('strategy', '')})\n"
+        f"{_size(sig['symbol'], qty, lot)} @ ₹{sig['entry_price']:,.2f}\n"
+        f"Stop: ₹{sig['sl']:,.2f} (loss there ≈ ₹{inr(risk)}" + (f", {sig['risk_pct']:g}% risk)" if sig.get("risk_pct") else ")") + "\n"
+        f"Target: " + (f"₹{tp:,.2f}" if tp else "none, the strategy's exit rule decides") + "\n"
+        f"{money}\n"
+        f"Account: ₹{inr(capital)}" + (f" · free after this: ₹{inr(free)}" if free is not None else "")
     )
 
 
-def alert_exit(sym: str, pos: dict, exit_p: float, reason: str, net_pnl: float, capital: float) -> None:
-    emoji = "✅" if net_pnl >= 0 else "❌"
+def alert_exit(sym: str, pos: dict, exit_p: float, reason: str, net_pnl: float, capital: float, gross: float | None = None,
+               fees: float | None = None, now=None, lot_size: int | None = None) -> None:
+    """A closed paper trade: buy and sell price, how long it was held, profit before and after fees, and the account after it."""
+    qty = pos.get("lots", pos.get("qty", 1))
+    lot = lot_size or pos.get("lot_size") or 1
+    held = ""
+    t0 = pos.get("entry_time")
+    if now is not None and hasattr(t0, "strftime"):
+        try:
+            d = now - t0
+            held = f" · held {d.days} day{'s' if d.days != 1 else ''}" if d.days >= 1 else f" · held {d.seconds // 3600}h {d.seconds % 3600 // 60}m"
+        except TypeError:
+            pass
+    money = f"Before fees {_rs(gross)} · fees ₹{inr(fees)} · " if gross is not None and fees is not None else ""
     send(
-        f"{emoji} <b>EXIT</b> {sym} {pos['direction'].upper()} @ ₹{exit_p:.2f}  [{reason}]\n"
-        f"Net PnL: ₹{net_pnl:+,.2f}\n"
-        f"Balance (realized equity): ₹{capital:,.2f}"
+        f"{'✅' if net_pnl >= 0 else '❌'} <b>{'SOLD' if pos['direction'] == 'long' else 'BOUGHT BACK'} {sym}</b> ({pos.get('strategy', '')}) — "
+        f"{str(reason).replace('_', ' ')}\n"
+        f"{_size(sym, qty, lot)} @ ₹{pos['entry_price']:,.2f} → ₹{exit_p:,.2f}{held}\n"
+        f"{money}<b>profit {_rs(net_pnl)}</b>\n"
+        f"Account now: ₹{inr(capital)}"
     )
