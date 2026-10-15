@@ -29,22 +29,25 @@ export default function ReplayView({ result, title, blurb, params, live = false,
   const openPnl = change - totals.profit;                 // what the still-open trades are worth today versus their buy price, after costs so far
   return (
     <>
-      <div className="page-head">
-        <div>
+      <section className="result-hero">
+        <div className="hero-left">
           <h1>{title ?? "Backtest replay"}</h1>
           {blurb && <div className="sub">{blurb}</div>}
+          <SettingsChips params={params} />
         </div>
         <div className="big">
           <div className="date">{live ? "Running: " : ""}{longDate(result.days[player.cur])}</div>
           <div className="eq">{inr(eq)}</div>
-          <div className="chg"><span className={tone(change)}>{signed(change)} ({pct(change / start * 100)})</span> since start</div>
+          <div className="chg"><span className={tone(change)}>{signed(change)} ({pct(change / start * 100)})</span> since {inr(start)}</div>
           {nOpen > 0 && Math.abs(openPnl) >= 1 && (
             <div className="chg muted">= {signed(totals.profit)} from sold trades {openPnl >= 0 ? "+" : "−"} {inr(Math.abs(openPnl))} {openPnl >= 0 ? "gain" : "loss"} on {nOpen} open trade{nOpen > 1 ? "s" : ""} (not sold yet)</div>
           )}
-          {bench != null && <div className="chg muted">Buy and hold: {pct((bench / start - 1) * 100)}</div>}
+          {bench != null && (() => {
+            const b = (bench / start - 1) * 100, gap = change / start * 100 - b;
+            return <div className={`vs ${gap >= 0 ? "up" : "down"}`}>{gap >= 0 ? "Beat" : "Behind"} buy and hold ({pct(b)}) by {Math.abs(gap).toFixed(1)} points</div>;
+          })()}
         </div>
-      </div>
-      <SettingsChips params={params} />
+      </section>
       {result.metrics && <MetricsGrid metrics={result.metrics} />}
       {!live && <PlayerControls player={{ ...player, count }} />}
       <StatsStrip totals={totals} open={nOpen} />

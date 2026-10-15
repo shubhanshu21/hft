@@ -79,3 +79,19 @@ button.danger{background:var(--loss);border-color:var(--loss);color:#fff;font-we
 .tc-grid dd{margin:2px 0 0;font-family:var(--font-num);font-variant-numeric:tabular-nums}
 .money .stat .v{font-size:1.0625rem}
 
+/* Results page: hero card, grouped metrics, note callout */
+.result-hero{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px 20px;display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-end;gap:16px}
+.result-hero .hero-left{min-width:0;flex:1 1 420px;display:flex;flex-direction:column;gap:8px}
+.result-hero h1{margin:0}
+.result-hero .sub{margin-top:0}
+.result-hero .settings{margin-top:4px}
+.vs{display:inline-block;margin-top:8px;padding:3px 10px;border-radius:999px;font-family:var(--font-num);font-size:.8125rem;font-variant-numeric:tabular-nums}
+.vs.up{background:var(--gain-bg);color:var(--gain)} .vs.down{background:var(--loss-bg);color:var(--loss)}
+.metrics-wrap{display:flex;flex-direction:column;gap:12px}
+.metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:16px}
+.metric-group{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;min-width:0}
+.metric-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 18px}
+.metric-group .stat .v{font-size:1.25rem}
+.callout{margin:0;background:var(--grid);border-radius:8px;padding:10px 14px;font-size:.8125rem;color:var(--muted);line-height:1.55;max-width:none}
+.result-hero .chip.static{background:var(--grid);border-color:transparent}
+.v-sub{font-size:.75rem;color:var(--muted);font-weight:400}
