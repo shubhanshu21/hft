@@ -46,3 +46,18 @@ export function tradesBySymbol(result, upto) {
   for (const t of Object.values(open)) (bySym[t.sym] ??= []).push(t);
   return bySym;
 }
+
+/** A quantity as people read it: shares for stocks; for MCX futures results (result.lots) "2 lots · 20 barrels" (short: "2 lots"). */
+export function qtyText(result, sym, q, short = false) {
+  const l = result?.lots?.[sym];
+  if (q == null) return "-";
+  if (!l) return q;
+  const lots = Math.round(q / l.q_per_lot);
+  const amount = +(lots * l.per_lot).toFixed(2);
+  const unit = l.unit === "tonne" && amount !== 1 ? "tonnes" : l.unit;
+  const head = `${lots} lot${lots === 1 ? "" : "s"}`;
+  return short ? head : `${head} · ${amount.toLocaleString("en-IN")} ${unit}`;
+}
+
+/** Column heading for quantities: "Lots" for futures results, else "Shares". */
+export const qtyHeader = (result) => (result?.lots ? "Lots" : "Shares");

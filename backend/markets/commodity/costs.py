@@ -9,6 +9,10 @@ from __future__ import annotations
 # rupee value per 1.00 of quoted price, per lot (MCX contract specifications)
 LOT_UNITS = {"GOLDPETAL": 1, "GOLDTEN": 1, "GOLDM": 10, "SILVERMIC": 1, "SILVERM": 5, "CRUDEOILM": 10, "CRUDEOIL": 100, "NATGASMINI": 250,
              "NATURALGAS": 1250, "COPPER": 2500, "ZINCMINI": 1000, "ZINC": 5000, "ALUMINI": 1000, "ALUMINIUM": 5000, "LEADMINI": 1000, "LEAD": 5000}
+# what one lot is, for people: (amount per lot, unit) -- the quantity the page shows is lots, plus the physical amount
+LOT_SIZE_TEXT = {"GOLDPETAL": (1, "g"), "GOLDTEN": (10, "g"), "GOLDM": (100, "g"), "SILVERMIC": (1, "kg"), "SILVERM": (5, "kg"), "CRUDEOILM": (10, "barrels"),
+                 "CRUDEOIL": (100, "barrels"), "NATGASMINI": (250, "mmBtu"), "NATURALGAS": (1250, "mmBtu"), "COPPER": (2.5, "tonnes"), "ZINCMINI": (1, "tonne"),
+                 "ZINC": (5, "tonnes"), "ALUMINI": (1, "tonne"), "ALUMINIUM": (5, "tonnes"), "LEADMINI": (1, "tonne"), "LEAD": (5, "tonnes")}
 BROKERAGE_PER_ORDER = 30.0
 CTT_SELL, STAMP_BUY, EXCHANGE, SEBI, GST = 0.0001, 0.00002, 0.000021, 0.000001, 0.18
 HALF_SPREAD_BP = 1.5

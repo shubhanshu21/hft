@@ -24,7 +24,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from markets.commodity.costs import compute_mcx_costs, lot_units
+from markets.commodity.costs import LOT_SIZE_TEXT, compute_mcx_costs, lot_units
 
 SIGNALS = ("GOLDM", "SILVERM", "CRUDEOIL", "NATURALGAS", "COPPER", "ZINC", "ALUMINIUM", "LEAD")
 TRADE = {"GOLDM": "GOLDTEN", "SILVERM": "SILVERMIC", "CRUDEOIL": "CRUDEOILM", "NATURALGAS": "NATGASMINI", "COPPER": "COPPER",
@@ -174,4 +174,6 @@ def backtest(table: pd.DataFrame, capital: float = 500_000, start: str = "2023-0
                 + (f" {len(skipped)} planned holdings were skipped because one lot was bigger than their share of the money"
                    f" ({', '.join(sorted(set(skipped)))}): more starting money or exposure trades them." if skipped else "")}
     out["skipped_symbols"] = []
+    # quantities in events / holdings are price units (barrels, kg, ...); the page turns them into lots with this
+    out["lots"] = {TRADE[s]: {"q_per_lot": lot_units(TRADE[s]), "per_lot": LOT_SIZE_TEXT[TRADE[s]][0], "unit": LOT_SIZE_TEXT[TRADE[s]][1]} for s in signals}
     return out

@@ -5,7 +5,7 @@ const readVol = () => { try { return localStorage.getItem(VOL_KEY) !== "0"; } ca
 import Panel from "../ui/Panel.jsx";
 import PriceChart from "../charts/PriceChart.jsx";
 import SymbolTrades from "./SymbolTrades.jsx";
-import { followedSymbol, symbolsWithBars, tradesBySymbol } from "../../lib/replay.js";
+import { qtyText, followedSymbol, symbolsWithBars, tradesBySymbol } from "../../lib/replay.js";
 import { signed, tone } from "../../lib/format.js";
 
 /** Candlesticks of one symbol with all of the strategy's trades in it, plus a chip per symbol (trade count and profit) to switch. */
@@ -47,8 +47,8 @@ export default function PriceChartPanel({ result, at, focus, onSelect }) {
           );
         })}
       </div>
-      <PriceChart symbol={sym} bars={result.bars[sym]} calendar={calendar} first={0} last={last} at={at} trades={mine} fitKey={fitKey} showVolume={showVolume} focus={focus && focus.sym === sym ? focus : null} />
-      <SymbolTrades trades={mine} days={result.days} onSelect={(t) => onSelect?.({ sym, at: t.i0 })} />
+      <PriceChart qtyFmt={(q) => qtyText(result, sym, q, true)} symbol={sym} bars={result.bars[sym]} calendar={calendar} first={0} last={last} at={at} trades={mine} fitKey={fitKey} showVolume={showVolume} focus={focus && focus.sym === sym ? focus : null} />
+      <SymbolTrades result={result} trades={mine} days={result.days} onSelect={(t) => onSelect?.({ sym, at: t.i0 })} />
     </Panel>
   );
 }
