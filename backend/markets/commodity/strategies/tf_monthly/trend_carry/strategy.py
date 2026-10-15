@@ -43,14 +43,17 @@ def top_n(n_symbols: int) -> int:
 
 
 def month_ends(table: pd.DataFrame, before: pd.Timestamp | None = None) -> list[pd.Timestamp]:
-    """Last trading day of each COMPLETED month: the bhavcopy date when one exists (it has every contract), else the newest day."""
+    """Last trading day of each month (only COMPLETED months when `before` is given). The bhavcopy date is preferred when it IS the month's
+    end (within 3 days of the newest day that month: it has every contract, including ones Upstox no longer serves); a mid-month bhavcopy
+    (the 2026-10-13 download) must not stand in for the month end -- that bug would have traded on 13-October prices on 2 November."""
     t = table[table["symbol"].isin(SIGNALS)]
     if before is not None:
         t = t[t["date"] < before.replace(day=1)]
     out = []
     for _, g in t.groupby(t["date"].dt.to_period("M")):
-        b = g[g["source"] == "bhavcopy"] if "source" in g else g
-        out.append((b if len(b) else g)["date"].max())
+        last = g["date"].max()
+        b = g[g["source"] == "bhavcopy"]["date"] if "source" in g else g["date"]
+        out.append(b.max() if len(b) and (last - b.max()).days <= 3 else last)
     return sorted(out)
 
 
