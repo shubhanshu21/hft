@@ -1,0 +1,10 @@
+[Unit]
+Description=NSE pre-open quote recorder schedule
+
+[Timer]
+# 08:58 IST: the recorder waits for 09:00 itself and stops at 09:16.
+OnCalendar=Mon..Fri *-*-* 08:58:00 Asia/Kolkata
+Persistent=false
+
+[Install]
+WantedBy=timers.target

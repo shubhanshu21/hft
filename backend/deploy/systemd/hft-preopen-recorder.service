@@ -1,0 +1,8 @@
+[Unit]
+Description=Record NSE pre-open auction quotes 09:00-09:16 IST (research data only, no orders)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/var/www/html/hft/backend
+ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m engine.preopen_recorder
+TimeoutStartSec=30min
