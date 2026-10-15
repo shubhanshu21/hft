@@ -1,0 +1,12 @@
+[Unit]
+Description=MCX trend + carry paper trading schedule
+
+[Timer]
+# 09:10 IST: after MCX opens -- a month-end rebalance (signals from the last month end's prices, topped up at 00:30 / 06:30) trades here.
+OnCalendar=Mon..Fri *-*-* 09:10:00 Asia/Kolkata
+# 23:40 IST: after the MCX close -- daily account value on Telegram.
+OnCalendar=Mon..Fri *-*-* 23:40:00 Asia/Kolkata
+Persistent=false
+
+[Install]
+WantedBy=timers.target

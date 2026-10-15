@@ -53,10 +53,14 @@ def universe(market: str) -> list[str]:
 
 
 def catalog() -> list[dict]:
+    from markets.commodity.strategies.tf_monthly.trend_carry import strategy as tc
+    mcx = {"market": "commodity", "name": "trend_carry", "timeframe": "1 months", "supported": True, "symbols": sorted(set(tc.TRADE.values())),
+           "summary": (tc.__doc__ or "").strip().split("\n")[0], "intraday": False, "default_risk_pct": None, "fixed_symbols": True,
+           "exposure": float(os.environ.get("MCX_TREND_CARRY_EXPOSURE", 1.5))}
     return [{"market": m, "name": n, "timeframe": f"{s.timeframe[1]} {s.timeframe[0]}", "supported": tuple(s.timeframe) == ("days", 1), "symbols": list(getattr(s, "universe", None) or universe(m)),
              "summary": (s.__doc__ or "").strip().split("\n")[0], "intraday": s.intraday,
              "default_risk_pct": getattr(s, "default_risk_pct", None)}
-            for (m, n), s in sorted(registry.discover().items())]
+            for (m, n), s in sorted(registry.discover().items())] + [mcx]
 
 
 def prune() -> None:
@@ -109,6 +113,16 @@ def validate(body: dict) -> dict:
         if not lo <= v <= hi:
             raise ValueError(f"{key} must be between {lo} and {hi}")
         p[key] = v
+    if market == "commodity":                                    # trend_carry ranks all 8 commodities together; exposure = the paper account's setting
+        p["symbols"] = list(allowed)
+        p["leverage"] = known[(market, name)]["exposure"]
+        p["slippage_bp"] = 0.0                                   # the MCX cost model already charges a half-spread
+        p["pyramid_pct"] = None
+        for key in ("start", "end"):
+            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(body.get(key, ""))):
+                raise ValueError("Dates must look like 2024-01-31")
+            p[key] = body[key]
+        return {"market": market, "strategy": name, "params": p}
     # Leverage is not the user's choice: delivery shares are bought with the account's own cash (1x); futures use the margin Upstox really
     # charges (engine/margin_rates, refreshed by the paper trader), the lowest of the chosen symbols. The strategy's own caps still apply.
     strat = registry.get(market, name)
@@ -254,11 +268,19 @@ def work(run: dict) -> None:
         p = run["params"]
         def progress(i, n):
             run["progress"] = round(i / n * 100)
-        run["result"] = run_backtest(registry.get(run["market"], run["strategy"]), p["symbols"], p["start"], p["end"], capital=p["capital"], slippage_bp=p["slippage_bp"],
-                                     risk_pct=p["risk_pct"], max_positions=int(p["max_positions"]), leverage=p["leverage"], progress=progress,
-                                     trail_stop_pct=p["trail_stop_pct"], trail_after_pct=p["trail_after_pct"], profit_trail_pct=p["profit_trail_pct"],
-                                     pyramid_pct=p.get("pyramid_pct"),
-                                     on_snapshot=lambda snap: run.__setitem__("partial", snap))
+        if run["market"] == "commodity":                        # trend_carry: monthly, all 8 commodities ranked together, its own backtest
+            from markets.commodity import futures_eod
+            from markets.commodity.strategies.tf_monthly.trend_carry import strategy as tc
+            try:
+                run["result"] = tc.backtest(futures_eod.load(), p["capital"], p["start"], p["end"], exposure=p["leverage"])
+            except ValueError as e:
+                raise BacktestError(str(e))
+        else:
+            run["result"] = run_backtest(registry.get(run["market"], run["strategy"]), p["symbols"], p["start"], p["end"], capital=p["capital"], slippage_bp=p["slippage_bp"],
+                                         risk_pct=p["risk_pct"], max_positions=int(p["max_positions"]), leverage=p["leverage"], progress=progress,
+                                         trail_stop_pct=p["trail_stop_pct"], trail_after_pct=p["trail_after_pct"], profit_trail_pct=p["profit_trail_pct"],
+                                         pyramid_pct=p.get("pyramid_pct"),
+                                         on_snapshot=lambda snap: run.__setitem__("partial", snap))
         run["status"] = "done"
     except BacktestError as e:
         run["status"], run["error"] = "failed", str(e)

@@ -23,7 +23,8 @@ from core.paths import ARCHIVE_ROOT
 PY = sys.executable
 STEP_TIMEOUT_S = 45 * 60
 STEPS = [                            # (name, argv, exit codes that count as success)
-    ("mcx data", [PY, "-m", "markets.commodity.data", "--topup"], {0}),          # data download only: MCX is not traded
+    ("mcx data", [PY, "-m", "markets.commodity.data", "--topup"], {0}),          # nearest-contract MCX candles (research, depth studies)
+    ("mcx futures eod", [PY, "-m", "markets.commodity.futures_eod"], {0}),      # every expiry, daily: commodity trend_carry signals and backtests
     ("currency data", [PY, "-m", "markets.currency.data", "--topup"], {0}),
     ("equity data", [PY, "-m", "markets.equity.data", "--topup"], {0}),
     ("equity daily candles", [PY, "-m", "markets.equity.download_daily_weekly", "--topup", "--tf", "day"], {0}),   # trend_ema_cross reads these for its market check
@@ -42,7 +43,8 @@ STEPS = [                            # (name, argv, exit codes that count as suc
 ]
 # representative archive files whose newest candle date must not lag (market, file)
 FRESHNESS = [("commodity", "CRUDEOILM_1minute.csv"), ("commodity", "GOLD_1minute.csv"), ("commodity", "SILVER_1minute.csv"),
-             ("currency", "USDINR_1minute.csv"), ("equity", "RELIANCE_5minute.csv"), ("equity", "TATASTEEL_5minute.csv"), ("equity", "RELIANCE_daily.csv"), ("equity", "MON100_daily.csv")]
+             ("currency", "USDINR_1minute.csv"), ("equity", "RELIANCE_5minute.csv"), ("equity", "TATASTEEL_5minute.csv"), ("equity", "RELIANCE_daily.csv"), ("equity", "MON100_daily.csv"),
+             ("commodity", "mcx_futures_daily.csv")]
 IST = ZoneInfo("Asia/Kolkata")
 
 

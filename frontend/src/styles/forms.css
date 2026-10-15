@@ -11,3 +11,4 @@
 .progress > div{height:100%;background:var(--accent);transition:width .3s}
 .fees-box{background:var(--grid);border-radius:6px;padding:10px 12px;font-size:.8125rem;line-height:1.5}
 .warn{display:block;margin-top:4px;padding:8px 10px;border-radius:6px;background:var(--loss-bg);color:var(--loss);font-size:.75rem;line-height:1.45}
+.static-value{font-family:var(--font-num);padding:7px 0;font-variant-numeric:tabular-nums}
