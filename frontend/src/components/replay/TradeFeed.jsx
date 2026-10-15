@@ -14,7 +14,7 @@ export default function TradeFeed({ result, upto, onSelect }) {
     <div className="feed">
       {paged.rows.map(({ k, j, e }) => (
         <div className="trade clickable" key={`${k}-${j}`} role="button" tabIndex={0} title="Show this trade on the chart" onClick={() => onSelect?.({ sym: e.sym, at: k })} onKeyDown={(ev) => ev.key === "Enter" && onSelect?.({ sym: e.sym, at: k })}>
-          <span className="dt">{shortDate(result.days[k])}</span>
+          <span className="dt">{shortDate(result.days[k])}<br />{String(result.days[k]).slice(0, 4)}</span>
           <span className={`pill ${e.t}${e.t === "sell" && e.pnl > 0 ? " win" : ""}`}>{e.t === "buy" ? (e.add ? "ADD" : "BUY") : "SELL"}</span>
           <div>
             <div><b>{e.sym}</b> {qtyText(result, e.sym, e.q)} at {e.px.toFixed(2)}{e.t === "sell" && ` (bought ${e.entry.toFixed(2)})`}</div>

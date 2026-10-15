@@ -1,4 +1,4 @@
-import { shortDate, signed, tone } from "../../lib/format.js";
+import { longDate, shortDate, signed, tone } from "../../lib/format.js";
 import { qtyHeader, qtyText } from "../../lib/replay.js";
 import Pager from "../ui/Pager.jsx";
 import { usePaged } from "../../hooks/usePaged.js";
@@ -15,9 +15,9 @@ export default function SymbolTrades({ trades, days, onSelect, result }) {
         <tbody>
           {paged.rows.map((t, k) => (
             <tr key={k} title="Zoom the chart to this trade" onClick={() => onSelect?.(t)}>
-              <td>{shortDate(days[t.i0])}{t.adds?.length ? ` + added ${shortDate(days[t.adds[0].i])}` : ""}</td>
+              <td>{longDate(days[t.i0])}{t.adds?.length ? ` + added ${shortDate(days[t.adds[0].i])}` : ""}</td>
               <td>{qtyText(result, t.sym, t.qty)}{t.adds?.length ? ` + ${t.adds[0].q ?? "?"}` : ""}</td><td>{t.entry.toFixed(2)}{t.adds?.length ? ` / ${t.adds[0].px.toFixed(2)}` : ""}</td>
-              <td>{t.i1 != null ? shortDate(days[t.i1]) : "open"}</td>{!oneQty && <td>{qtyText(result, t.sym, t.soldQty)}</td>}<td>{t.exit != null ? t.exit.toFixed(2) : "-"}</td>
+              <td>{t.i1 != null ? longDate(days[t.i1]) : "open"}</td>{!oneQty && <td>{qtyText(result, t.sym, t.soldQty)}</td>}<td>{t.exit != null ? t.exit.toFixed(2) : "-"}</td>
               <td>{t.days != null ? `${t.days}d` : "-"}</td>
               <td className={t.pnl != null ? tone(t.pnl) : ""}>{t.pnl != null ? signed(t.pnl) : "-"}</td>
               <td>{t.why ?? "-"}</td>
