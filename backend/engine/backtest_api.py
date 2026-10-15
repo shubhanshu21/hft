@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import threading
@@ -314,10 +315,22 @@ def start(body: dict) -> dict:
     return run
 
 
+def _json_safe(o):
+    """JSON has no Infinity / NaN (a browser's JSON.parse rejects the whole response): send them as text. A run with no losing trade has an
+    infinite profit factor -- this froze the New backtest page on "Running" (2026-10-15); the page already shows "Infinity" as "no losers"."""
+    if isinstance(o, float) and not math.isfinite(o):
+        return "Infinity" if o > 0 else "-Infinity" if o < 0 else None
+    if isinstance(o, dict):
+        return {k: _json_safe(v) for k, v in o.items()}
+    if isinstance(o, (list, tuple)):
+        return [_json_safe(v) for v in o]
+    return o
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "hft-backtest"
     def _send(self, status: int, payload) -> None:
-        body = json.dumps(payload, default=str).encode()
+        body = json.dumps(_json_safe(payload), default=str).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))

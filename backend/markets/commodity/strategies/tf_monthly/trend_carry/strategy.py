@@ -119,7 +119,7 @@ def backtest(table: pd.DataFrame, capital: float = 500_000, start: str = "2023-0
     R, C = panel(table, ends, signals)
     t0, t1 = pd.Timestamp(start), pd.Timestamp(end)
     ends = [t for t in ends if t1 >= t >= t0 - pd.offsets.MonthEnd(1)]
-    cap, book, closed = capital, {}, []
+    cap, book, closed, skipped = capital, {}, [], []
     out = {"days": [], "equity": [], "events": [], "pos": [], "bars": {}}
     bench, bench_v = [], capital
     prev_px: dict[str, float] = {}
@@ -148,6 +148,7 @@ def backtest(table: pd.DataFrame, capital: float = 500_000, start: str = "2023-0
                 ct = alive.iloc[0]
                 lots = lots_for(cap, exposure, wt, float(ct["close"]), s)
                 if lots < 1:
+                    skipped.append(TRADE[s])                             # one lot is bigger than this holding's share of the money
                     continue
                 book[s] = {"expiry": ct["expiry"], "entry": float(ct["close"]), "lots": lots, "k": k, "t": t}
                 evs.append({"t": "buy", "sym": TRADE[s], "q": lots * lot_units(TRADE[s]), "px": round(float(ct["close"]), 2), "note": f"weight {wt:.0%}"})
@@ -169,6 +170,8 @@ def backtest(table: pd.DataFrame, capital: float = 500_000, start: str = "2023-0
     out["benchmark"] = bench
     out["metrics"] = metrics(out["equity"], capital, closed, len(out["days"]) * 21, len(book)) | {
         "note": f"Monthly strategy: one point per month end; buys and sells happen at month-end closes; holds the best {top_n(len(signals))} of the "
-                f"{len(signals)} chosen commodities. Benchmark = the chosen commodities held equally."}
+                f"{len(signals)} chosen commodities. Benchmark = the chosen commodities held equally."
+                + (f" {len(skipped)} planned holdings were skipped because one lot was bigger than their share of the money"
+                   f" ({', '.join(sorted(set(skipped)))}): more starting money or exposure trades them." if skipped else "")}
     out["skipped_symbols"] = []
     return out
