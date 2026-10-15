@@ -598,16 +598,43 @@ class DryRunner(RiskGates):
             w.writerow([now.isoformat(), sym, bid, ask, round(spread, 4), round(mid, 4), round(spread_pct, 4)])
 
     def _send_midday_summary(self, now: datetime) -> None:
+        """Booked profit alone is Rs0 on a day nothing was sold, so the summary also values every open position at the live price: profit so far,
+        what selling now would leave after the strategy's own fees, the stop, and the margin it blocks."""
         self._midday_summary_sent = True
-        open_syms = list(self.positions.keys())
-        pnl = self.capital - self.day_start_capital
-        pnl_pct = (pnl / self.day_start_capital * 100) if self.day_start_capital > 0 else 0.0
-        mkt_pnl_lines = "\n".join([f"  • {m.capitalize()}: ₹{val:,.2f}" for m, val in self.market_daily_pnl.items()])
+        booked = self.capital - self.day_start_capital
+        keys = {sym: pos.get("instrument_key") or SYMBOL_MAP.get(sym) for sym, pos in self.positions.items()}
+        try:
+            ltp = self.broker.get_ltp_batch([k for k in keys.values() if k]) if keys else {}
+        except Exception as e:
+            log.warning("midday summary: live prices unavailable: %s", e)
+            ltp = {}
+        def rs(v: float) -> str:
+            return f"{'+' if v >= 0 else '−'}₹{abs(v):,.0f}"
+        lines, open_pnl, open_net, margin = [], 0.0, 0.0, 0.0
+        for sym, pos in self.positions.items():
+            strat = self._strategy_of(pos, sym)
+            lots = pos.get("lots", pos.get("qty", 1))
+            lot = pos.get("lot_size") or strat.lot_size(sym)
+            sign = 1 if pos["direction"] == "long" else -1
+            margin += float(pos.get("margin_used") or 0.0)
+            size = f"{lots} lot{'s' if lots != 1 else ''}" if lot > 1 else f"{lots} shares"
+            px = ltp.get(keys[sym])
+            if px:
+                pnl = (px - pos["entry_price"]) * sign * lots * lot
+                net = strat.costs(sym, pos["direction"], pos["entry_price"], px, lots)["net"]
+                open_pnl += pnl
+                open_net += net
+                lines.append(f"• {sym} {'BUY' if sign == 1 else 'SELL'} {size} @ {pos['entry_price']:,.2f} → {px:,.2f}: <b>{rs(pnl)}</b> "
+                             f"(after fees if sold now {rs(net)}; stop {pos['current_stop']:,.2f})")
+            else:
+                lines.append(f"• {sym} {'BUY' if sign == 1 else 'SELL'} {size} @ {pos['entry_price']:,.2f}: price unavailable (stop {pos['current_stop']:,.2f})")
         msg = (
-            f"📈 <b>MIDDAY P&L SUMMARY</b> ({now.strftime('%H:%M')} IST)\n"
-            f"Capital: ₹{self.capital:,.2f} (Day P&L: ₹{pnl:+,.2f} / {pnl_pct:+.2f}%)\n"
-            f"Market P&Ls:\n{mkt_pnl_lines}\n"
-            f"Open Positions ({len(open_syms)}): {', '.join(open_syms) or 'none'}"
+            f"📈 <b>MIDDAY SUMMARY</b> ({now.strftime('%H:%M')} IST)\n"
+            f"Account value now: <b>₹{self.capital + open_pnl:,.0f}</b> (booked ₹{self.capital:,.0f} + open {rs(open_pnl)})\n"
+            f"Sold today: {rs(booked)}\n"
+            f"Open trades now: {rs(open_pnl)} ({rs(open_net)} after fees if all sold now)\n"
+            f"Margin blocked ₹{margin:,.0f} · free ₹{self.capital - margin:,.0f}\n\n"
+            + (f"<b>Open trades ({len(lines)})</b>\n" + "\n".join(lines) if lines else "No open trades.")
         )
         print(f"\n{BOLD}{GR}{msg}{R}\n", flush=True)
         telegram.send(msg)
@@ -628,7 +655,7 @@ class DryRunner(RiskGates):
                 self._refresh_equity_regime()
             self._midday_summary_sent = False  # reset for new trading day (attr exists from __init__)
 
-        if now.hour >= 12 and now.minute >= 30 and not self._midday_summary_sent:
+        if now.weekday() < 5 and (now.hour, now.minute) >= (12, 30) and not self._midday_summary_sent:
             self._send_midday_summary(now)
 
         if self.day_start_capital > 0:
