@@ -23,6 +23,9 @@ GST_RATE                   = 0.18
 # The model here used min(0.05%, Rs20) and understated every round trip by ~Rs23.6 (+GST) -- see tests/test_costs_vs_upstox.py.
 UPSTOX_BROKERAGE_CAP       = 30.0    # flat Rs30 cap per executed order leg
 UPSTOX_BROKERAGE_PCT       = 0.06    # 0.06% turnover, whichever is lower
+# ETFs that pay NO STT (gold, silver, debt and some international funds are not "equity-oriented"), per Upstox ChargeApi.get_brokerage
+# on 2026-10-15, delivery and intraday alike. Equity ETFs (NIFTYBEES, BANKBEES, ITBEES, CPSEETF, ...) and MAFANG / MASPTOP50 pay the stock rate.
+NO_STT_SYMBOLS = frozenset({"GOLDBEES", "SILVERBEES", "GILT5YBEES", "LIQUIDBEES", "MON100", "HNGSNGBEES", "MAHKTECH"})
 
 
 def compute_equity_brokerage(trade_val: float) -> float:
@@ -39,7 +42,7 @@ def compute_nse_equity_costs(direction: str, entry: float, exit_p: float, qty: i
     gross = qty * (exit_p - entry) * d
 
     brok = compute_equity_brokerage(ev) + compute_equity_brokerage(xv)
-    stt = (xv if d == 1 else ev) * (EQUITY_STT_PCT_SELL_SIDE / 100)
+    stt = 0.0 if symbol.upper() in NO_STT_SYMBOLS else (xv if d == 1 else ev) * (EQUITY_STT_PCT_SELL_SIDE / 100)
     stamp = (ev if d == 1 else xv) * (EQUITY_STAMP_DUTY_PCT / 100)
     exch = (ev + xv) * (EQUITY_EXCHANGE_TXN_PCT / 100)
     sebi = (ev + xv) * (EQUITY_SEBI_PCT / 100)
@@ -84,7 +87,7 @@ def compute_nse_equity_delivery_costs(direction: str, entry: float, exit_p: floa
     def brok_leg(v: float) -> float:
         return min(v * DELIVERY_BROKERAGE_PCT / 100, DELIVERY_BROKERAGE_CAP)
     brok = (brok_leg(ev) + brok_leg(xv)) * (1 + GST_RATE)
-    stt = (ev + xv) * DELIVERY_STT_PCT_BOTH_SIDES / 100
+    stt = 0.0 if symbol.upper() in NO_STT_SYMBOLS else (ev + xv) * DELIVERY_STT_PCT_BOTH_SIDES / 100
     stamp = ev * DELIVERY_STAMP_DUTY_PCT_BUY / 100
     exch = (ev + xv) * (EQUITY_EXCHANGE_TXN_PCT / 100)
     sebi = (ev + xv) * (EQUITY_SEBI_PCT / 100)
