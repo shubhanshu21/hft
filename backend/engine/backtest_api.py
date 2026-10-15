@@ -24,7 +24,7 @@ import threading
 import time
 import traceback
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -134,6 +134,73 @@ def validate(body: dict) -> dict:
     return {"market": market, "strategy": name, "params": p}
 
 
+IST = timezone(timedelta(hours=5, minutes=30))
+_LIVE_TTL = 30.0
+_live_cache: dict = {"at": 0.0, "keys": (), "prices": {}}
+
+
+def _live_prices(keys: list[str]) -> dict:
+    """Latest traded price per Upstox instrument key, one batch call at most every 30 s (the page polls each minute; Upstox allows 2,000 calls
+    per 30 minutes). Empty when there is no valid token or Upstox is unreachable; the caller then falls back to the last daily close."""
+    keys = tuple(sorted(set(keys)))
+    if not keys:
+        return {}
+    now = time.time()
+    with _lock:
+        if _live_cache["keys"] == keys and now - _live_cache["at"] < _LIVE_TTL:
+            return _live_cache["prices"]
+    prices: dict = {}
+    try:
+        from engine.config import _load_access_token
+        from services.broker.upstox_broker import UpstoxBroker
+        token = _load_access_token()
+        if token:
+            prices = {k: v for k, v in UpstoxBroker(access_token=token, dry_run=True).get_ltp_batch(list(keys)).items() if v}
+    except Exception:
+        traceback.print_exc()
+    with _lock:
+        _live_cache.update(at=now, keys=keys, prices=prices)
+    return prices
+
+
+def _last_close(symbol: str, market: str) -> tuple[float | None, str | None]:
+    f = ARCHIVE_ROOT / ("currency" if market == "currency" else "equity") / (f"{symbol}_daily_adj.csv" if market == "currency" else f"{symbol}_daily.csv")
+    try:
+        last = pd.read_csv(f).iloc[-1]
+        return float(last["close"]), str(last["timestamp"])[:10]
+    except Exception:
+        return None, None
+
+
+def _value_position(p: dict, live: dict) -> None:
+    """Price an open paper position now: live price (else the last daily close), profit before fees, what selling now would net after the
+    strategy's own cost model (the same call the paper trader makes when it closes), money at risk to the stop and the margin it blocks."""
+    from core.symbols import market_of
+    state = json.loads(p.pop("state") or "{}")
+    market = market_of(p["symbol"])
+    strat = registry.get(market, p["strategy"])
+    lot = int(state.get("lot_size") or (strat.lot_size(p["symbol"]) if strat else 1) or 1)
+    sign = -1 if p["direction"] == "short" else 1
+    price, source, as_of = live.get(p.get("instrument_key")), "live", datetime.now(IST).isoformat(timespec="seconds")
+    if price is None:
+        price, as_of = _last_close(p["symbol"], market)
+        source = "last close"
+    p.update(market=market, lot_size=lot, units=p["qty"] * lot, price_now=price, price_source=source if price is not None else None, price_time=as_of,
+             margin_used=round(float(state.get("margin_used") or p["qty"] * lot * p["entry_price"]), 2),
+             risk_to_stop=round((p["entry_price"] - p["current_stop"]) * sign * p["qty"] * lot, 2))
+    p.pop("instrument_key", None)
+    if price is None:
+        p.update(profit_now=None, fees_if_sold=None, net_if_sold=None, move_pct=None)
+        return
+    p["profit_now"] = round((price - p["entry_price"]) * sign * p["qty"] * lot, 2)
+    p["move_pct"] = round((price / p["entry_price"] - 1) * 100 * sign, 3)
+    try:
+        c = strat.costs(p["symbol"], p["direction"], p["entry_price"], price, p["qty"])
+        p["net_if_sold"], p["fees_if_sold"] = round(c["net"], 2), round(c["gross"] - c["net"], 2)
+    except Exception:
+        p["net_if_sold"] = p["fees_if_sold"] = None
+
+
 def paper_summary() -> dict:
     """The paper-trading account, read-only (SQLite opened mode=ro). Open positions are valued at the latest daily close in the archive."""
     import sqlite3
@@ -145,7 +212,7 @@ def paper_summary() -> dict:
     con.row_factory = sqlite3.Row
     try:
         acc = con.execute("SELECT * FROM accounts WHERE account_id = 'DRYRUN_ACCOUNT'").fetchone()
-        pos = [dict(r) for r in con.execute("SELECT symbol, direction, qty, entry_price, current_stop, best_price, entry_time, strategy FROM positions "
+        pos = [dict(r) for r in con.execute("SELECT symbol, direction, qty, entry_price, current_stop, best_price, entry_time, strategy, instrument_key, state FROM positions "
                                               "WHERE account_id = 'DRYRUN_ACCOUNT' AND status = 'OPEN' ORDER BY entry_time")]
         trades = [dict(r) for r in con.execute("SELECT symbol, direction, qty, entry_price, exit_price, entry_dt, exit_dt, exit_reason, gross_pnl, total_friction, net_pnl, strategy "
                                                  "FROM trades WHERE account_id = 'DRYRUN_ACCOUNT' ORDER BY exit_dt DESC LIMIT 500")]
@@ -153,14 +220,14 @@ def paper_summary() -> dict:
                                                 "GROUP BY date ORDER BY date")]
     finally:
         con.close()
+    live = _live_prices([p["instrument_key"] for p in pos if p.get("instrument_key")])
     for p in pos:
-        f = ARCHIVE_ROOT / "equity" / f"{p['symbol']}_daily.csv"
-        try:
-            last = pd.read_csv(f).iloc[-1]
-            p["last_close"], p["last_date"] = float(last["close"]), str(last["timestamp"])[:10]
-        except Exception:
-            p["last_close"], p["last_date"] = None, None
-    return {"available": True, "account": dict(acc) if acc else None, "positions": pos, "trades": trades, "equity": snaps,
+        _value_position(p, live)
+    if acc:
+        acc = dict(acc)
+        acc["margin_used"] = round(sum(p["margin_used"] for p in pos), 2)
+        acc["free_cash"] = round(acc["current_capital"] - acc["margin_used"], 2)
+    return {"available": True, "account": acc, "positions": pos, "trades": trades, "equity": snaps,
             "stats": {"closed": len(trades), "wins": sum(1 for t in trades if (t["net_pnl"] or 0) > 0), "net": round(sum(t["net_pnl"] or 0 for t in trades)),
                       "fees": round(sum(t["total_friction"] or 0 for t in trades))}}
 

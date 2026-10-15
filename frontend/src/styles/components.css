@@ -61,3 +61,21 @@ button.danger{background:var(--loss);border-color:var(--loss);color:#fff;font-we
 .pager{display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:10px 0 2px;font-size:.8125rem;color:var(--muted)}
 .pager button{padding:4px 10px}
 .pager button:disabled{opacity:.4;cursor:default}
+/* Paper page: one card per open trade */
+.trade-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,380px),1fr));gap:14px}
+.trade-card{border:1px solid var(--line);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.trade-card header{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+.trade-card header>div:first-child{min-width:0}
+.tc-sym{font-weight:600;font-size:1.0625rem;display:flex;align-items:center;gap:8px}
+.tc-pnl{text-align:right;flex:none}
+.tc-big{font-family:var(--font-num);font-size:1.5rem;font-weight:600;font-variant-numeric:tabular-nums;line-height:1.1}
+.tc-track{position:relative;height:6px;border-radius:3px;background:linear-gradient(90deg,var(--loss-bg),var(--grid) 50%,var(--gain-bg))}
+.tc-mid{position:absolute;left:50%;top:-3px;width:2px;height:12px;background:var(--muted)}
+.tc-dot{position:absolute;top:50%;width:12px;height:12px;border-radius:50%;transform:translate(-50%,-50%);border:2px solid var(--panel);background:currentColor}
+.tc-ends{display:grid;grid-template-columns:1fr 1fr 1fr;font-size:.6875rem;color:var(--muted);margin-top:6px;font-family:var(--font-num)}
+.tc-ends span:nth-child(2){text-align:center}
+.tc-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px 16px;margin:0}
+.tc-grid dt{font-size:.6875rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.tc-grid dd{margin:2px 0 0;font-family:var(--font-num);font-variant-numeric:tabular-nums}
+.money .stat .v{font-size:1.0625rem}
+

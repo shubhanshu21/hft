@@ -5,6 +5,7 @@ import Stat from "../components/ui/Stat.jsx";
 import { baseOptions } from "../components/charts/chartOptions.js";
 import { getPaper } from "../api/client.js";
 import StrategyStatus from "../components/paper/StrategyStatus.jsx";
+import OpenTradeCard from "../components/paper/OpenTradeCard.jsx";
 import Pager from "../components/ui/Pager.jsx";
 import { usePaged } from "../hooks/usePaged.js";
 import { useTheme } from "../hooks/useTheme.js";
@@ -17,12 +18,12 @@ export default function PaperPage() {
   const colors = useTheme();
   const [d, setD] = useState(null);
   const [error, setError] = useState("");
+  const [loadedAt, setLoadedAt] = useState(null);
   const box = useRef(null);
-  const posPaged = usePaged(d?.positions ?? [], 10);
   const tradePaged = usePaged(d?.trades ?? [], 15);
 
   useEffect(() => {
-    const load = () => getPaper().then((x) => { setD(x); setError(""); }).catch((e) => setError(e.message));
+    const load = () => getPaper().then((x) => { setD(x); setError(""); setLoadedAt(new Date()); }).catch((e) => setError(e.message));
     load();
     const id = setInterval(load, 60000);
     return () => clearInterval(id);
@@ -42,35 +43,41 @@ export default function PaperPage() {
   if (!d.available) return <div className="wrap"><div className="panel none">There is no paper-trading account yet.</div></div>;
 
   const acc = d.account ?? {};
-  const unreal = d.positions.reduce((a, p) => a + (p.last_close != null ? (p.last_close - p.entry_price) * p.qty * (p.direction === "short" ? -1 : 1) : 0), 0);
-  const value = (acc.current_capital ?? 0) + unreal;
+  const open = d.positions.reduce((a, p) => a + (p.profit_now ?? 0), 0);
+  const value = (acc.current_capital ?? 0) + open;
+  const live = d.positions.some((p) => p.price_source === "live");
   return (
     <div className="wrap">
       <div className="page-head">
-        <div><h1>Paper trading</h1><div className="sub">The practice account the daemon trades with real prices and no real money. Refreshes every minute. Open positions are valued at the latest daily close on file.</div></div>
-        <div className="big"><div className="eq">{inr(value)}</div><div className="chg"><span className={tone(value - acc.initial_capital)}>{signed(value - acc.initial_capital)}</span> since {inr(acc.initial_capital)}</div></div>
+        <div>
+          <h1>Paper trading</h1>
+          <div className="sub">Practice account: real prices, no real money. Open trades use the live Upstox price{live ? "" : " when it is available (otherwise the last close)"}.
+            Updated {loadedAt ? loadedAt.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }) : "-"}, refreshes every minute.</div>
+        </div>
+        <div className="big">
+          <div className="eq">{inr(value)}</div>
+          <div className="chg"><span className={tone(value - acc.initial_capital)}>{signed(value - acc.initial_capital)}</span> since start ({inr(acc.initial_capital)})</div>
+        </div>
       </div>
-      <Panel className="stats">
+
+      <Panel className="stats money">
+        <Stat label="Account (booked)" value={inr(acc.current_capital ?? 0)} />
+        <Stat label="Open trades now" value={<span className={tone(open)}>{signed(open)}</span>} />
+        <Stat label="Blocked as margin" value={inr(acc.margin_used ?? 0)} />
+        <Stat label="Free to trade" value={inr(acc.free_cash ?? 0)} />
         <Stat label="Booked profit" value={<span className={tone(d.stats.net)}>{signed(d.stats.net)}</span>} />
-        <Stat label="Not sold yet" value={<span className={tone(unreal)}>{signed(unreal)}</span>} />
-        <Stat label="Closed trades" value={d.stats.closed} />
-        <Stat label="Winners" value={d.stats.closed ? `${d.stats.wins} of ${d.stats.closed}` : "-"} />
+        <Stat label="Closed trades" value={d.stats.closed ? `${d.stats.closed} (${d.stats.wins} won)` : "0"} />
         <Stat label="Fees paid" value={inr(d.stats.fees)} />
-        <Stat label="Open now" value={d.positions.length} />
       </Panel>
-      <StrategyStatus />
-      <Panel title="Holding now">
-        {!d.positions.length ? <div className="none">No open positions. The strategy only buys between 9:15 and 10:00 when its rules are met.</div> : (
-          <div className="table-wrap"><table className="trades-table">
-            <thead><tr><th>Stock</th><th>Strategy</th><th>Bought</th><th>Qty</th><th>Buy price</th><th>Stop now</th><th>Last close</th><th>Not sold yet</th></tr></thead>
-            <tbody>{posPaged.rows.map((p) => {
-              const u = p.last_close != null ? (p.last_close - p.entry_price) * p.qty * (p.direction === "short" ? -1 : 1) : null;
-              return <tr key={p.symbol}><td>{p.symbol}</td><td>{p.strategy}</td><td>{when(p.entry_time)}</td><td>{p.qty}</td><td>{p.entry_price.toFixed(2)}</td>
-                <td>{p.current_stop?.toFixed(2)}</td><td>{p.last_close?.toFixed(2) ?? "-"} <span className="note">{p.last_date}</span></td><td className={u != null ? tone(u) : ""}>{u != null ? signed(u) : "-"}</td></tr>;
-            })}</tbody>
-          </table><Pager paged={posPaged} /></div>)}
+
+      <Panel title={`Open trades (${d.positions.length})`}>
+        {!d.positions.length
+          ? <div className="none">No open trades. Equity buys only between 9:15 and 10:00 when its rules are met; currency checks at the 9:00 open.</div>
+          : <div className="trade-cards">{d.positions.map((p) => <OpenTradeCard key={p.symbol} p={p} />)}</div>}
+        {d.positions.length > 0 && <p className="note">"Profit now" is the price move only. "If sold now" also takes off brokerage, taxes and the buy–sell price gap, the same way the paper trader books a sale.
+          The account changes only when a trade is sold.</p>}
       </Panel>
-      <Panel title="Account value by day">{d.equity.length ? <div ref={box} className="tv-box" /> : <div className="none">No daily snapshots yet.</div>}</Panel>
+
       <Panel title="Closed trades">
         {!d.trades.length ? <div className="none">No closed trades yet.</div> : (
           <div className="table-wrap"><table className="trades-table">
@@ -79,6 +86,10 @@ export default function PaperPage() {
               <td>{t.exit_price?.toFixed(2)}</td><td>{inr(t.total_friction ?? 0)}</td><td className={tone(t.net_pnl ?? 0)}>{signed(t.net_pnl ?? 0)}</td><td>{(t.exit_reason ?? "").replace(/_/g, " ")}</td></tr>)}</tbody>
           </table><Pager paged={tradePaged} /></div>)}
       </Panel>
+
+      <Panel title="Account value by day">{d.equity.length ? <div ref={box} className="tv-box" /> : <div className="none">The first point appears after today's close.</div>}</Panel>
+
+      <StrategyStatus />
     </div>
   );
 }
