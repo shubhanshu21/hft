@@ -1,7 +1,13 @@
 /** The settings a run used, so a result is never read without them. */
 export default function SettingsChips({ params }) {
   if (!params) return null;
-  const items = [
+  const items = params.market === "commodity" ? [                   // trend_carry: monthly ranking, exposure instead of risk per trade, MCX cost model
+    ["Start money", `₹${Number(params.capital).toLocaleString("en-IN")}`],
+    ["Exposure", `${params.leverage}x the account`],
+    ["Commodities", `${params.symbols?.length}: ${(params.symbols ?? []).join(", ")}`],
+    ["Rebalance", "monthly"],
+    ["Costs", "MCX fees + half-spread"],
+  ] : [
     ["Start money", `₹${Number(params.capital).toLocaleString("en-IN")}`],
     ["Risk per trade", `${params.risk_pct}%`],
     ["Most holdings", params.max_positions],

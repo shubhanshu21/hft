@@ -14,12 +14,12 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
   const options = strategies.filter((s) => s.market === market);
   const [name, setName] = useState(options[0]?.name ?? "");
   const strategy = options.find((s) => s.name === name) ?? options[0];
-  useEffect(() => { if (strategy) setF((x) => ({ ...x, risk_pct: strategy.default_risk_pct ?? 2 })); }, [strategy?.market, strategy?.name]);   // start from the risk the strategy was tested with
+  useEffect(() => { if (strategy) setF((x) => ({ ...x, risk_pct: strategy.default_risk_pct ?? 2, exposure: strategy.exposure ?? 1 })); }, [strategy?.market, strategy?.name]);   // start from the risk the strategy was tested with
   const safeRisk = Math.max(3, strategy?.default_risk_pct ?? 0);
-  const fixed = !!strategy?.fixed_symbols;          // commodity/trend_carry: ranks all its contracts together, monthly; exposure set by the server
+  const monthly = !!strategy?.monthly_rank;          // commodity/trend_carry: ranks the chosen contracts together each month; exposure is editable
   const [all, setAll] = useState(true);
   const [chosen, setChosen] = useState([]);
-  const [f, setF] = useState({ ...yearRange(THIS_YEAR), capital: 100000, slippage_bp: 5, risk_pct: 2, max_positions: 3, leverage: 1, label: "" });
+  const [f, setF] = useState({ ...yearRange(THIS_YEAR), capital: 100000, slippage_bp: 5, risk_pct: 2, max_positions: 3, leverage: 1, label: "", exposure: 1.5 });
   const [year, setYear] = useState(String(THIS_YEAR));       // "custom" once the dates are edited by hand
 
   useEffect(() => { const o = strategies.filter((s) => s.market === market); setName(o[0]?.name ?? ""); setChosen([]); setAll(true);
@@ -36,6 +36,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
     onSubmit({
       market, strategy: name, symbols: all ? strategy.symbols : chosen,
       start: f.start, end: f.end, capital: +f.capital, slippage_bp: market === "currency" ? 0 : +f.slippage_bp, risk_pct: +f.risk_pct, max_positions: +f.max_positions,
+      exposure: +f.exposure,
       label: f.label,   // exits, trailing stops and adding to winners are the strategy's own (the extra overrides were removed from the form)
     });
   };
@@ -63,11 +64,11 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
           <div className="field"><label htmlFor="start">From</label><input id="start" type="date" value={f.start} onChange={setDate("start")} required /></div>
           <div className="field"><label htmlFor="end">To</label><input id="end" type="date" value={f.end} onChange={setDate("end")} required /></div>
         </div>
-        {strategy && fixed && (
-          <p className="hint">Monthly strategy: every month end it ranks all {strategy.symbols.length} MCX commodities ({strategy.symbols.join(", ")}) and holds the best 3,
-            so the symbols cannot be picked one by one. History starts December 2021; the first trade is in January 2023 (it needs 12 months of trend).</p>
+        {strategy && monthly && (
+          <p className="hint">Monthly strategy: every month end it ranks the chosen MCX commodities against each other and holds the best 3 (with fewer than 6 chosen,
+            the best half). Pick at least 2. History starts December 2021; the first trade is in January 2023 (it needs 12 months of trend).</p>
         )}
-        {strategy && !fixed && (
+        {strategy && (
           <div className="field">
             <label className="check" htmlFor="all"><input id="all" type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} /> All {strategy.symbols.length} symbols</label>
             {!all && (
@@ -86,9 +87,17 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
             <div className="field"><label htmlFor="slip">Slippage per side (basis points)</label><input id="slip" type="number" min="0" max="100" step="0.5" value={f.slippage_bp} onChange={set("slippage_bp")} />
               <span className="hint">5 bp = 0.05%, charged when buying and again when selling.</span></div>
           )}
-          {fixed ? (
-            <div className="field"><label>Exposure</label><div className="static-value">{strategy.exposure}x the account</div>
-              <span className="hint">Contracts worth up to {strategy.exposure}x the money, the same as its paper account (MCX_TREND_CARRY_EXPOSURE). Upstox margin is about 9-35% of that.</span></div>
+          {monthly ? (
+            <div className="field"><label htmlFor="exposure">Exposure (x the account)</label>
+              <input id="exposure" type="number" min={strategy.exposure_min} max={strategy.exposure_max} step="0.25" value={f.exposure} onChange={set("exposure")} />
+              <span className="hint">Total value of contracts held, as a multiple of your money: {strategy.exposure_min}x to {strategy.exposure_max}x (the most Upstox margin allows;
+                each contract is also held to its own margin, at most 80% of the account in all). The paper account uses {strategy.exposure}x.</span>
+              {+f.exposure > 2 && (
+                <span className="warn" role="alert">
+                  High exposure: profits and losses grow together. In June 2026 all three holdings fell ~15%: at 3x the worst fall was −44%, and at full Upstox
+                  leverage (~8x) that one month lost about 85% of the account.
+                </span>
+              )}</div>
           ) : (<>
           <div className="field"><label htmlFor="risk">Risk per trade (% of account)</label><input id="risk" type="number" min="0.1" max="10" step="0.1" value={f.risk_pct} onChange={set("risk_pct")} />
             {+f.risk_pct > safeRisk && (

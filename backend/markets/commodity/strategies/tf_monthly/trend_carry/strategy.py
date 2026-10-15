@@ -32,6 +32,14 @@ TRADE = {"GOLDM": "GOLDTEN", "SILVERM": "SILVERMIC", "CRUDEOIL": "CRUDEOILM", "N
 TOP_N, LOOKBACK, VOL_WINDOW = 3, 12, 12
 MARGIN_PCT = {"GOLDM": 0.093, "SILVERM": 0.126, "CRUDEOIL": 0.35, "NATURALGAS": 0.30, "COPPER": 0.10, "ZINC": 0.092, "ALUMINIUM": 0.093, "LEAD": 0.10}
 MAX_MARGIN_USE = 0.8           # never block more than 80% of the account as margin
+EXPOSURE_MIN = 0.25
+EXPOSURE_MAX = round(1 / min(MARGIN_PCT.values()), 1)      # the most Upstox lets any of them be geared (gold ~9.3% margin -> ~10.8x)
+SIGNAL_OF = {v: k for k, v in TRADE.items()}                 # mini contract -> the signal contract it follows
+
+
+def top_n(n_symbols: int) -> int:
+    """3 holdings out of 8; with fewer commodities chosen, at most half of them (so there is still a ranking), at least 1."""
+    return max(1, min(TOP_N, n_symbols // 2))
 
 
 def month_ends(table: pd.DataFrame, before: pd.Timestamp | None = None) -> list[pd.Timestamp]:
@@ -51,10 +59,10 @@ def _rows(table, sym, day):
     return x.sort_values("expiry")
 
 
-def panel(table: pd.DataFrame, ends: list[pd.Timestamp]) -> tuple[pd.DataFrame, pd.DataFrame]:
+def panel(table: pd.DataFrame, ends: list[pd.Timestamp], signals=SIGNALS) -> tuple[pd.DataFrame, pd.DataFrame]:
     """R: month-by-month return of holding each commodity's contract alive at the next month end; C: carry at each month end."""
     R, C = {}, {}
-    for s in SIGNALS:
+    for s in signals:
         r, c = {}, {}
         for i, t in enumerate(ends):
             cur = _rows(table, s, t)
@@ -81,9 +89,10 @@ def targets(R: pd.DataFrame, C: pd.DataFrame, t: pd.Timestamp) -> dict[str, floa
     if t not in mom.index or t not in C.index:
         return {}
     score = (mom.loc[t].rank() + C.loc[t].rank()).dropna()
-    if len(score) < 2 * TOP_N:
+    n = top_n(len(R.columns))
+    if len(score) < 2 * n:
         return {}
-    picks = list(score.nlargest(TOP_N).index)
+    picks = list(score.nlargest(n).index)
     vol = R.rolling(VOL_WINDOW, min_periods=6).std().loc[t]
     inv = {s: 1 / vol[s] for s in picks if vol.get(s, 0) > 0}
     tot = sum(inv.values())
@@ -98,14 +107,16 @@ def lots_for(capital: float, exposure: float, weight: float, price: float, signa
     return int(max(0, min(by_notional, by_margin)))
 
 
-def backtest(table: pd.DataFrame, capital: float = 500_000, start: str = "2023-01-01", end: str = "2100-01-01", exposure: float = 1.5) -> dict:
+def backtest(table: pd.DataFrame, capital: float = 500_000, start: str = "2023-01-01", end: str = "2100-01-01", exposure: float = 1.5,
+             symbols=None) -> dict:
     """Month-end backtest in the web backtester's replay shape: one row per month end (days, equity, events, pos, bars, benchmark, metrics).
     At each month end the last month's holdings are sold at that day's close of the SAME contract and the new ones bought at the close of the
     contract alive past the next month end. Prices are the signal contract's month-end close (minis track it per unit); fees and half-spread
     from markets/commodity/costs.py on the mini contract."""
     from core.backtester import metrics
+    signals = tuple(SIGNAL_OF.get(x, x) for x in symbols) if symbols else SIGNALS     # the mini contracts chosen on the page -> their signal contracts
     ends = month_ends(table)
-    R, C = panel(table, ends)
+    R, C = panel(table, ends, signals)
     t0, t1 = pd.Timestamp(start), pd.Timestamp(end)
     ends = [t for t in ends if t1 >= t >= t0 - pd.offsets.MonthEnd(1)]
     cap, book, closed = capital, {}, []
@@ -140,7 +151,7 @@ def backtest(table: pd.DataFrame, capital: float = 500_000, start: str = "2023-0
                     continue
                 book[s] = {"expiry": ct["expiry"], "entry": float(ct["close"]), "lots": lots, "k": k, "t": t}
                 evs.append({"t": "buy", "sym": TRADE[s], "q": lots * lot_units(TRADE[s]), "px": round(float(ct["close"]), 2), "note": f"weight {wt:.0%}"})
-        for s in SIGNALS:                                                # monthly candle per mini symbol: last month end's close -> this one
+        for s in signals:                                                # monthly candle per mini symbol: last month end's close -> this one
             front = _rows(table, s, t)
             front = front[front["expiry"] > t + pd.Timedelta(days=3)]
             c_ = float(front["close"].iloc[0]) if len(front) else None
@@ -157,6 +168,7 @@ def backtest(table: pd.DataFrame, capital: float = 500_000, start: str = "2023-0
     out["bars"] = {k_: v for k_, v in out["bars"].items() if any(v)}
     out["benchmark"] = bench
     out["metrics"] = metrics(out["equity"], capital, closed, len(out["days"]) * 21, len(book)) | {
-        "note": "Monthly strategy: one point per month end; buys and sells happen at month-end closes. Benchmark = all 8 commodities held equally."}
+        "note": f"Monthly strategy: one point per month end; buys and sells happen at month-end closes; holds the best {top_n(len(signals))} of the "
+                f"{len(signals)} chosen commodities. Benchmark = the chosen commodities held equally."}
     out["skipped_symbols"] = []
     return out

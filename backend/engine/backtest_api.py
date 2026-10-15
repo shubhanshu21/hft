@@ -55,8 +55,8 @@ def universe(market: str) -> list[str]:
 def catalog() -> list[dict]:
     from markets.commodity.strategies.tf_monthly.trend_carry import strategy as tc
     mcx = {"market": "commodity", "name": "trend_carry", "timeframe": "1 months", "supported": True, "symbols": sorted(set(tc.TRADE.values())),
-           "summary": (tc.__doc__ or "").strip().split("\n")[0], "intraday": False, "default_risk_pct": None, "fixed_symbols": True,
-           "exposure": float(os.environ.get("MCX_TREND_CARRY_EXPOSURE", 1.5))}
+           "summary": (tc.__doc__ or "").strip().split("\n")[0], "intraday": False, "default_risk_pct": None, "monthly_rank": True,
+           "exposure": float(os.environ.get("MCX_TREND_CARRY_EXPOSURE", 1.5)), "exposure_min": tc.EXPOSURE_MIN, "exposure_max": tc.EXPOSURE_MAX}
     return [{"market": m, "name": n, "timeframe": f"{s.timeframe[1]} {s.timeframe[0]}", "supported": tuple(s.timeframe) == ("days", 1), "symbols": list(getattr(s, "universe", None) or universe(m)),
              "summary": (s.__doc__ or "").strip().split("\n")[0], "intraday": s.intraday,
              "default_risk_pct": getattr(s, "default_risk_pct", None)}
@@ -113,9 +113,14 @@ def validate(body: dict) -> dict:
         if not lo <= v <= hi:
             raise ValueError(f"{key} must be between {lo} and {hi}")
         p[key] = v
-    if market == "commodity":                                    # trend_carry ranks all 8 commodities together; exposure = the paper account's setting
-        p["symbols"] = list(allowed)
-        p["leverage"] = known[(market, name)]["exposure"]
+    if market == "commodity":                                    # trend_carry ranks the chosen commodities together each month
+        if len(symbols) < 2:
+            raise ValueError("Pick at least 2 commodities: the strategy ranks them against each other")
+        row = known[(market, name)]
+        ex = float(body.get("exposure", row["exposure"]))
+        if not row["exposure_min"] <= ex <= row["exposure_max"]:
+            raise ValueError(f"Exposure must be between {row['exposure_min']}x and {row['exposure_max']}x (the most Upstox margin allows)")
+        p["leverage"] = ex
         p["slippage_bp"] = 0.0                                   # the MCX cost model already charges a half-spread
         p["pyramid_pct"] = None
         for key in ("start", "end"):
@@ -272,7 +277,7 @@ def work(run: dict) -> None:
             from markets.commodity import futures_eod
             from markets.commodity.strategies.tf_monthly.trend_carry import strategy as tc
             try:
-                run["result"] = tc.backtest(futures_eod.load(), p["capital"], p["start"], p["end"], exposure=p["leverage"])
+                run["result"] = tc.backtest(futures_eod.load(), p["capital"], p["start"], p["end"], exposure=p["leverage"], symbols=p["symbols"])
             except ValueError as e:
                 raise BacktestError(str(e))
         else:
