@@ -1,9 +1,0 @@
-[Unit]
-Description=Nifty weekly options paper trading (expiry-day condor + directional buying; paper only, no real orders)
-
-[Service]
-Type=simple
-WorkingDirectory=/var/www/html/hft/backend
-ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m engine.options_paper
-# the session loop ends by itself at 15:25 IST
-TimeoutStopSec=60

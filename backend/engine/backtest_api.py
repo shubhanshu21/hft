@@ -235,7 +235,7 @@ def _value_position(p: dict, live: dict) -> None:
         p["net_if_sold"] = p["fees_if_sold"] = None
 
 
-PAPER_ACCOUNTS = [("DRYRUN_ACCOUNT", "Equity + currency"), ("MCX_TREND_CARRY", "MCX trend + carry"), ("OPTIONS_PAPER", "Nifty options")]
+PAPER_ACCOUNTS = [("DRYRUN_ACCOUNT", "Equity + currency"), ("MCX_TREND_CARRY", "MCX trend + carry")]
 
 
 def _value_mcx(p: dict, live: dict) -> None:
@@ -253,26 +253,6 @@ def _value_mcx(p: dict, live: dict) -> None:
         p.update(profit_now=None, fees_if_sold=None, net_if_sold=None, move_pct=None); return
     c = compute_mcx_costs(fam, "long", p["entry_price"], price, p["qty"])
     p.update(profit_now=round(c["gross"], 2), net_if_sold=round(c["net"], 2), fees_if_sold=round(c["total"], 2), move_pct=round((price / p["entry_price"] - 1) * 100, 3))
-
-
-def _value_option(p: dict, live: dict) -> None:
-    """An open Nifty option leg (engine/options_paper.py): quantity is units (lots x lot size); sold legs are shown as SELL."""
-    from engine.options_paper import leg_costs
-    st = json.loads(p.pop("state") or "{}")
-    side = 1 if p["direction"] == "long" else -1
-    q = live.get(p.get("instrument_key")) or {}
-    price = q.get("ltp")
-    legs_in_group = 4 if st.get("strategy") == "expiry_condor" else 1
-    p.update(market="options", lot_size=int(st.get("lot", 1)), units=p["qty"], size_text=f"{st.get('lots', '?')} lot{'s' if st.get('lots') != 1 else ''} · {p['qty']} units",
-             price_now=price, price_source="live" if price else None, price_time=q.get("trade_time"), bid=q.get("bid"), ask=q.get("ask"),
-             checked_at=datetime.now(IST).isoformat(timespec="seconds") if q else None, risk_to_stop=None, group=st.get("group"),
-             margin_used=float(st.get("margin", 0)) / legs_in_group if st.get("margin") else (p["entry_price"] * p["qty"] if side > 0 else 0.0))
-    p.pop("instrument_key", None)
-    if price is None:
-        p.update(profit_now=None, fees_if_sold=None, net_if_sold=None, move_pct=None); return
-    gross = side * (price - p["entry_price"]) * p["qty"]
-    fees = leg_costs(p["entry_price"], p["qty"], "BUY" if side > 0 else "SELL")["total"] + leg_costs(price, p["qty"], "SELL" if side > 0 else "BUY")["total"]
-    p.update(profit_now=round(gross, 2), net_if_sold=round(gross - fees, 2), fees_if_sold=round(fees, 2), move_pct=round((price / p["entry_price"] - 1) * 100 * side, 3))
 
 
 def paper_summary(account: str = "DRYRUN_ACCOUNT") -> dict:
@@ -303,7 +283,7 @@ def paper_summary(account: str = "DRYRUN_ACCOUNT") -> dict:
     finally:
         con.close()
     live = _live_prices([p["instrument_key"] for p in pos if p.get("instrument_key")])
-    value = {"MCX_TREND_CARRY": _value_mcx, "OPTIONS_PAPER": _value_option}.get(account, _value_position)
+    value = {"MCX_TREND_CARRY": _value_mcx}.get(account, _value_position)
     for p in pos:
         value(p, live)
     if acc:
