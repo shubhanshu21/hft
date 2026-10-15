@@ -95,3 +95,10 @@ button.danger{background:var(--loss);border-color:var(--loss);color:#fff;font-we
 .callout{margin:0;background:var(--grid);border-radius:8px;padding:10px 14px;font-size:.8125rem;color:var(--muted);line-height:1.55;max-width:none}
 .result-hero .chip.static{background:var(--grid);border-color:transparent}
 .v-sub{font-size:.75rem;color:var(--muted);font-weight:400}
+/* Paper page: one tab per paper account */
+.acct-tabs{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));gap:10px}
+.acct-tabs button{display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:10px 14px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--fg);cursor:pointer;text-align:left}
+.acct-tabs button .t{font-weight:600;font-size:.875rem}
+.acct-tabs button .s{font-family:var(--font-num);font-size:.75rem;color:var(--muted);font-variant-numeric:tabular-nums}
+.acct-tabs button.on{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
+.acct-tabs button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}

@@ -19,15 +19,17 @@ export default function PaperPage() {
   const [d, setD] = useState(null);
   const [error, setError] = useState("");
   const [loadedAt, setLoadedAt] = useState(null);
+  const [account, setAccount] = useState(() => { try { return localStorage.getItem("paperAccount") || "DRYRUN_ACCOUNT"; } catch { return "DRYRUN_ACCOUNT"; } });
+  const pick = (id) => { setAccount(id); setD(null); try { localStorage.setItem("paperAccount", id); } catch { /* private window */ } };
   const box = useRef(null);
   const tradePaged = usePaged(d?.trades ?? [], 15);
 
   useEffect(() => {
-    const load = () => getPaper().then((x) => { setD(x); setError(""); setLoadedAt(new Date()); }).catch((e) => setError(e.message));
+    const load = () => getPaper(account).then((x) => { setD(x); setError(""); setLoadedAt(new Date()); }).catch((e) => setError(e.message));
     load();
     const id = setInterval(load, 60000);
     return () => clearInterval(id);
-  }, []);
+  }, [account]);
 
   useEffect(() => {
     if (!box.current || !d?.equity?.length) return undefined;
@@ -48,6 +50,16 @@ export default function PaperPage() {
   const live = d.positions.some((p) => p.price_source === "live");
   return (
     <div className="wrap">
+      {d.accounts?.length > 1 && (
+        <div className="acct-tabs" role="tablist">
+          {d.accounts.map((a) => (
+            <button key={a.id} type="button" role="tab" aria-selected={a.id === d.account_id} className={a.id === d.account_id ? "on" : ""} onClick={() => pick(a.id)}>
+              <span className="t">{a.label}</span>
+              <span className="s">{inr(a.booked)} · {a.open} open</span>
+            </button>
+          ))}
+        </div>
+      )}
       <div className="page-head">
         <div>
           <h1>Paper trading</h1>
@@ -72,10 +84,12 @@ export default function PaperPage() {
 
       <Panel title={`Open trades (${d.positions.length})`}>
         {!d.positions.length
-          ? <div className="none">No open trades. Equity buys only between 9:15 and 10:00 when its rules are met; currency checks at the 9:00 open.</div>
+          ? <div className="none">{{
+            MCX_TREND_CARRY: "No open trades. trend_carry rebalances at 09:10 on the first MCX trading day of each month.",
+            OPTIONS_PAPER: "No open trades. The expiry-day condor trades at 09:30 on expiry days; directional buying checks at 10:00 on the first day after an expiry.",
+          }[d.account_id] ?? "No open trades. Equity buys only between 9:15 and 10:00 when its rules are met; currency checks at the 9:00 open."}</div>
           : <div className="trade-cards">{d.positions.map((p) => <OpenTradeCard key={p.symbol} p={p} />)}</div>}
-        {d.positions.length > 0 && <p className="note">"Last traded price" changes only when someone trades; EURINR and GBPINR futures trade a few hundred lots a day,
-          so it can stay the same for many minutes. "Buyers / sellers now" are the best live offers: selling now would get the buyers' price. "Profit now" is the price move only. "If sold now" also takes off brokerage, taxes and the buy–sell price gap, the same way the paper trader books a sale.
+        {d.positions.length > 0 && <p className="note">"Last traded price" changes only when someone trades{d.account_id === "DRYRUN_ACCOUNT" ? "; EURINR and GBPINR futures trade a few hundred lots a day, so it can stay the same for many minutes" : ""}. "Buyers / sellers now" are the best live offers: selling now would get the buyers' price. "Profit now" is the price move only. "If sold now" also takes off brokerage, taxes and the buy–sell price gap, the same way the paper trader books a sale.
           The account changes only when a trade is sold.</p>}
       </Panel>
 
@@ -90,7 +104,7 @@ export default function PaperPage() {
 
       <Panel title="Account value by day">{d.equity.length ? <div ref={box} className="tv-box" /> : <div className="none">The first point appears after today's close.</div>}</Panel>
 
-      <StrategyStatus />
+      {d.account_id === "DRYRUN_ACCOUNT" && <StrategyStatus />}
     </div>
   );
 }

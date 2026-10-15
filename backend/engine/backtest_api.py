@@ -235,8 +235,48 @@ def _value_position(p: dict, live: dict) -> None:
         p["net_if_sold"] = p["fees_if_sold"] = None
 
 
-def paper_summary() -> dict:
-    """The paper-trading account, read-only (SQLite opened mode=ro). Open positions are valued at the latest daily close in the archive."""
+PAPER_ACCOUNTS = [("DRYRUN_ACCOUNT", "Equity + currency"), ("MCX_TREND_CARRY", "MCX trend + carry"), ("OPTIONS_PAPER", "Nifty options")]
+
+
+def _value_mcx(p: dict, live: dict) -> None:
+    """An open MCX trend_carry position: quantity is lots of the mini contract (engine/mcx_trend_carry.py)."""
+    from markets.commodity.costs import LOT_SIZE_TEXT, compute_mcx_costs
+    st = json.loads(p.pop("state") or "{}")
+    fam = st.get("family", p["symbol"]); units = int(st.get("lot_units", 1)); per, unit = LOT_SIZE_TEXT.get(fam, (1, "units"))
+    q = live.get(p.get("instrument_key")) or {}
+    price = q.get("ltp")
+    p.update(market="commodity", lot_size=units, units=p["qty"] * units, size_text=f"{p['qty']} lot{'s' if p['qty'] != 1 else ''} · {p['qty'] * per:g} {unit}",
+             price_now=price, price_source="live" if price else None, price_time=q.get("trade_time"), bid=q.get("bid"), ask=q.get("ask"),
+             checked_at=datetime.now(IST).isoformat(timespec="seconds") if q else None, margin_used=float(st.get("margin_used") or 0.0), risk_to_stop=None)
+    p.pop("instrument_key", None)
+    if price is None:
+        p.update(profit_now=None, fees_if_sold=None, net_if_sold=None, move_pct=None); return
+    c = compute_mcx_costs(fam, "long", p["entry_price"], price, p["qty"])
+    p.update(profit_now=round(c["gross"], 2), net_if_sold=round(c["net"], 2), fees_if_sold=round(c["total"], 2), move_pct=round((price / p["entry_price"] - 1) * 100, 3))
+
+
+def _value_option(p: dict, live: dict) -> None:
+    """An open Nifty option leg (engine/options_paper.py): quantity is units (lots x lot size); sold legs are shown as SELL."""
+    from engine.options_paper import leg_costs
+    st = json.loads(p.pop("state") or "{}")
+    side = 1 if p["direction"] == "long" else -1
+    q = live.get(p.get("instrument_key")) or {}
+    price = q.get("ltp")
+    legs_in_group = 4 if st.get("strategy") == "expiry_condor" else 1
+    p.update(market="options", lot_size=int(st.get("lot", 1)), units=p["qty"], size_text=f"{st.get('lots', '?')} lot{'s' if st.get('lots') != 1 else ''} · {p['qty']} units",
+             price_now=price, price_source="live" if price else None, price_time=q.get("trade_time"), bid=q.get("bid"), ask=q.get("ask"),
+             checked_at=datetime.now(IST).isoformat(timespec="seconds") if q else None, risk_to_stop=None, group=st.get("group"),
+             margin_used=float(st.get("margin", 0)) / legs_in_group if st.get("margin") else (p["entry_price"] * p["qty"] if side > 0 else 0.0))
+    p.pop("instrument_key", None)
+    if price is None:
+        p.update(profit_now=None, fees_if_sold=None, net_if_sold=None, move_pct=None); return
+    gross = side * (price - p["entry_price"]) * p["qty"]
+    fees = leg_costs(p["entry_price"], p["qty"], "BUY" if side > 0 else "SELL")["total"] + leg_costs(price, p["qty"], "SELL" if side > 0 else "BUY")["total"]
+    p.update(profit_now=round(gross, 2), net_if_sold=round(gross - fees, 2), fees_if_sold=round(fees, 2), move_pct=round((price / p["entry_price"] - 1) * 100 * side, 3))
+
+
+def paper_summary(account: str = "DRYRUN_ACCOUNT") -> dict:
+    """A paper-trading account, read-only (SQLite opened mode=ro). Open positions are valued at the live Upstox price (else the last close)."""
     import sqlite3
     from core.paths import DB_DIR
     path = DB_DIR / "paper_trading.db"
@@ -245,23 +285,32 @@ def paper_summary() -> dict:
     con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
     con.row_factory = sqlite3.Row
     try:
-        acc = con.execute("SELECT * FROM accounts WHERE account_id = 'DRYRUN_ACCOUNT'").fetchone()
+        if account not in dict(PAPER_ACCOUNTS):
+            account = "DRYRUN_ACCOUNT"
+        tabs = []
+        for aid, label in PAPER_ACCOUNTS:
+            r = con.execute("SELECT initial_capital, current_capital FROM accounts WHERE account_id = ?", (aid,)).fetchone()
+            n = con.execute("SELECT COUNT(*) FROM positions WHERE account_id = ? AND status = 'OPEN'", (aid,)).fetchone()[0]
+            if r:
+                tabs.append({"id": aid, "label": label, "start": r[0], "booked": r[1], "open": n})
+        acc = con.execute("SELECT * FROM accounts WHERE account_id = ?", (account,)).fetchone()
         pos = [dict(r) for r in con.execute("SELECT symbol, direction, qty, entry_price, current_stop, best_price, entry_time, strategy, instrument_key, state FROM positions "
-                                              "WHERE account_id = 'DRYRUN_ACCOUNT' AND status = 'OPEN' ORDER BY entry_time")]
+                                              "WHERE account_id = ? AND status = 'OPEN' ORDER BY entry_time", (account,))]
         trades = [dict(r) for r in con.execute("SELECT symbol, direction, qty, entry_price, exit_price, entry_dt, exit_dt, exit_reason, gross_pnl, total_friction, net_pnl, strategy "
-                                                 "FROM trades WHERE account_id = 'DRYRUN_ACCOUNT' ORDER BY exit_dt DESC LIMIT 500")]
-        snaps = [dict(r) for r in con.execute("SELECT date, MAX(timestamp) AS ts, current_capital FROM portfolio_snapshots WHERE account_id = 'DRYRUN_ACCOUNT' "
-                                                "GROUP BY date ORDER BY date")]
+                                                 "FROM trades WHERE account_id = ? ORDER BY exit_dt DESC LIMIT 500", (account,))]
+        snaps = [dict(r) for r in con.execute("SELECT date, MAX(timestamp) AS ts, current_capital FROM portfolio_snapshots WHERE account_id = ? "
+                                                "GROUP BY date ORDER BY date", (account,))]
     finally:
         con.close()
     live = _live_prices([p["instrument_key"] for p in pos if p.get("instrument_key")])
+    value = {"MCX_TREND_CARRY": _value_mcx, "OPTIONS_PAPER": _value_option}.get(account, _value_position)
     for p in pos:
-        _value_position(p, live)
+        value(p, live)
     if acc:
         acc = dict(acc)
         acc["margin_used"] = round(sum(p["margin_used"] for p in pos), 2)
         acc["free_cash"] = round(acc["current_capital"] - acc["margin_used"], 2)
-    return {"available": True, "account": acc, "positions": pos, "trades": trades, "equity": snaps,
+    return {"available": True, "account_id": account, "accounts": tabs, "account": acc, "positions": pos, "trades": trades, "equity": snaps,
             "stats": {"closed": len(trades), "wins": sum(1 for t in trades if (t["net_pnl"] or 0) > 0), "net": round(sum(t["net_pnl"] or 0 for t in trades)),
                       "fees": round(sum(t["total_friction"] or 0 for t in trades))}}
 
@@ -352,7 +401,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(HTTPStatus.SERVICE_UNAVAILABLE, {"error": f"status unavailable: {type(e).__name__}"})
         if path == "/api/paper":
             try:
-                return self._send(200, paper_summary())
+                from urllib.parse import parse_qs
+                acct = (parse_qs(urlparse(self.path).query).get("account") or ["DRYRUN_ACCOUNT"])[0]
+                return self._send(200, paper_summary(acct))
             except Exception as e:                                       # a locked or half-written DB must not break the page
                 return self._send(HTTPStatus.SERVICE_UNAVAILABLE, {"error": f"paper account unavailable: {type(e).__name__}"})
         m = re.fullmatch(r"/api/backtests/([0-9a-f]{12})", path)

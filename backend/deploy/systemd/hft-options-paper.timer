@@ -1,0 +1,9 @@
+[Unit]
+Description=Start the Nifty options paper session each weekday morning
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 09:20:00 Asia/Kolkata
+Persistent=false
+
+[Install]
+WantedBy=timers.target

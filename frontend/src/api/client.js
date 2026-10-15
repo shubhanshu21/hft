@@ -10,7 +10,7 @@ export const listStrategies = () => request("/api/strategies");
 export const listRuns = () => request("/api/backtests");
 export const getRun = (id) => request(`/api/backtests/${id}`);
 export const renameRun = (id, label) => request(`/api/backtests/${id}/label`, { method: "POST", body: JSON.stringify({ label }) });
-export const getPaper = () => request("/api/paper");
+export const getPaper = (account) => request(`/api/paper${account ? `?account=${encodeURIComponent(account)}` : ""}`);
 export const getEquityStatus = () => request("/api/equity-status");
 export const deleteRun = (id) => request(`/api/backtests/${id}`, { method: "DELETE" });
 export const clearRuns = () => request("/api/backtests", { method: "DELETE" });

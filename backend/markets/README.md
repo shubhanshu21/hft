@@ -36,6 +36,7 @@ var/archive/commodity/mcx_futures_daily.csv). Earlier deletions: the 5-minute sc
 |---|---|---|---|
 | equity | `strategies/tf_daily/trend_ema_cross/` | 20/50 EMA cross above the 200 EMA in a healthy market (breadth >= 50%), 2.5-ATR stop then 3.25-ATR trailing stop (3 until 2026-10-14); 20 best stocks + 5 US/Hong Kong ETFs (bought only within 3% of NAV, sold above 15%), max 3; sells a trade still in loss after 20 trading days | paper (`hft-dryrun.service`), 2% risk |
 | commodity | `strategies/tf_monthly/trend_carry/` | monthly: buy the 3 of 8 MCX commodities with the best rank(12-month trend) + rank(carry = near vs next contract), sized by 1/volatility, mini contracts, whole lots | paper, own account `MCX_TREND_CARRY` (Rs5L, 1.5x exposure; `engine/mcx_trend_carry.py`, `hft-mcx-trend-carry.timer` 09:10 / 23:40 IST); web backtest too |
+| index options | `engine/options_paper.py` (rules in its docstring) | Nifty weekly: expiry-day condor (sell +-1%, wings +-2%, stop 1.5x credit) and directional buying (break of last week's range, +100% / -50%) | paper, own account `OPTIONS_PAPER` (Rs3L), `hft-options-paper.timer` 09:20-15:25 IST; backtest = scratchpad research, not the web page |
 | currency | `strategies/tf_daily/rsi_range/` | RSI(14) < 30 buy / > 70 short (only in the outer 25% of the 20-day range), exit at the 20-day average or ~15 days, 2.5-ATR stop | paper, 4% risk (RBI rule: research/paper only) |
 
 Tested and rejected (in the docs, `var/reports/` and git history): intraday and scalping ideas in every market
