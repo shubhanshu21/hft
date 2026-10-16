@@ -39,7 +39,12 @@ def from_bhavcopies(folder: Path = DOWNLOADS) -> pd.DataFrame:
     """FUTCOM rows of every downloaded bhavcopy JSON ({date: {status, body}} as saved by the browser snippet)."""
     rows = []
     for f in sorted(folder.glob("*.json")):
-        for v in json.loads(f.read_text()).values():
+        for day, v in json.loads(f.read_text()).items():
+            if isinstance(v, list):                                  # compact daily files (mcx_daily_<year>.json, 2026-10-16):
+                d = pd.to_datetime(day, format="%d/%m/%Y")           # {"dd/mm/yyyy": [[symbol, expiry, open, high, low, close, volume, oi], ...]}
+                rows += [{"date": d, "symbol": r[0], "expiry": pd.to_datetime(r[1], format="%d%b%Y"), "open": r[2], "high": r[3], "low": r[4],
+                          "close": r[5], "volume": r[6], "oi": r[7], "source": "bhavcopy"} for r in v]
+                continue
             if v.get("status") != 200:
                 continue
             for r in json.loads(v["body"]).get("Data") or []:
