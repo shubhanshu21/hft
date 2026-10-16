@@ -6,7 +6,7 @@ const THIS_YEAR = new Date().getFullYear();
 const FIRST_YEAR = 2022;                    // the archived daily candles start in September 2022
 const YEARS = Array.from({ length: THIS_YEAR - FIRST_YEAR + 1 }, (_, i) => THIS_YEAR - i);
 const yearRange = (y) => ({ start: `${y}-01-01`, end: y === THIS_YEAR ? today() : `${y}-12-31` });
-const MARKET_LABEL = { equity: "Equity (NSE stocks)", currency: "Currency (NSE)", commodity: "Commodity (MCX futures)" };
+const MARKET_LABEL = { equity: "Equity (NSE stocks)", currency: "Currency (NSE)", commodity: "Commodity (MCX futures)", crypto: "Crypto (CoinDCX futures)" };
 
 export default function BacktestForm({ strategies, onSubmit, busy }) {
   const markets = useMemo(() => [...new Set(strategies.map((s) => s.market))], [strategies]);
@@ -22,10 +22,11 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
   }, [strategy?.market, strategy?.name]);   // start from the risk the strategy was tested with
   const safeRisk = Math.max(3, strategy?.default_risk_pct ?? 0);
   const monthly = !!strategy?.monthly_rank;          // commodity/trend_carry: ranks the chosen contracts together each month; exposure is editable
+  const crypto = !!strategy?.crypto;                 // crypto/calm_btc: BTC futures only; leverage and the 30% tax are the choices
   const auto = !!strategy?.auto_universe;            // equity/breakout_pair: picks from the day's 200 most-traded NSE stocks itself, fixed 5 + 3 holdings
   const [all, setAll] = useState(true);
   const [chosen, setChosen] = useState([]);
-  const [f, setF] = useState({ ...yearRange(THIS_YEAR), capital: 100000, slippage_bp: 5, risk_pct: 2, max_positions: 3, leverage: 1, label: "", exposure: 1.5 });
+  const [f, setF] = useState({ ...yearRange(THIS_YEAR), capital: 100000, slippage_bp: 5, risk_pct: 2, max_positions: 3, leverage: 1, label: "", exposure: 1.5, tax: true });
   const [year, setYear] = useState(String(THIS_YEAR));       // "custom" once the dates are edited by hand
 
   useEffect(() => { const o = strategies.filter((s) => s.market === market); setName(o[0]?.name ?? "");
@@ -42,7 +43,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
     onSubmit({
       market, strategy: name, symbols: all ? strategy.symbols : chosen,
       start: f.start, end: f.end, capital: +f.capital, slippage_bp: market === "currency" ? 0 : +f.slippage_bp, risk_pct: +f.risk_pct, max_positions: +f.max_positions,
-      exposure: +f.exposure,
+      exposure: +f.exposure, tax: f.tax,
       label: f.label,   // exits, trailing stops and adding to winners are the strategy's own (the extra overrides were removed from the form)
     });
   };
@@ -83,7 +84,12 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
               : " Half the money buys quiet-day (NR7) breakouts, up to 5 stocks; half buys 55-day-high breakouts, up to 3 stocks. It buys only while at least half of those 200 stocks are above their 50-day average."}
             {" "}Daily data starts January 2022, so the first signals are in late 2022.</p>
         )}
-        {strategy && !auto && (
+        {strategy && crypto && (
+          <p className="hint">Holds Bitcoin futures (CoinDCX, priced in USDT) only while the whole crypto market is calm: the 20-day volatility of 12 big coins
+            below 2.43% a day; otherwise it holds cash. The money is split into 7 parts, each re-checking on its own weekday, so no single day's luck decides.
+            Fees, slippage and the real funding paid by longs are included. Data starts January 2022; the first signal is in February 2022.</p>
+        )}
+        {strategy && !auto && !crypto && (
           <div className="field">
             <label className="check" htmlFor="all"><input id="all" type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} /> All {strategy.symbols.length} symbols</label>
             {(strategy.default_symbols?.length ?? 0) > 0 && strategy.default_symbols.length < strategy.symbols.length && (
@@ -106,7 +112,14 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
             <div className="field"><label htmlFor="slip">Slippage per side (basis points)</label><input id="slip" type="number" min="0" max="100" step="0.5" value={f.slippage_bp} onChange={set("slippage_bp")} />
               <span className="hint">5 bp = 0.05%, charged when buying and again when selling.</span></div>
           )}
-          {monthly ? (
+          {crypto ? (<>
+            <div className="field"><label htmlFor="exposure">Leverage (x the account)</label>
+              <input id="exposure" type="number" min={strategy.exposure_min} max={strategy.exposure_max} step="0.25" value={f.exposure} onChange={set("exposure")} />
+              <span className="hint">1x was the best by return per unit of worst fall (the paper account uses 1x). More leverage grows profits and falls together.</span>
+              {+f.exposure > 1.5 && <span className="warn" role="alert">High leverage: at 1.5x the worst fall was −60% instead of −36%, for almost no extra profit after tax.</span>}</div>
+            <div className="field"><label className="check" htmlFor="tax"><input id="tax" type="checkbox" checked={f.tax} onChange={(e) => setF((x) => ({ ...x, tax: e.target.checked }))} /> Charge India's 30% crypto tax</label>
+              <span className="hint">30% of every winning trade; losses cannot be set off. Untick to see the before-tax result.</span></div>
+          </>) : monthly ? (
             <div className="field"><label htmlFor="exposure">Exposure (x the account)</label>
               <input id="exposure" type="number" min={strategy.exposure_min} max={strategy.exposure_max} step="0.25" value={f.exposure} onChange={set("exposure")} />
               <span className="hint">Total value of contracts held, as a multiple of your money: {strategy.exposure_min}x to {strategy.exposure_max}x (the most Upstox margin allows;
@@ -129,7 +142,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
           </>)}
         </div>
         <p className="fees-box">
-          {"Every trade is charged the strategy's full cost model (brokerage, STT, exchange charges, GST, stamp duty, SEBI fees) and slippage on entry and exit (currency: the real bid-ask spread, built into its cost model). Stops that gap are filled at the open, not at the stop price. Fees cannot be switched off. Leverage is set for you: shares are bought with your own money (1x); currency futures use the margin Upstox really charges (about 34-41x), and the strategy caps itself at 20x in total. Commodity (MCX): brokerage, CTT, stamp duty, exchange charges, GST and a half-spread on every trade, real month-end MCX prices including the monthly contract-switch cost."}
+          {"Every trade is charged the strategy's full cost model (brokerage, STT, exchange charges, GST, stamp duty, SEBI fees) and slippage on entry and exit (currency: the real bid-ask spread, built into its cost model). Stops that gap are filled at the open, not at the stop price. Fees cannot be switched off. Leverage is set for you: shares are bought with your own money (1x); currency futures use the margin Upstox really charges (about 34-41x), and the strategy caps itself at 20x in total. Commodity (MCX): brokerage, CTT, stamp duty, exchange charges, GST and a half-spread on every trade, real month-end MCX prices including the monthly contract-switch cost. Crypto (CoinDCX futures): 0.05% fee + 18% GST and 0.05% slippage per side, plus real funding."}
         </p>
       </Panel>
 

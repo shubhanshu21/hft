@@ -67,11 +67,15 @@ def catalog() -> list[dict]:
     from markets.equity.strategies.tf_quarterly.momentum_portfolio import strategy as mps
     mom = {"market": "equity", "name": "momentum_portfolio", "timeframe": "1 days", "supported": True, "symbols": [], "auto_universe": True,
            "summary": (mps.__doc__ or "").strip().split("\n")[0], "intraday": False, "default_risk_pct": None}
+    from markets.crypto.strategies.tf_daily.calm_btc import strategy as cb
+    crypto = {"market": "crypto", "name": "calm_btc", "timeframe": "1 days", "supported": True, "symbols": [cb.TRADE], "crypto": True,
+              "summary": (cb.__doc__ or "").strip().split("\n")[0], "intraday": False, "default_risk_pct": None,
+              "exposure": 1.0, "exposure_min": 1.0, "exposure_max": 3.0}
     return [{"market": m, "name": n, "timeframe": f"{s.timeframe[1]} {s.timeframe[0]}", "supported": tuple(s.timeframe) == ("days", 1), "symbols": list(getattr(s, "universe", None) or universe(m)),
              "summary": (s.__doc__ or "").strip().split("\n")[0], "intraday": s.intraday,
              "default_risk_pct": getattr(s, "default_risk_pct", None),
              "default_symbols": [x for x in (getattr(s, "universe", None) or universe(m)) if s.trades(x)]}     # what its paper trading uses
-            for (m, n), s in sorted(registry.discover().items())] + [bp, mom, earn, mcx]
+            for (m, n), s in sorted(registry.discover().items())] + [bp, mom, earn, mcx, crypto]
 
 
 def prune() -> None:
@@ -114,6 +118,20 @@ def validate(body: dict) -> dict:
         raise ValueError("Unknown market or strategy")
     if not known[(market, name)]["supported"]:
         raise ValueError(f"{market}/{name} uses {known[(market, name)]['timeframe']} bars; the web backtester runs daily-bar strategies")
+    if known[(market, name)].get("crypto"):                      # calm_btc: BTC futures only; leverage 1-3x and the 30% tax are the choices
+        row = known[(market, name)]
+        p = {"symbols": list(row["symbols"]), "slippage_bp": 0.0, "pyramid_pct": None, "tax": bool(body.get("tax", True))}
+        lo, hi = LIMITS["capital"]; p["capital"] = float(body.get("capital", 100_000))
+        if not lo <= p["capital"] <= hi:
+            raise ValueError(f"capital must be between {lo} and {hi}")
+        p["leverage"] = float(body.get("exposure", 1.0))
+        if not row["exposure_min"] <= p["leverage"] <= row["exposure_max"]:
+            raise ValueError(f"Leverage must be between {row['exposure_min']:g}x and {row['exposure_max']:g}x")
+        for key in ("start", "end"):
+            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(body.get(key, ""))):
+                raise ValueError("Dates must look like 2024-01-31")
+            p[key] = body[key]
+        return {"market": market, "strategy": name, "params": p}
     if known[(market, name)].get("auto_universe"):              # breakout_pair picks from the day's 200 most-traded NSE stocks itself
         p = {"symbols": [], "leverage": 1.0, "pyramid_pct": None, "max_positions": 8.0}
         for key in ("capital", "slippage_bp", "risk_pct"):
@@ -350,7 +368,13 @@ def work(run: dict) -> None:
         p = run["params"]
         def progress(i, n):
             run["progress"] = round(i / n * 100)
-        if run["strategy"] == "earnings_drift":                   # results dates + reaction across ~200 stocks: its own backtest
+        if run["market"] == "crypto":                              # calm_btc: 7 weekday parts, BTC futures, its own backtest
+            from markets.crypto.strategies.tf_daily.calm_btc import strategy as cb
+            try:
+                run["result"] = cb.web_backtest(p["capital"], p["start"], p["end"], leverage=p["leverage"], tax=p["tax"])
+            except ValueError as e:
+                raise BacktestError(str(e))
+        elif run["strategy"] == "earnings_drift":                   # results dates + reaction across ~200 stocks: its own backtest
             from markets.equity.strategies.tf_daily.earnings_drift import strategy as eds
             try:
                 run["result"] = eds.web_backtest(p["capital"], p["start"], p["end"], slippage_bp=p["slippage_bp"])
@@ -384,7 +408,8 @@ def work(run: dict) -> None:
                                          on_snapshot=lambda snap: run.__setitem__("partial", snap))
         try:                                                             # the strategy's own lines / RSI band / results days for the chart
             from engine.chart_overlays import overlays
-            run["result"]["overlays"] = overlays(run["strategy"], run["market"], run["result"])
+            if run["market"] != "crypto":                             # calm_btc brings its own volatility band
+                run["result"]["overlays"] = overlays(run["strategy"], run["market"], run["result"])
         except Exception:
             traceback.print_exc()
         run["status"] = "done"
