@@ -58,10 +58,13 @@ def catalog() -> list[dict]:
     mcx = {"market": "commodity", "name": "trend_carry", "timeframe": "1 months", "supported": True, "symbols": sorted(set(tc.TRADE.values())),
            "summary": (tc.__doc__ or "").strip().split("\n")[0], "intraday": False, "default_risk_pct": None, "monthly_rank": True,
            "exposure": float(os.environ.get("MCX_TREND_CARRY_EXPOSURE", 1.5)), "exposure_min": tc.EXPOSURE_MIN, "exposure_max": tc.EXPOSURE_MAX}
+    from markets.equity.strategies.tf_daily.breakout_pair import strategy as bps
+    bp = {"market": "equity", "name": "breakout_pair", "timeframe": "1 days", "supported": True, "symbols": [], "auto_universe": True,
+          "summary": (bps.__doc__ or "").strip().split("\n")[0], "intraday": False, "default_risk_pct": bps.RISK_PCT}
     return [{"market": m, "name": n, "timeframe": f"{s.timeframe[1]} {s.timeframe[0]}", "supported": tuple(s.timeframe) == ("days", 1), "symbols": list(getattr(s, "universe", None) or universe(m)),
              "summary": (s.__doc__ or "").strip().split("\n")[0], "intraday": s.intraday,
              "default_risk_pct": getattr(s, "default_risk_pct", None)}
-            for (m, n), s in sorted(registry.discover().items())] + [mcx]
+            for (m, n), s in sorted(registry.discover().items())] + [bp, mcx]
 
 
 def prune() -> None:
@@ -104,6 +107,19 @@ def validate(body: dict) -> dict:
         raise ValueError("Unknown market or strategy")
     if not known[(market, name)]["supported"]:
         raise ValueError(f"{market}/{name} uses {known[(market, name)]['timeframe']} bars; the web backtester runs daily-bar strategies")
+    if known[(market, name)].get("auto_universe"):              # breakout_pair picks from the day's 200 most-traded NSE stocks itself
+        p = {"symbols": [], "leverage": 1.0, "pyramid_pct": None, "max_positions": 8.0}
+        for key in ("capital", "slippage_bp", "risk_pct"):
+            lo, hi = LIMITS[key]
+            v = float(body.get(key, {"capital": 100_000, "slippage_bp": 5, "risk_pct": 2}[key]))
+            if not lo <= v <= hi:
+                raise ValueError(f"{key} must be between {lo} and {hi}")
+            p[key] = v
+        for key in ("start", "end"):
+            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(body.get(key, ""))):
+                raise ValueError("Dates must look like 2024-01-31")
+            p[key] = body[key]
+        return {"market": market, "strategy": name, "params": p}
     allowed = known[(market, name)]["symbols"]                     # a strategy may name its own instruments (trend_ema_cross: NIFTY 50 + US/HK ETFs)
     symbols = [str(s).upper() for s in body.get("symbols") or allowed]
     if not symbols or any(s not in allowed for s in symbols):
@@ -325,7 +341,13 @@ def work(run: dict) -> None:
         p = run["params"]
         def progress(i, n):
             run["progress"] = round(i / n * 100)
-        if run["market"] == "commodity":                        # trend_carry: monthly, all 8 commodities ranked together, its own backtest
+        if run["strategy"] == "breakout_pair":                    # ranks ~200 stocks together every day: its own backtest
+            from markets.equity.strategies.tf_daily.breakout_pair import strategy as bps
+            try:
+                run["result"] = bps.web_backtest(p["capital"], p["start"], p["end"], risk_pct=p["risk_pct"], slippage_bp=p["slippage_bp"])
+            except ValueError as e:
+                raise BacktestError(str(e))
+        elif run["market"] == "commodity":                        # trend_carry: monthly, all 8 commodities ranked together, its own backtest
             from markets.commodity import futures_eod
             from markets.commodity.strategies.tf_monthly.trend_carry import strategy as tc
             try:

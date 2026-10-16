@@ -27,7 +27,7 @@ export default function ResultsPage({ runId }) {
       getSample(key.slice(7)).then((result) => setLoaded({ title: s?.title, blurb: s?.blurb, result })).catch(() => setError("Could not load this result"));
     } else {
       getRun(key).then((r) => (r.result
-        ? setLoaded({ title: r.label || `${r.strategy} on ${r.market}`, blurb: `${r.strategy} on ${r.market}, ${r.params.start} to ${r.params.end}`, params: { ...r.params, market: r.market }, result: r.result })
+        ? setLoaded({ title: r.label || `${r.strategy} on ${r.market}`, blurb: `${r.strategy} on ${r.market}, ${r.params.start} to ${r.params.end}`, params: { ...r.params, market: r.market, strategy: r.strategy }, result: r.result })
         : setError(r.error ?? "This run has no result"))).catch((e) => setError(e.message));
     }
   }, [key, samples.length]);

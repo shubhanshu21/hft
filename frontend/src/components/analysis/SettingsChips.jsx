@@ -7,6 +7,13 @@ export default function SettingsChips({ params }) {
     ["Commodities", `${params.symbols?.length}: ${(params.symbols ?? []).join(", ")}`],
     ["Rebalance", "monthly"],
     ["Costs", "MCX fees + half-spread"],
+  ] : params.strategy === "breakout_pair" ? [                        // picks its own stocks; fixed holdings and exits
+    ["Start money", `₹${Number(params.capital).toLocaleString("en-IN")}`],
+    ["Risk per trade", `${params.risk_pct}%`],
+    ["Stocks", "the day's 200 most-traded NSE"],
+    ["Holdings", "up to 5 quiet-day + 3 55-day breakouts"],
+    ["Slippage", `${params.slippage_bp} bp`],
+    ["Exits", "2.5-ATR stop, 3.25-ATR trail, 20-day dead money"],
   ] : [
     ["Start money", `₹${Number(params.capital).toLocaleString("en-IN")}`],
     ["Risk per trade", `${params.risk_pct}%`],

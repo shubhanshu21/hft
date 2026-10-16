@@ -6,7 +6,7 @@ const THIS_YEAR = new Date().getFullYear();
 const FIRST_YEAR = 2022;                    // the archived daily candles start in September 2022
 const YEARS = Array.from({ length: THIS_YEAR - FIRST_YEAR + 1 }, (_, i) => THIS_YEAR - i);
 const yearRange = (y) => ({ start: `${y}-01-01`, end: y === THIS_YEAR ? today() : `${y}-12-31` });
-const MARKET_LABEL = { equity: "Equity (NIFTY 50 stocks)", currency: "Currency (NSE)", commodity: "Commodity (MCX futures)" };
+const MARKET_LABEL = { equity: "Equity (NSE stocks)", currency: "Currency (NSE)", commodity: "Commodity (MCX futures)" };
 
 export default function BacktestForm({ strategies, onSubmit, busy }) {
   const markets = useMemo(() => [...new Set(strategies.map((s) => s.market))], [strategies]);
@@ -17,6 +17,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
   useEffect(() => { if (strategy) setF((x) => ({ ...x, risk_pct: strategy.default_risk_pct ?? 2, exposure: strategy.exposure ?? 1 })); }, [strategy?.market, strategy?.name]);   // start from the risk the strategy was tested with
   const safeRisk = Math.max(3, strategy?.default_risk_pct ?? 0);
   const monthly = !!strategy?.monthly_rank;          // commodity/trend_carry: ranks the chosen contracts together each month; exposure is editable
+  const auto = !!strategy?.auto_universe;            // equity/breakout_pair: picks from the day's 200 most-traded NSE stocks itself, fixed 5 + 3 holdings
   const [all, setAll] = useState(true);
   const [chosen, setChosen] = useState([]);
   const [f, setF] = useState({ ...yearRange(THIS_YEAR), capital: 100000, slippage_bp: 5, risk_pct: 2, max_positions: 3, leverage: 1, label: "", exposure: 1.5 });
@@ -68,7 +69,12 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
           <p className="hint">Monthly strategy: every month end it ranks the chosen MCX commodities against each other and holds the best 3 (with fewer than 6 chosen,
             the best half). Pick at least 2. History starts December 2021; the first trade is in January 2023 (it needs 12 months of trend).</p>
         )}
-        {strategy && (
+        {strategy && auto && (
+          <p className="hint">This strategy chooses its own stocks: each day, the 200 most-traded NSE stocks of that day (about 4,250 checked, no fixed list).
+            Half the money buys quiet-day (NR7) breakouts, up to 5 stocks; half buys 55-day-high breakouts, up to 3 stocks. It buys only while at least
+            half of those 200 stocks are above their 50-day average. Daily data starts January 2022, so the first signals are in late 2022.</p>
+        )}
+        {strategy && !auto && (
           <div className="field">
             <label className="check" htmlFor="all"><input id="all" type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} /> All {strategy.symbols.length} symbols</label>
             {!all && (
@@ -106,7 +112,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
                 Profits AND losses grow together: at 10% the currency strategy made +64% in 2026 but lost 87% in 2013-22. Check other years before trusting it.
               </span>
             )}</div>
-          <div className="field"><label htmlFor="maxpos">Most holdings at once</label><input id="maxpos" type="number" min="1" max="10" value={f.max_positions} onChange={set("max_positions")} /></div>
+          {!auto && <div className="field"><label htmlFor="maxpos">Most holdings at once</label><input id="maxpos" type="number" min="1" max="10" value={f.max_positions} onChange={set("max_positions")} /></div>}
           </>)}
         </div>
         <p className="fees-box">
