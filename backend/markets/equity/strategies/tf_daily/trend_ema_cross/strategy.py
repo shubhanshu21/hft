@@ -59,6 +59,18 @@ ENTRY_WINDOW = (time(9, 15), time(10, 0))       # live: buy near the open, like 
 BEST_SYMBOLS = ("ADANIPORTS", "BPCL", "COALINDIA", "IOC", "SBILIFE", "ONGC", "TITAN", "WIPRO", "EICHERMOT", "SUNPHARMA",
                 "INFY", "ASIANPAINT", "APOLLOHOSP", "HEROMOTOCO", "MARUTI", "TCS", "BAJAJFINSV", "BRITANNIA", "RELIANCE", "HCLTECH")   # ranked on 2023-25
 GLOBAL_ETFS = tuple(sorted(GLOBAL_ETF_SYMBOLS))            # US / Hong Kong ETFs on NSE (2026-10-14): no Indian market-health check, premium guard instead
+# Indian ETFs that also have daily archives (sector / gold / debt funds): not stocks, never offered to this strategy
+INDIAN_ETFS = frozenset({"AUTOBEES", "BANKBEES", "CPSEETF", "FMCGIETF", "GILT5YBEES", "GOLDBEES", "HDFCSML250", "INFRABEES", "ITBEES", "JUNIORBEES",
+                         "LIQUIDBEES", "METALIETF", "MIDCAPETF", "MOM30IETF", "MOMENTUM", "NIFTYBEES", "NV20IETF", "OILIETF", "PHARMABEES",
+                         "PSUBNKBEES", "SILVERBEES"})
+
+
+def backtest_universe() -> tuple[str, ...]:
+    """What the web backtester offers (2026-10-16, user: "why only 54 stocks"): every stock with a daily archive (the NIFTY 200, 201 names)
+    + the 5 US / Hong Kong ETFs. Paper trading still trades only BEST_SYMBOLS + the ETFs (trades() below)."""
+    names = {p.name[: -len("_daily.csv")] for p in (ARCHIVE_ROOT / "equity").glob("*_daily.csv")}
+    stocks = sorted(names - INDIAN_ETFS - set(GLOBAL_ETFS) - {"NIFTY1", "SETFNIF50"})
+    return tuple(stocks) + GLOBAL_ETFS
 DEAD_MONEY_DAYS = 20                                     # sell a trade still not in profit after 20 trading days (2026-10-14)
 PREMIUM_BUY_MAX, PREMIUM_SELL_MAX = 3.0, 15.0              # % above NAV (markets/equity/etf_premium.py): buy only at or below 3%, sell above 15%
 
@@ -137,7 +149,7 @@ class TrendEmaCrossEquity(Strategy):
     lookback_days = 400              # calendar days: enough for ~260 trading days and the 200-day EMA
     max_positions = MAX_POSITIONS
     id_prefix = "TRD"
-    universe = tuple(NIFTY50_SYMBOLS) + GLOBAL_ETFS     # what the web backtester offers
+    universe = backtest_universe()                     # what the web backtester offers (the backtester trades exactly the ticked ones)
 
     def trades(self, symbol: str) -> bool:
         """Only the 20 best stocks of 2023-25 (an EQUITY_TREND_EMA_CROSS_SYMBOLS list in .env still overrides it)."""

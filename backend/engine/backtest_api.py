@@ -259,8 +259,8 @@ def _value_position(p: dict, live: dict) -> None:
         p["net_if_sold"] = p["fees_if_sold"] = None
 
 
-PAPER_ACCOUNTS = [("DRYRUN_ACCOUNT", "Equity + currency"), ("EQUITY_SWING", "Equity swing"), ("MCX_TREND_CARRY", "MCX trend + carry")]
-ACCOUNT_STRATEGIES = {"DRYRUN_ACCOUNT": "trend_ema_cross · rsi_range (currency)", "EQUITY_SWING": "breakout · momentum · earnings drift",
+PAPER_ACCOUNTS = [("EQUITY_SWING", "Equity swing"), ("DRYRUN_ACCOUNT", "Currency"), ("MCX_TREND_CARRY", "MCX trend + carry")]
+ACCOUNT_STRATEGIES = {"EQUITY_SWING": "breakout · momentum · earnings drift · trend_ema_cross", "DRYRUN_ACCOUNT": "rsi_range",
                       "MCX_TREND_CARRY": "trend_carry"}
 
 
@@ -379,6 +379,7 @@ def work(run: dict) -> None:
                                          risk_pct=p["risk_pct"], max_positions=int(p["max_positions"]), leverage=p["leverage"], progress=progress,
                                          trail_stop_pct=p["trail_stop_pct"], trail_after_pct=p["trail_after_pct"], profit_trail_pct=p["profit_trail_pct"],
                                          pyramid_pct=p.get("pyramid_pct"),
+                                         respect_trades=False,              # trade exactly the symbols ticked on the page
                                          on_snapshot=lambda snap: run.__setitem__("partial", snap))
         run["status"] = "done"
     except BacktestError as e:

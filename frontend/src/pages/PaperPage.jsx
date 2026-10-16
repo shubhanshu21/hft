@@ -21,7 +21,7 @@ export default function PaperPage() {
   const [d, setD] = useState(null);
   const [error, setError] = useState("");
   const [loadedAt, setLoadedAt] = useState(null);
-  const [account, setAccount] = useState(() => { try { return localStorage.getItem("paperAccount") || "DRYRUN_ACCOUNT"; } catch { return "DRYRUN_ACCOUNT"; } });
+  const [account, setAccount] = useState(() => { try { return localStorage.getItem("paperAccount") || "EQUITY_SWING"; } catch { return "EQUITY_SWING"; } });
   const pick = (id) => { setAccount(id); setD(null); try { localStorage.setItem("paperAccount", id); } catch { /* private window */ } };
   const box = useRef(null);
   const tradePaged = usePaged(d?.trades ?? [], 15);
@@ -94,8 +94,8 @@ export default function PaperPage() {
         {!d.positions.length
           ? <div className="none">{{
             MCX_TREND_CARRY: "No open trades. trend_carry rebalances at 09:10 on the first MCX trading day of each month.",
-            EQUITY_SWING: "No holdings yet. Momentum buys its 15 stocks at the next open; breakout and earnings-drift buys wait for a healthy market (half the 200 most-traded stocks above their 50-day average).",
-          }[d.account_id] ?? "No open trades. Equity buys only between 9:15 and 10:00 when its rules are met; currency checks at the 9:00 open."}</div>
+            EQUITY_SWING: "No holdings yet. Momentum buys its 15 stocks at the next open; breakout, earnings-drift and trend_ema_cross buys wait for a healthy market (half the stocks above their 50-day average).",
+          }[d.account_id] ?? "No open trades. Currency (rsi_range) checks for entries at the 9:00 open."}</div>
           : <div className="trade-cards">{d.positions.map((p) => <OpenTradeCard key={p.symbol} p={p} />)}</div>}
         {d.positions.length > 0 && <p className="note">"Last traded price" changes only when someone trades{d.account_id === "DRYRUN_ACCOUNT" ? "; EURINR and GBPINR futures trade a few hundred lots a day, so it can stay the same for many minutes" : ""}. "Buyers / sellers now" are the best live offers: selling now would get the buyers' price. "Profit now" is the price move only. "If sold now" also takes off brokerage, taxes and the buy–sell price gap, the same way the paper trader books a sale.
           The account changes only when a trade is sold.</p>}
@@ -122,7 +122,7 @@ export default function PaperPage() {
 
       <Panel title="Account value by day">{d.equity.length ? <div ref={box} className="tv-box" /> : <div className="none">The first point appears after today's close.</div>}</Panel>
 
-      {d.account_id === "DRYRUN_ACCOUNT" && <StrategyStatus />}
+      {d.account_id === "EQUITY_SWING" && <StrategyStatus />}
     </div>
   );
 }

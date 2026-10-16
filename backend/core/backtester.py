@@ -71,7 +71,8 @@ def _candles(df: pd.DataFrame) -> list[dict]:
 def run_backtest(strategy: Strategy, symbols: list[str], start: str, end: str, *, capital: float = 100_000.0, slippage_bp: float = 5.0,
                  risk_pct: float = 2.0, max_positions: int = 3, leverage: float = 1.0,
                  trail_stop_pct: float = 0.0, trail_after_pct: float = 0.0, profit_trail_pct: float = 0.0, pyramid_pct: float | None = None, max_position_pct: float | None = None,
-                 progress: Callable[[int, int], None] | None = None, on_snapshot: Callable[[dict], None] | None = None, snapshot_every: int = 4) -> dict:
+                 progress: Callable[[int, int], None] | None = None, on_snapshot: Callable[[dict], None] | None = None, snapshot_every: int = 4,
+                 respect_trades: bool = True) -> dict:
     if tuple(strategy.timeframe) != ("days", 1):
         raise BacktestError(f"{strategy.market}/{strategy.name} reads {strategy.timeframe} bars; the web backtester runs daily-bar strategies only")
     if strategy.market not in DAILY_FILE:
@@ -225,7 +226,7 @@ def run_backtest(strategy: Strategy, symbols: list[str], start: str, end: str, *
         if n < len(days) - 1:
             equity_now = equity_at(mark)
             for s in frames:
-                if s in book or s not in closes or not strategy.trades(s):
+                if s in book or s not in closes or (respect_trades and not strategy.trades(s)):   # web page: the ticked symbols ARE the list
                     continue
                 i = pos_of[s][d]
                 if i < 30:

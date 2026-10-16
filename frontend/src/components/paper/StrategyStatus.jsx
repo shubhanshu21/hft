@@ -12,12 +12,12 @@ export default function StrategyStatus() {
   const [error, setError] = useState("");
   useEffect(() => { getEquityStatus().then(setS).catch((e) => setError(e.message)); }, []);
   const paged = usePaged(s?.stocks ?? [], 10);
-  if (error) return <Panel title="Equity trend strategy: what it is waiting for"><div className="none">{error}</div></Panel>;
+  if (error) return <Panel title="trend_ema_cross: what it is waiting for"><div className="none">{error}</div></Panel>;
   if (!s) return null;
   const healthy = s.breadth >= s.need;
   const ready = s.stocks.filter((x) => x.order === 0);
   return (
-    <Panel title="Equity trend strategy: what it is waiting for">
+    <Panel title="trend_ema_cross: what it is waiting for">
       <p className={healthy ? "gain" : "warn inline"}>
         Market health on {short(s.as_of)}: <b>{s.breadth}%</b> of NIFTY 50 stocks are above their 50-day average. It buys only at <b>{s.need}%</b> or more,
         so it is {healthy ? "allowed to buy" : "waiting in cash"}.
