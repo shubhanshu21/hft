@@ -1,6 +1,18 @@
 # Multi-Asset Quantitative Trading Framework (Indian Markets)
 
-> **Status 2026-10-14 — read first.** Crypto and the MCX `gold_crude` strategy were **removed** (git history has them); MCX data is still downloaded nightly (`markets/commodity/data.py`, `daily_series.py`). Paper trading runs equity `trend_ema_cross` and currency `rsi_range` only. Earlier: **2026-10-12** — MCX commodity was **removed** (user: "remove commodity section totally"): its strategies, cost model, features, engine support and tests are deleted (git history has them). MCX **data is still recorded**: the nightly candle top-up (`markets/commodity/data.py`) and the order-book recorder (`engine/depth_recorder.py`). The 5-minute scalpers of every market were deleted on 2026-10-10, so **no strategy trades** in the paper daemon, which is disabled (`hft-dryrun.service`); only the crypto slow-momentum paper trader runs. Sections below that describe MCX trading, the scalpers or `cli.py backtest` are history. `backend/markets/README.md` lists what exists now.
+> **Status 2026-10-17 — read first. Everything is PAPER trading (no real orders anywhere).** Four paper accounts, each on its own tab of the web page (Paper trading; a green/red dot shows whether that market is open now):
+>
+> | Account | Strategies | Money | Runs |
+> |---|---|---|---|
+> | `EQUITY_SWING` | equity swing: `breakout_pair` (quiet-day + 55-day breakouts), `momentum_portfolio`, `earnings_drift`, `trend_ema_cross` | Rs4L (Rs1L each) | `engine/equity_swing.py`, `hft-equity-swing.timer` (Mon-Fri 09:08-15:31 IST) |
+> | `DRYRUN_ACCOUNT` | currency `rsi_range` (USDINR EURINR GBPINR) | Rs1L | `hft-dryrun.service` |
+> | `MCX_TREND_CARRY` | commodity `trend_carry` (monthly MCX trend + carry) | Rs5L | `engine/mcx_trend_carry.py`, `hft-mcx-trend-carry.timer` |
+> | `CRYPTO_CALM` | crypto `calm_coins`: CoinDCX futures on BTC ETH SOL DOGE TRX, long 1x only while the crypto market is calm (12-coin 20-day volatility below 2.43%/day), else cash; each coin's money in 7 weekday parts | Rs1L | `engine/crypto_calm.py`, `hft-crypto-calm.timer` (every day 05:45 IST) |
+>
+> Crypto results (Rs1L, Mar 2022 - Oct 2026, after CoinDCX fees, real funding and India's 30% tax on each winning trade with losses not set off, with CoinDCX's real minimum order sizes): Rs1L -> Rs1.73L, worst fall -30% (at Rs1L a BTC part is below the smallest BTC order, so BTC's fifth stays in cash; Rs3L+ gives 1.87x). 91 AI/ML versions, 624 per-coin rules and funding collection were tested and did not beat it. India's tax on crypto futures is unsettled: ask a CA before real money.
+> Every strategy and its status: `backend/markets/README.md`. Sections further down that describe intraday scalpers, MCX scalping or `cli.py backtest` are history.
+
+> **Earlier status 2026-10-14.** Crypto and the MCX `gold_crude` strategy were **removed** (git history has them); MCX data is still downloaded nightly (`markets/commodity/data.py`, `daily_series.py`). Paper trading runs equity `trend_ema_cross` and currency `rsi_range` only. Earlier: **2026-10-12** — MCX commodity was **removed** (user: "remove commodity section totally"): its strategies, cost model, features, engine support and tests are deleted (git history has them). MCX **data is still recorded**: the nightly candle top-up (`markets/commodity/data.py`) and the order-book recorder (`engine/depth_recorder.py`). The 5-minute scalpers of every market were deleted on 2026-10-10, so **no strategy trades** in the paper daemon, which is disabled (`hft-dryrun.service`); only the crypto slow-momentum paper trader runs. Sections below that describe MCX trading, the scalpers or `cli.py backtest` are history. `backend/markets/README.md` lists what exists now.
 
 An institutional-grade, 100% configurable **quantitative trading framework for Indian markets**, built for **MCX Commodity Futures** (removed 2026-10-12, see above), **NSE Currency Derivatives** (USDINR/EURINR/GBPINR), and **NSE Equities** (Cash/MIS), trading through Upstox.
 
@@ -399,6 +411,9 @@ All unit files are checked into **`backend/deploy/systemd/`** — not hidden awa
 | `hft-dryrun.service` | persistent daemon | Runs `cli.py dryrun` — the 24/7 paper-trading loop | Always on (`Restart=always`) |
 | `hft-daily-data-topup.service` + `.timer` | oneshot + timer | Runs `engine/nightly.py`: data top-up for commodity, currency and equity (1/3/5-min etc. into `var/archive/<market>/`), DB backup, backup verify, trade audit, archive-freshness check. **Every step runs even if an earlier one fails** (systemd would stop a oneshot at the first failing `ExecStart`); failures and stale archives go to Telegram. Runs twice because Upstox sometimes has the previous day's candles final only after 00:30 | Daily, 00:30 and 06:30 IST |
 | `hft-watchdog.service` + `.timer` | oneshot + timer | `engine/watchdog.py`: restarts `hft-dryrun.service` when it is running but has stopped scanning (missed heartbeat in `var/db/heartbeat.json`), and alerts on Telegram. Never touches a service that was stopped on purpose; at most one restart per 15 min; `WATCHDOG_AUTORESTART=false` = alert only | Every 2 min |
+| `hft-equity-swing.service` + `.timer` | oneshot + timer | `engine/equity_swing.py`: the EQUITY_SWING paper account (plan before the open, then trades and marks during the day) | Mon-Fri 09:08-15:31 IST |
+| `hft-mcx-trend-carry.service` + `.timer` | oneshot + timer | `engine/mcx_trend_carry.py`: MCX trend + carry paper account (month-end rebalance, contract rolls, daily mark) | Mon-Fri 09:10 and 23:40 IST |
+| `hft-crypto-calm.service` + `.timer` | oneshot + timer | `engine/crypto_calm.py`: tops up the crypto daily candles and funding (`markets/crypto/data.py`, CoinDCX + Binance public APIs), then today's weekday part of each coin re-decides calm (hold) / wild (cash) at CoinDCX's live futures price; Telegram summary | Every day 05:45 IST |
 | `hft-db-backup.service` + `.timer` | oneshot + timer | `engine.backup_db --hourly`: snapshot of the paper-trading DB (keeps 48; daily snapshots keep 14). Restore with `python3 cli.py restore-db [FILE|latest]` (stop the daemon first); `reset-db` saves the old DB first | Hourly |
 
 ### First-time setup on a new machine
@@ -418,7 +433,7 @@ loginctl enable-linger "$USER"
 # 3. Load the units and start everything
 systemctl --user daemon-reload
 systemctl --user enable --now hft-dryrun.service
-systemctl --user enable --now hft-daily-data-topup.timer hft-watchdog.timer hft-db-backup.timer
+systemctl --user enable --now hft-daily-data-topup.timer hft-watchdog.timer hft-db-backup.timer hft-equity-swing.timer hft-mcx-trend-carry.timer hft-crypto-calm.timer
 
 # 4. Confirm
 systemctl --user status hft-dryrun.service --no-pager

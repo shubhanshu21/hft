@@ -22,7 +22,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
   }, [strategy?.market, strategy?.name]);   // start from the risk the strategy was tested with
   const safeRisk = Math.max(3, strategy?.default_risk_pct ?? 0);
   const monthly = !!strategy?.monthly_rank;          // commodity/trend_carry: ranks the chosen contracts together each month; exposure is editable
-  const crypto = !!strategy?.crypto;                 // crypto/calm_btc: BTC futures only; leverage and the 30% tax are the choices
+  const crypto = !!strategy?.crypto;                 // crypto/calm_coins: 5 coins' futures; leverage and the 30% tax are the choices
   const auto = !!strategy?.auto_universe;            // equity/breakout_pair: picks from the day's 200 most-traded NSE stocks itself, fixed 5 + 3 holdings
   const [all, setAll] = useState(true);
   const [chosen, setChosen] = useState([]);
@@ -85,8 +85,8 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
             {" "}Daily data starts January 2022, so the first signals are in late 2022.</p>
         )}
         {strategy && crypto && (
-          <p className="hint">Holds Bitcoin futures (CoinDCX, priced in USDT) only while the whole crypto market is calm: the 20-day volatility of 12 big coins
-            below 2.43% a day; otherwise it holds cash. The money is split into 7 parts, each re-checking on its own weekday, so no single day's luck decides.
+          <p className="hint">Holds futures on BTC, ETH, SOL, DOGE and TRX (CoinDCX, priced in USDT, equal money each) only while the whole crypto market is calm: the 20-day volatility of 12 big coins
+            below 2.43% a day; otherwise it holds cash. Each coin's money is split into 7 parts, each re-checking on its own weekday, so no single day's luck decides.
             Fees, slippage and the real funding paid by longs are included. Data starts January 2022; the first signal is in February 2022.</p>
         )}
         {strategy && !auto && !crypto && (

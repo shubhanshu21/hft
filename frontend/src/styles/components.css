@@ -104,6 +104,8 @@ button.danger{background:var(--loss);border-color:var(--loss);color:#fff;font-we
 .acct-tabs button{display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:10px 14px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--fg);cursor:pointer;text-align:left}
 .acct-tabs button .t{font-weight:600;font-size:.875rem}
 .acct-tabs button .s{font-family:var(--font-num);font-size:.75rem;color:var(--muted);font-variant-numeric:tabular-nums}
+.acct-tabs .mkt-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px;vertical-align:middle}
+.acct-tabs .mkt-dot.open{background:var(--gain)} .acct-tabs .mkt-dot.closed{background:var(--loss)}
 .acct-tabs button.on{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
 .acct-tabs button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 

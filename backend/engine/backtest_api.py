@@ -67,8 +67,8 @@ def catalog() -> list[dict]:
     from markets.equity.strategies.tf_quarterly.momentum_portfolio import strategy as mps
     mom = {"market": "equity", "name": "momentum_portfolio", "timeframe": "1 days", "supported": True, "symbols": [], "auto_universe": True,
            "summary": (mps.__doc__ or "").strip().split("\n")[0], "intraday": False, "default_risk_pct": None}
-    from markets.crypto.strategies.tf_daily.calm_btc import strategy as cb
-    crypto = {"market": "crypto", "name": "calm_btc", "timeframe": "1 days", "supported": True, "symbols": [cb.TRADE], "crypto": True,
+    from markets.crypto.strategies.tf_daily.calm_coins import strategy as cb
+    crypto = {"market": "crypto", "name": "calm_coins", "timeframe": "1 days", "supported": True, "symbols": list(cb.TRADED), "crypto": True,
               "summary": (cb.__doc__ or "").strip().split("\n")[0], "intraday": False, "default_risk_pct": None,
               "exposure": 1.0, "exposure_min": 1.0, "exposure_max": 3.0}
     return [{"market": m, "name": n, "timeframe": f"{s.timeframe[1]} {s.timeframe[0]}", "supported": tuple(s.timeframe) == ("days", 1), "symbols": list(getattr(s, "universe", None) or universe(m)),
@@ -118,7 +118,7 @@ def validate(body: dict) -> dict:
         raise ValueError("Unknown market or strategy")
     if not known[(market, name)]["supported"]:
         raise ValueError(f"{market}/{name} uses {known[(market, name)]['timeframe']} bars; the web backtester runs daily-bar strategies")
-    if known[(market, name)].get("crypto"):                      # calm_btc: BTC futures only; leverage 1-3x and the 30% tax are the choices
+    if known[(market, name)].get("crypto"):                      # calm_coins: 5 coins' futures; leverage 1-3x and the 30% tax are the choices
         row = known[(market, name)]
         p = {"symbols": list(row["symbols"]), "slippage_bp": 0.0, "pyramid_pct": None, "tax": bool(body.get("tax", True))}
         lo, hi = LIMITS["capital"]; p["capital"] = float(body.get("capital", 100_000))
@@ -280,7 +280,33 @@ def _value_position(p: dict, live: dict) -> None:
 
 PAPER_ACCOUNTS = [("EQUITY_SWING", "Equity swing"), ("DRYRUN_ACCOUNT", "Currency"), ("MCX_TREND_CARRY", "MCX trend + carry"), ("CRYPTO_CALM", "Crypto")]
 ACCOUNT_STRATEGIES = {"EQUITY_SWING": "breakout · momentum · earnings drift · trend_ema_cross", "DRYRUN_ACCOUNT": "rsi_range",
-                      "MCX_TREND_CARRY": "trend_carry", "CRYPTO_CALM": "calm_btc"}
+                      "MCX_TREND_CARRY": "trend_carry", "CRYPTO_CALM": "calm_coins (BTC ETH SOL DOGE TRX)"}
+
+
+MARKET_HOURS = {"EQUITY_SWING": ("09:15", "15:30", "NSE"), "DRYRUN_ACCOUNT": ("09:00", "17:00", "NSE currency"), "MCX_TREND_CARRY": ("09:00", None, "MCX")}
+
+
+def market_status(account: str) -> tuple[bool, str]:
+    """Is this account's market open right now (IST)? Crypto never closes; NSE/MCX: weekdays, not on a trading holiday, within session hours.
+    MCX closes 23:30 while the US is on summer time, 23:55 otherwise. Holidays: the NSE/CDS list (an MCX evening session on an NSE holiday shows closed)."""
+    if account == "CRYPTO_CALM":
+        return True, "Crypto trades 24 hours, every day"
+    start, end, name = MARKET_HOURS.get(account, ("09:15", "15:30", "NSE"))
+    now = datetime.now(IST)
+    if end is None:
+        from zoneinfo import ZoneInfo
+        end = "23:30" if datetime.now(ZoneInfo("America/New_York")).dst() else "23:55"
+    hours = f"{name} {start}-{end} IST, Mon-Fri"
+    if now.weekday() >= 5:
+        return False, f"{hours}: closed for the weekend"
+    try:
+        from services.utils.market_holidays import get_trading_holidays
+        if now.date() in get_trading_holidays():
+            return False, f"{hours}: closed today (trading holiday)"
+    except Exception:
+        pass
+    is_open = start <= now.strftime("%H:%M") < end
+    return is_open, f"{hours}: {'open now' if is_open else 'closed now'}"
 
 
 def _value_breakout(p: dict, live: dict) -> None:
@@ -321,13 +347,13 @@ def _value_mcx(p: dict, live: dict) -> None:
 
 
 def _value_crypto(p: dict, live: dict) -> None:
-    """An open crypto calm_btc part (engine/crypto_calm.py): BTC futures in USDT, profit in rupees at CoinDCX's USDT/INR, 'if sold now' after
+    """An open crypto calm_coins part (engine/crypto_calm.py): a coin's futures in USDT, profit in rupees at CoinDCX's USDT/INR, 'if sold now' after
     fees, funding paid so far and the 30% tax."""
     from engine.crypto_calm import live_prices, value_if_sold
     st = json.loads(p.get("state") or "{}")
     q = live.get("crypto") or live.setdefault("crypto", live_prices())
-    price, fx = q.get("price"), q.get("usdtinr")
-    p.update(market="crypto", lot_size=1, units=p["qty"], size_text=f"{p['qty']:.6f} BTC · part {st.get('part', 0) + 1} of 7", price_now=price,
+    price, fx = q.get("price", {}).get(p["symbol"]), q.get("usdtinr")
+    p.update(market="crypto", lot_size=1, units=p["qty"], size_text=f"{p['qty']:g} {p['symbol']} · part {st.get('part', 0) + 1} of 7", price_now=price,
              price_source="live" if price else None, price_time=q.get("at"), bid=None, ask=None, checked_at=q.get("at"),
              margin_used=float(st.get("margin_inr") or 0.0), risk_to_stop=None)
     p.pop("state", None); p.pop("instrument_key", None)
@@ -354,7 +380,9 @@ def paper_summary(account: str = "DRYRUN_ACCOUNT") -> dict:
             r = con.execute("SELECT initial_capital, current_capital FROM accounts WHERE account_id = ?", (aid,)).fetchone()
             n = con.execute("SELECT COUNT(*) FROM positions WHERE account_id = ? AND status = 'OPEN'", (aid,)).fetchone()[0]
             if r:
-                tabs.append({"id": aid, "label": label, "strategies": ACCOUNT_STRATEGIES.get(aid, ""), "start": r[0], "booked": r[1], "open": n})
+                mo, mtext = market_status(aid)
+                tabs.append({"id": aid, "label": label, "strategies": ACCOUNT_STRATEGIES.get(aid, ""), "start": r[0], "booked": r[1], "open": n,
+                             "market_open": mo, "market_text": mtext})
         acc = con.execute("SELECT * FROM accounts WHERE account_id = ?", (account,)).fetchone()
         pos = [dict(r) for r in con.execute("SELECT symbol, direction, qty, entry_price, current_stop, best_price, entry_time, strategy, instrument_key, state FROM positions "
                                               "WHERE account_id = ? AND status = 'OPEN' ORDER BY entry_time", (account,))]
@@ -385,8 +413,8 @@ def work(run: dict) -> None:
         p = run["params"]
         def progress(i, n):
             run["progress"] = round(i / n * 100)
-        if run["market"] == "crypto":                              # calm_btc: 7 weekday parts, BTC futures, its own backtest
-            from markets.crypto.strategies.tf_daily.calm_btc import strategy as cb
+        if run["market"] == "crypto":                              # calm_coins: 5 coins x 7 weekday parts, its own backtest
+            from markets.crypto.strategies.tf_daily.calm_coins import strategy as cb
             try:
                 run["result"] = cb.web_backtest(p["capital"], p["start"], p["end"], leverage=p["leverage"], tax=p["tax"])
             except ValueError as e:
@@ -425,7 +453,7 @@ def work(run: dict) -> None:
                                          on_snapshot=lambda snap: run.__setitem__("partial", snap))
         try:                                                             # the strategy's own lines / RSI band / results days for the chart
             from engine.chart_overlays import overlays
-            if run["market"] != "crypto":                             # calm_btc brings its own volatility band
+            if run["market"] != "crypto":                             # calm_coins brings its own volatility band
                 run["result"]["overlays"] = overlays(run["strategy"], run["market"], run["result"])
         except Exception:
             traceback.print_exc()

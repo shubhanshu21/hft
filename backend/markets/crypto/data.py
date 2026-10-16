@@ -1,4 +1,4 @@
-"""Crypto daily data top-up for crypto/calm_btc (public APIs, no keys, no orders).
+"""Crypto daily data top-up for crypto/calm_coins (public APIs, no keys, no orders).
 
     python3 -m markets.crypto.data          # top up var/archive/crypto/<COIN>_1d.csv and <COIN>_funding_daily.csv
 
@@ -14,7 +14,7 @@ import time
 import pandas as pd
 import requests
 
-from markets.crypto.strategies.tf_daily.calm_btc.strategy import COINS, DATA_DIR
+from markets.crypto.strategies.tf_daily.calm_coins.strategy import COINS, DATA_DIR
 
 DAY_MS = 86_400_000
 LOOKBACK_DAYS = 30

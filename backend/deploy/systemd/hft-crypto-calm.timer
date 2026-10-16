@@ -1,5 +1,5 @@
 [Unit]
-Description=Crypto calm_btc paper trading schedule
+Description=Crypto calm_coins paper trading schedule
 
 [Timer]
 # 05:45 IST = 00:15 UTC, every day (crypto never closes): the daily candle has just closed; today's weekday part re-decides calm/wild.

@@ -12,7 +12,7 @@ import { useTheme } from "../hooks/useTheme.js";
 import { inr, signed, tone } from "../lib/format.js";
 
 const STRATEGY_LABEL = { nr7_breakout: "Quiet-day breakout", d55_breakout: "55-day breakout", momentum_portfolio: "Momentum (15 stocks)",
-  earnings_drift: "Earnings drift", trend_ema_cross: "trend_ema_cross", rsi_range: "Currency rsi_range", trend_carry: "MCX trend + carry", calm_btc: "Crypto calm BTC" };
+  earnings_drift: "Earnings drift", trend_ema_cross: "trend_ema_cross", rsi_range: "Currency rsi_range", trend_carry: "MCX trend + carry", calm_coins: "Crypto calm (5 coins)", calm_btc: "Crypto calm BTC" };
 const when = (s) => (s ? String(s).replace("T", " ").slice(0, 16) : "-");
 
 /** The paper-trading account as it is now (read-only, refreshed every minute). No real orders are ever placed. */
@@ -61,7 +61,7 @@ export default function PaperPage() {
         <div className="acct-tabs" role="tablist">
           {d.accounts.map((a) => (
             <button key={a.id} type="button" role="tab" aria-selected={a.id === d.account_id} className={a.id === d.account_id ? "on" : ""} onClick={() => pick(a.id)}>
-              <span className="t">{a.label}</span>
+              <span className="t"><span className={`mkt-dot ${a.market_open ? "open" : "closed"}`} title={a.market_text} aria-label={a.market_text} />{a.label}</span>
               {a.strategies && <span className="s">{a.strategies}</span>}
               <span className="s">{inr(a.booked)} · {a.open} open</span>
             </button>

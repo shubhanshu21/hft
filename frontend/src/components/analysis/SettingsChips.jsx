@@ -7,10 +7,10 @@ export default function SettingsChips({ params }) {
     ["Commodities", `${params.symbols?.length}: ${(params.symbols ?? []).join(", ")}`],
     ["Rebalance", "monthly"],
     ["Costs", "MCX fees + half-spread"],
-  ] : params.market === "crypto" ? [                                // calm_btc: BTC futures while the market is calm
+  ] : params.market === "crypto" ? [                                // calm_coins: 5 coins' futures while the market is calm
     ["Start money", `₹${Number(params.capital).toLocaleString("en-IN")}`],
     ["Leverage", `${params.leverage}x`],
-    ["Holds", "BTC futures while the crypto market is calm, else cash"],
+    ["Holds", "BTC ETH SOL DOGE TRX futures (equal money) while the crypto market is calm, else cash"],
     ["Checks", "weekly, 7 weekday parts"],
     ["Tax", params.tax === false ? "off (before tax)" : "30% of each winning trade"],
   ] : params.strategy === "earnings_drift" ? [                       // results reaction across the day's top-200 stocks
