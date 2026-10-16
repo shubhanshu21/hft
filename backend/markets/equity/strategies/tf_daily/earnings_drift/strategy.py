@@ -124,3 +124,24 @@ def backtest(start="2022-10-03", end=None, capital=100_000.0, ind: dict | None =
         rep["bars"] = {s: [r if r[3] is not None else None for r in v] for s, v in rep["bars"].items()}
         out["replay"] = rep
     return out
+
+
+def web_backtest(capital: float, start: str, end: str, slippage_bp: float = 5.0) -> dict:
+    """The web backtester's replay shape (engine/backtest_api.py, the New backtest page)."""
+    from core.backtester import metrics
+    r = backtest(start, end, capital, slip_bp=slippage_bp, record=True)
+    rep = r["replay"]
+    if len(rep["days"]) < 2:
+        raise ValueError("No trading days in the chosen dates (daily data starts January 2022; signals need ~6 months of history)")
+    t = r["trades"]
+    closed = [{"net": x.net, "fees": x.fees, "slip": x.slip, "gross": x.gross, "days": (x.exit_day - x.entry_day).days} for x in t.itertuples()] if len(t) else []
+    nb = pd.read_csv(ARCHIVE_ROOT / "equity" / "NIFTYBEES_daily.csv")
+    nb.index = pd.to_datetime(nb["timestamp"].str[:10])
+    n = nb["close"].reindex(pd.to_datetime(rep["days"])).ffill().bfill()
+    rep["benchmark"] = [round(capital * v / n.iloc[0]) for v in n]
+    rep["metrics"] = metrics(rep["equity"], capital, closed, len(rep["days"]), len(r["open"])) | {
+        "note": f"Buys a stock two days after quarterly results that beat the market by more than {MIN_REACTION:.0%} on {MIN_VOL_SURGE:.0f}x volume "
+                f"(one of the 200 most-traded NSE stocks), up to {K} at a time, {1 / K:.0%} of the money each; sells after {HOLD_DAYS} trading days. "
+                "Buys only while half of those 200 stocks are above their 50-day average. Benchmark = NIFTY 50 (NIFTYBEES)."}
+    rep["skipped_symbols"] = []
+    return rep

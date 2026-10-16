@@ -62,6 +62,7 @@ export default function PaperPage() {
           {d.accounts.map((a) => (
             <button key={a.id} type="button" role="tab" aria-selected={a.id === d.account_id} className={a.id === d.account_id ? "on" : ""} onClick={() => pick(a.id)}>
               <span className="t">{a.label}</span>
+              {a.strategies && <span className="s">{a.strategies}</span>}
               <span className="s">{inr(a.booked)} · {a.open} open</span>
             </button>
           ))}

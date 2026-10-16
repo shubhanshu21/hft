@@ -61,16 +61,16 @@ def catalog() -> list[dict]:
     from markets.equity.strategies.tf_daily.breakout_pair import strategy as bps
     bp = {"market": "equity", "name": "breakout_pair", "timeframe": "1 days", "supported": True, "symbols": [], "auto_universe": True,
           "summary": (bps.__doc__ or "").strip().split("\n")[0], "intraday": False, "default_risk_pct": bps.RISK_PCT}
-    swing = {"market": "equity", "name": "equity_swing", "timeframe": "1 days", "supported": True, "symbols": [], "auto_universe": True,
-             "summary": "The whole equity swing paper account: breakout pair + momentum + earnings drift, one third of the money each.", "intraday": False,
-             "default_risk_pct": None}
+    from markets.equity.strategies.tf_daily.earnings_drift import strategy as eds
+    earn = {"market": "equity", "name": "earnings_drift", "timeframe": "1 days", "supported": True, "symbols": [], "auto_universe": True,
+            "summary": (eds.__doc__ or "").strip().split("\n")[0], "intraday": False, "default_risk_pct": None}
     from markets.equity.strategies.tf_quarterly.momentum_portfolio import strategy as mps
     mom = {"market": "equity", "name": "momentum_portfolio", "timeframe": "1 days", "supported": True, "symbols": [], "auto_universe": True,
            "summary": (mps.__doc__ or "").strip().split("\n")[0], "intraday": False, "default_risk_pct": None}
     return [{"market": m, "name": n, "timeframe": f"{s.timeframe[1]} {s.timeframe[0]}", "supported": tuple(s.timeframe) == ("days", 1), "symbols": list(getattr(s, "universe", None) or universe(m)),
              "summary": (s.__doc__ or "").strip().split("\n")[0], "intraday": s.intraday,
              "default_risk_pct": getattr(s, "default_risk_pct", None)}
-            for (m, n), s in sorted(registry.discover().items())] + [swing, bp, mom, mcx]
+            for (m, n), s in sorted(registry.discover().items())] + [bp, mom, earn, mcx]
 
 
 def prune() -> None:
@@ -260,6 +260,8 @@ def _value_position(p: dict, live: dict) -> None:
 
 
 PAPER_ACCOUNTS = [("DRYRUN_ACCOUNT", "Equity + currency"), ("EQUITY_SWING", "Equity swing"), ("MCX_TREND_CARRY", "MCX trend + carry")]
+ACCOUNT_STRATEGIES = {"DRYRUN_ACCOUNT": "trend_ema_cross · rsi_range (currency)", "EQUITY_SWING": "breakout · momentum · earnings drift",
+                      "MCX_TREND_CARRY": "trend_carry"}
 
 
 def _value_breakout(p: dict, live: dict) -> None:
@@ -316,7 +318,7 @@ def paper_summary(account: str = "DRYRUN_ACCOUNT") -> dict:
             r = con.execute("SELECT initial_capital, current_capital FROM accounts WHERE account_id = ?", (aid,)).fetchone()
             n = con.execute("SELECT COUNT(*) FROM positions WHERE account_id = ? AND status = 'OPEN'", (aid,)).fetchone()[0]
             if r:
-                tabs.append({"id": aid, "label": label, "start": r[0], "booked": r[1], "open": n})
+                tabs.append({"id": aid, "label": label, "strategies": ACCOUNT_STRATEGIES.get(aid, ""), "start": r[0], "booked": r[1], "open": n})
         acc = con.execute("SELECT * FROM accounts WHERE account_id = ?", (account,)).fetchone()
         pos = [dict(r) for r in con.execute("SELECT symbol, direction, qty, entry_price, current_stop, best_price, entry_time, strategy, instrument_key, state FROM positions "
                                               "WHERE account_id = ? AND status = 'OPEN' ORDER BY entry_time", (account,))]
@@ -347,10 +349,10 @@ def work(run: dict) -> None:
         p = run["params"]
         def progress(i, n):
             run["progress"] = round(i / n * 100)
-        if run["strategy"] == "equity_swing":                     # the whole account: three strategies, a third of the money each
-            from markets.equity import swing_account
+        if run["strategy"] == "earnings_drift":                   # results dates + reaction across ~200 stocks: its own backtest
+            from markets.equity.strategies.tf_daily.earnings_drift import strategy as eds
             try:
-                run["result"] = swing_account.web_backtest(p["capital"], p["start"], p["end"], slippage_bp=p["slippage_bp"])
+                run["result"] = eds.web_backtest(p["capital"], p["start"], p["end"], slippage_bp=p["slippage_bp"])
             except ValueError as e:
                 raise BacktestError(str(e))
         elif run["strategy"] == "momentum_portfolio":               # ranks ~200 stocks each quarter: its own backtest
