@@ -243,7 +243,8 @@ def run_backtest(strategy: Strategy, symbols: list[str], start: str, end: str, *
         out["days"].append(d.strftime("%Y-%m-%d"))
         out["equity"].append(round(equity_at(mark)))
         out["events"].append(events)
-        out["pos"].append([{"sym": s, "q": p["qty"] * lot[s], "e": round(p["entry_price"], 4), "px": round(mark[s], 4), "start": p["entry_i"]} for s, p in book.items()])
+        out["pos"].append([{"sym": s, "q": p["qty"] * lot[s], "e": round(p["entry_price"], 4), "px": round(mark[s], 4), "start": p["entry_i"],
+                            "stop": round(p["current_stop"], 4) if p.get("current_stop") else None} for s, p in book.items()])
         if progress and n % 10 == 0:
             progress(n, len(days))
         if on_snapshot and (n % snapshot_every == 0):

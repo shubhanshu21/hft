@@ -381,6 +381,11 @@ def work(run: dict) -> None:
                                          pyramid_pct=p.get("pyramid_pct"),
                                          respect_trades=False,              # trade exactly the symbols ticked on the page
                                          on_snapshot=lambda snap: run.__setitem__("partial", snap))
+        try:                                                             # the strategy's own lines / RSI band / results days for the chart
+            from engine.chart_overlays import overlays
+            run["result"]["overlays"] = overlays(run["strategy"], run["market"], run["result"])
+        except Exception:
+            traceback.print_exc()
         run["status"] = "done"
     except BacktestError as e:
         run["status"], run["error"] = "failed", str(e)

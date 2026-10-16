@@ -196,7 +196,7 @@ def backtest(start="2022-10-03", end=None, capital=100_000.0, ind: dict | None =
         curve.append((d, value))
         if record:
             rep["days"].append(d.strftime("%Y-%m-%d")); rep["equity"].append(round(value)); rep["events"].append(evs)
-            rep["pos"].append([{"sym": s, "q": p["q"], "e": round(p["e"], 2), "px": round(p["last"], 2), "start": p["i0"]} for s, p in pos.items()])
+            rep["pos"].append([{"sym": s, "q": p["q"], "e": round(p["e"], 2), "px": round(p["last"], 2), "start": p["i0"], "stop": round(p["stop"], 2)} for s, p in pos.items()])
     curve = pd.Series(dict(curve))
     yearly = curve.groupby(curve.index.year).last()
     yearly = yearly / yearly.shift(1).fillna(capital) - 1

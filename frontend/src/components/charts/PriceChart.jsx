@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { createChart, LineStyle } from "lightweight-charts";
+import { createChart, LineStyle, LineType } from "lightweight-charts";
 import { baseOptions } from "./chartOptions.js";
 import { useTheme, withAlpha } from "../../hooks/useTheme.js";
 import { signed } from "../../lib/format.js";
@@ -11,7 +11,9 @@ import { signed } from "../../lib/format.js";
  * bars[i] = [open, high, low, close, volume?] | null (older results have no volume); showVolume draws volume bars along the bottom.
  * bars[i] = [open, high, low, close] | null; calendar[i] = "YYYY-MM-DD"; trades = [{ i0, i1, entry, exit, pnl, q }].
  */
-export default function PriceChart({ qtyFmt = (q) => q ?? "", symbol, bars, calendar, first, last, at, trades, fitKey, showVolume = true, focus = null }) {
+const OVERLAY_COLORS = ["#d97706", "#7c3aed", "#0284c7"];     // amber, violet, sky: distinct from the buy / profit / loss colours
+
+export default function PriceChart({ qtyFmt = (q) => q ?? "", tf = "1D", overlay = null, stopPath = null, symbol, bars, calendar, first, last, at, trades, fitKey, showVolume = true, focus = null }) {
   const colors = useTheme();
   const box = useRef(null);
   const api = useRef({});
@@ -45,7 +47,27 @@ export default function PriceChart({ qtyFmt = (q) => q ?? "", symbol, bars, cale
     const vols = [];
     if (hasVol) for (let i = first; i <= at; i++) if (bars[i] && bars[i][4] != null) vols.push({ time: calendar[i], value: bars[i][4], color: withAlpha(bars[i][3] >= bars[i][0] ? colors.gain : colors.loss, 0.45) });
     api.current.volume.setData(vols);
-    candles.priceScale().applyOptions({ scaleMargins: hasVol ? { top: 0.06, bottom: 0.24 } : { top: 0.06, bottom: 0.06 } });
+    const osc = overlay?.osc;
+    if (osc) api.current.volume.setData([]);                          // the oscillator takes the bottom band instead of volume
+    candles.priceScale().applyOptions({ scaleMargins: hasVol || osc ? { top: 0.06, bottom: 0.24 } : { top: 0.06, bottom: 0.06 } });
+
+    for (const sr of api.current.ovl ?? []) chart.removeSeries(sr);     // the strategy's own lines, its stop path and RSI band
+    api.current.ovl = [];
+    const upto = (vals) => { const d = []; for (let i = first; i <= at; i++) d.push(vals[i] == null ? { time: calendar[i] } : { time: calendar[i], value: vals[i] }); return d; };
+    (overlay?.lines ?? []).forEach((ln, k) => {
+      const sr = chart.addLineSeries({ color: OVERLAY_COLORS[k % OVERLAY_COLORS.length], lineWidth: 1, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false, title: "" });
+      sr.setData(upto(ln.values)); api.current.ovl.push(sr);
+    });
+    if (stopPath && stopPath.some((v) => v != null)) {
+      const sr = chart.addLineSeries({ color: colors.loss, lineWidth: 2, lineStyle: LineStyle.Dotted, lineType: LineType.WithSteps, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false });
+      sr.setData(upto(stopPath)); api.current.ovl.push(sr);
+    }
+    if (osc) {
+      const sr = chart.addLineSeries({ color: OVERLAY_COLORS[2], lineWidth: 1, priceScaleId: "osc", lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false });
+      chart.priceScale("osc").applyOptions({ scaleMargins: { top: 0.8, bottom: 0.02 } });
+      sr.setData(upto(osc.values)); api.current.ovl.push(sr);
+      for (const lv of osc.levels ?? []) sr.createPriceLine({ price: lv, color: colors.muted, lineStyle: LineStyle.Dashed, lineWidth: 1, axisLabelVisible: true, title: String(lv) });
+    }
 
     const markers = [];
     for (const t of trades) {
@@ -53,6 +75,7 @@ export default function PriceChart({ qtyFmt = (q) => q ?? "", symbol, bars, cale
       for (const a of t.adds ?? []) markers.push({ time: calendar[a.i], position: "belowBar", shape: "arrowUp", color: colors.accent, text: `ADD ${qtyFmt(a.q)} @ ${a.px.toFixed(2)}` });
       if (t.i1 != null) markers.push({ time: calendar[t.i1], position: "aboveBar", shape: "arrowDown", color: t.pnl >= 0 ? colors.gain : colors.loss, text: `SELL ${qtyFmt(t.soldQty)} ${signed(t.pnl)}` });
     }
+    for (const m of overlay?.markers ?? []) if (m.i >= first && m.i <= at) markers.push({ time: calendar[m.i], position: "aboveBar", shape: "circle", color: colors.muted, text: m.text });
     candles.setMarkers(markers.filter((m) => m.time >= calendar[first]).sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0)));
 
     for (const s of api.current.lines) chart.removeSeries(s);
@@ -90,20 +113,25 @@ export default function PriceChart({ qtyFmt = (q) => q ?? "", symbol, bars, cale
         chart.timeScale().setVisibleLogicalRange({ from: -1, to: span + 1 });
       }
     }
-  }, [colors, symbol, bars, calendar, first, last, at, trades, fitKey, showVolume, focus]);
+  }, [colors, symbol, bars, calendar, first, last, at, trades, fitKey, showVolume, focus, overlay, stopPath]);
 
+  const dayIndex = new Map(calendar.map((d, i) => [String(d), i]));
   const bar = hover ?? (bars[at] ? { open: bars[at][0], high: bars[at][1], low: bars[at][2], close: bars[at][3], volume: bars[at][4], time: calendar[at] } : null);
   return (
     <div className="tv">
       {bar && (
         <div className="tv-legend">
-          <b>{symbol}</b><span>{String(bar.time)}</span>
+          <b>{symbol}</b><span className="tf" title={tf === "1M" ? "one candle per month" : "one candle per day"}>{tf}</span><span>{String(bar.time)}</span>
           <span>O <i>{bar.open.toFixed(2)}</i></span><span>H <i>{bar.high.toFixed(2)}</i></span><span>L <i>{bar.low.toFixed(2)}</i></span>
           <span>C <i className={bar.close >= bar.open ? "up" : "down"}>{bar.close.toFixed(2)}</i></span>
           {showVolume && bar.volume != null && <span>Vol <i>{Math.round(bar.volume).toLocaleString("en-IN")}</i></span>}
+          {(() => { const i = dayIndex.get(String(bar.time)); if (i == null) return null;
+            return <>{(overlay?.lines ?? []).map((ln, k) => ln.values[i] != null && <span key={ln.name} style={{ color: OVERLAY_COLORS[k % OVERLAY_COLORS.length] }}>{ln.name} <i>{ln.values[i].toFixed(2)}</i></span>)}
+              {stopPath?.[i] != null && <span className="down">stop <i>{stopPath[i].toFixed(2)}</i></span>}
+              {overlay?.osc?.values[i] != null && <span>{overlay.osc.name} <i>{overlay.osc.values[i].toFixed(1)}</i></span>}</>; })()}
         </div>
       )}
-      <div ref={box} className="tv-box" />
+      <div ref={box} className="tv-box tv-price" />
     </div>
   );
 }

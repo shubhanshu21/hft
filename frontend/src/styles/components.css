@@ -33,6 +33,10 @@
 .trades-table td{padding:6px 10px 6px 0;border-bottom:1px solid var(--line);font-family:var(--font-num);white-space:nowrap}
 .tv{display:flex;flex-direction:column;gap:6px}
 .tv-box{width:100%;min-width:0;border-radius:6px;overflow:hidden}
+.tv-price{height:440px}
+.chart-fs:fullscreen{background:var(--panel, #fff);padding:16px 20px;overflow:auto}
+.chart-fs:fullscreen .tv-price{height:calc(100vh - 215px)}
+.chart-fs:fullscreen .ctrl{margin:6px 0 10px;box-shadow:none}
 .tv-legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-family:var(--font-num);font-size:.75rem;color:var(--muted);font-variant-numeric:tabular-nums}
 .tv-legend b{color:var(--fg)} .tv-legend i{font-style:normal;color:var(--fg)}
 .hint-inline{text-transform:none;letter-spacing:0;font-weight:400;margin-left:8px}
@@ -102,3 +106,5 @@ button.danger{background:var(--loss);border-color:var(--loss);color:#fff;font-we
 .acct-tabs button .s{font-family:var(--font-num);font-size:.75rem;color:var(--muted);font-variant-numeric:tabular-nums}
 .acct-tabs button.on{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
 .acct-tabs button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+.tv-legend .tf{font-weight:600;padding:0 6px;border:1px solid var(--line);border-radius:4px}
