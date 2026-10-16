@@ -12,7 +12,7 @@ import { useTheme } from "../hooks/useTheme.js";
 import { inr, signed, tone } from "../lib/format.js";
 
 const STRATEGY_LABEL = { nr7_breakout: "Quiet-day breakout", d55_breakout: "55-day breakout", momentum_portfolio: "Momentum (15 stocks)",
-  earnings_drift: "Earnings drift", trend_ema_cross: "trend_ema_cross", rsi_range: "Currency rsi_range", trend_carry: "MCX trend + carry" };
+  earnings_drift: "Earnings drift", trend_ema_cross: "trend_ema_cross", rsi_range: "Currency rsi_range", trend_carry: "MCX trend + carry", calm_btc: "Crypto calm BTC" };
 const when = (s) => (s ? String(s).replace("T", " ").slice(0, 16) : "-");
 
 /** The paper-trading account as it is now (read-only, refreshed every minute). No real orders are ever placed. */

@@ -1,0 +1,8 @@
+[Unit]
+Description=Crypto calm_btc paper trading (CoinDCX BTC futures while the market is calm; daily part decision + mark-to-market; paper only, no real orders)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/var/www/html/hft/backend
+ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m engine.crypto_calm
+TimeoutStartSec=10min

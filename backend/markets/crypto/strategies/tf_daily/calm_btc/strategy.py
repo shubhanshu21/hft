@@ -14,7 +14,7 @@ Results, Rs1L, March 2022 -> Oct 2026, after fees, funding and India's 30% tax o
   Leverage sweet spot (1x..3x, chosen on 2022-24 by return per unit of worst fall): 1x after tax AND before tax. 1.5x adds ~Rs4k after tax
   and deepens the worst fall to -59%; 3x -84%; 10x wiped out. Before tax (if futures losses can be set off -- ask a CA) 1x: Rs2,78,534.
 Selection (which coin) effects were real but too weak to survive the tax; long/short coin picking lost in every version.
-Paper: engine/crypto_calm.py (account CRYPTO_CALM). Data: markets/crypto/data.py (nightly).
+Paper: engine/crypto_calm.py (account CRYPTO_CALM, hft-crypto-calm.timer 05:45 IST daily). Data: markets/crypto/data.py (topped up by that run).
 """
 from __future__ import annotations
 

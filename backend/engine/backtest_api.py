@@ -278,9 +278,9 @@ def _value_position(p: dict, live: dict) -> None:
         p["net_if_sold"] = p["fees_if_sold"] = None
 
 
-PAPER_ACCOUNTS = [("EQUITY_SWING", "Equity swing"), ("DRYRUN_ACCOUNT", "Currency"), ("MCX_TREND_CARRY", "MCX trend + carry")]
+PAPER_ACCOUNTS = [("EQUITY_SWING", "Equity swing"), ("DRYRUN_ACCOUNT", "Currency"), ("MCX_TREND_CARRY", "MCX trend + carry"), ("CRYPTO_CALM", "Crypto")]
 ACCOUNT_STRATEGIES = {"EQUITY_SWING": "breakout · momentum · earnings drift · trend_ema_cross", "DRYRUN_ACCOUNT": "rsi_range",
-                      "MCX_TREND_CARRY": "trend_carry"}
+                      "MCX_TREND_CARRY": "trend_carry", "CRYPTO_CALM": "calm_btc"}
 
 
 def _value_breakout(p: dict, live: dict) -> None:
@@ -320,6 +320,23 @@ def _value_mcx(p: dict, live: dict) -> None:
     p.update(profit_now=round(c["gross"], 2), net_if_sold=round(c["net"], 2), fees_if_sold=round(c["total"], 2), move_pct=round((price / p["entry_price"] - 1) * 100, 3))
 
 
+def _value_crypto(p: dict, live: dict) -> None:
+    """An open crypto calm_btc part (engine/crypto_calm.py): BTC futures in USDT, profit in rupees at CoinDCX's USDT/INR, 'if sold now' after
+    fees, funding paid so far and the 30% tax."""
+    from engine.crypto_calm import live_prices, value_if_sold
+    st = json.loads(p.get("state") or "{}")
+    q = live.get("crypto") or live.setdefault("crypto", live_prices())
+    price, fx = q.get("price"), q.get("usdtinr")
+    p.update(market="crypto", lot_size=1, units=p["qty"], size_text=f"{p['qty']:.6f} BTC · part {st.get('part', 0) + 1} of 7", price_now=price,
+             price_source="live" if price else None, price_time=q.get("at"), bid=None, ask=None, checked_at=q.get("at"),
+             margin_used=float(st.get("margin_inr") or 0.0), risk_to_stop=None)
+    p.pop("state", None); p.pop("instrument_key", None)
+    if not (price and fx):
+        p.update(profit_now=None, fees_if_sold=None, net_if_sold=None, move_pct=None); return
+    c = value_if_sold(p | {"state": json.dumps(st)}, price, fx)
+    p.update(profit_now=round(c["gross"], 2), net_if_sold=round(c["net"], 2), fees_if_sold=round(c["total"], 2), move_pct=round((price / p["entry_price"] - 1) * 100, 3))
+
+
 def paper_summary(account: str = "DRYRUN_ACCOUNT") -> dict:
     """A paper-trading account, read-only (SQLite opened mode=ro). Open positions are valued at the live Upstox price (else the last close)."""
     import sqlite3
@@ -347,8 +364,8 @@ def paper_summary(account: str = "DRYRUN_ACCOUNT") -> dict:
                                                 "GROUP BY date ORDER BY date", (account,))]
     finally:
         con.close()
-    live = _live_prices([p["instrument_key"] for p in pos if p.get("instrument_key")])
-    value = {"MCX_TREND_CARRY": _value_mcx, "EQUITY_SWING": _value_breakout}.get(account, _value_position)
+    live = {} if account == "CRYPTO_CALM" else _live_prices([p["instrument_key"] for p in pos if p.get("instrument_key")])   # crypto: CoinDCX prices
+    value = {"MCX_TREND_CARRY": _value_mcx, "EQUITY_SWING": _value_breakout, "CRYPTO_CALM": _value_crypto}.get(account, _value_position)
     for p in pos:
         value(p, live)
     if acc:
