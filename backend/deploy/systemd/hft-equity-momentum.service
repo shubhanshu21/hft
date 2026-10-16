@@ -1,0 +1,9 @@
+[Unit]
+Description=Equity momentum paper trading (15 stocks, quarterly rebalance; paper only, no real orders)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/var/www/html/hft/backend
+# runs before 15:00 IST build / rebalance when due; later runs only record the daily snapshot (engine/equity_momentum.py)
+ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m engine.equity_momentum
+TimeoutStartSec=20min

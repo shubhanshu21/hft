@@ -86,6 +86,7 @@ export default function PaperPage() {
         {!d.positions.length
           ? <div className="none">{{
             MCX_TREND_CARRY: "No open trades. trend_carry rebalances at 09:10 on the first MCX trading day of each month.",
+            EQUITY_MOMENTUM: "No holdings yet. The first 15 stocks are bought at 9:20 on the next trading day, then it rebalances after each quarter end.",
             EQUITY_BREAKOUT: "No open trades. Breakout buys only while at least half of the 200 most-traded stocks are above their 50-day average: 55-day highs at the 9:15 open, quiet-day breakouts during the day.",
           }[d.account_id] ?? "No open trades. Equity buys only between 9:15 and 10:00 when its rules are met; currency checks at the 9:00 open."}</div>
           : <div className="trade-cards">{d.positions.map((p) => <OpenTradeCard key={p.symbol} p={p} />)}</div>}

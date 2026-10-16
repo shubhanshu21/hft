@@ -61,10 +61,13 @@ def catalog() -> list[dict]:
     from markets.equity.strategies.tf_daily.breakout_pair import strategy as bps
     bp = {"market": "equity", "name": "breakout_pair", "timeframe": "1 days", "supported": True, "symbols": [], "auto_universe": True,
           "summary": (bps.__doc__ or "").strip().split("\n")[0], "intraday": False, "default_risk_pct": bps.RISK_PCT}
+    from markets.equity.strategies.tf_quarterly.momentum_portfolio import strategy as mps
+    mom = {"market": "equity", "name": "momentum_portfolio", "timeframe": "1 days", "supported": True, "symbols": [], "auto_universe": True,
+           "summary": (mps.__doc__ or "").strip().split("\n")[0], "intraday": False, "default_risk_pct": None}
     return [{"market": m, "name": n, "timeframe": f"{s.timeframe[1]} {s.timeframe[0]}", "supported": tuple(s.timeframe) == ("days", 1), "symbols": list(getattr(s, "universe", None) or universe(m)),
              "summary": (s.__doc__ or "").strip().split("\n")[0], "intraday": s.intraday,
              "default_risk_pct": getattr(s, "default_risk_pct", None)}
-            for (m, n), s in sorted(registry.discover().items())] + [bp, mcx]
+            for (m, n), s in sorted(registry.discover().items())] + [bp, mom, mcx]
 
 
 def prune() -> None:
@@ -253,11 +256,12 @@ def _value_position(p: dict, live: dict) -> None:
         p["net_if_sold"] = p["fees_if_sold"] = None
 
 
-PAPER_ACCOUNTS = [("DRYRUN_ACCOUNT", "Equity + currency"), ("EQUITY_BREAKOUT", "Equity breakout"), ("MCX_TREND_CARRY", "MCX trend + carry")]
+PAPER_ACCOUNTS = [("DRYRUN_ACCOUNT", "Equity + currency"), ("EQUITY_BREAKOUT", "Equity breakout"), ("EQUITY_MOMENTUM", "Equity momentum"),
+                  ("MCX_TREND_CARRY", "MCX trend + carry")]
 
 
 def _value_breakout(p: dict, live: dict) -> None:
-    """An open equity/breakout_pair holding (engine/equity_breakout.py): shares bought for delivery, priced at the live quote."""
+    """An open equity/breakout_pair or momentum_portfolio holding (delivery shares; momentum has no stop): priced at the live quote."""
     from markets.equity.strategies.tf_daily.breakout_pair import strategy as BP
     p.pop("state", None)
     q = live.get(p.get("instrument_key")) or {}
@@ -321,7 +325,7 @@ def paper_summary(account: str = "DRYRUN_ACCOUNT") -> dict:
     finally:
         con.close()
     live = _live_prices([p["instrument_key"] for p in pos if p.get("instrument_key")])
-    value = {"MCX_TREND_CARRY": _value_mcx, "EQUITY_BREAKOUT": _value_breakout}.get(account, _value_position)
+    value = {"MCX_TREND_CARRY": _value_mcx, "EQUITY_BREAKOUT": _value_breakout, "EQUITY_MOMENTUM": _value_breakout}.get(account, _value_position)
     for p in pos:
         value(p, live)
     if acc:
@@ -341,7 +345,13 @@ def work(run: dict) -> None:
         p = run["params"]
         def progress(i, n):
             run["progress"] = round(i / n * 100)
-        if run["strategy"] == "breakout_pair":                    # ranks ~200 stocks together every day: its own backtest
+        if run["strategy"] == "momentum_portfolio":               # ranks ~200 stocks each quarter: its own backtest
+            from markets.equity.strategies.tf_quarterly.momentum_portfolio import strategy as mps
+            try:
+                run["result"] = mps.web_backtest(p["capital"], p["start"], p["end"], slippage_bp=p["slippage_bp"])
+            except ValueError as e:
+                raise BacktestError(str(e))
+        elif run["strategy"] == "breakout_pair":                    # ranks ~200 stocks together every day: its own backtest
             from markets.equity.strategies.tf_daily.breakout_pair import strategy as bps
             try:
                 run["result"] = bps.web_backtest(p["capital"], p["start"], p["end"], risk_pct=p["risk_pct"], slippage_bp=p["slippage_bp"])
