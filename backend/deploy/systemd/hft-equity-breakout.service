@@ -1,0 +1,8 @@
+[Unit]
+Description=Equity breakout pair paper trading session 09:10-15:31 IST (swing; paper only, no real orders)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/var/www/html/hft/backend
+ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m engine.equity_breakout
+TimeoutStartSec=7h

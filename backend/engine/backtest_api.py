@@ -197,6 +197,8 @@ def _live_prices(keys: list[str]) -> dict:
 
 def _last_close(symbol: str, market: str) -> tuple[float | None, str | None]:
     f = ARCHIVE_ROOT / ("currency" if market == "currency" else "equity") / (f"{symbol}_daily_adj.csv" if market == "currency" else f"{symbol}_daily.csv")
+    if market == "equity" and not f.exists():                          # breakout_pair trades beyond the NIFTY list: all-NSE daily archive
+        f = ARCHIVE_ROOT / "equity_all" / f"{symbol}_daily.csv.gz"
     try:
         last = pd.read_csv(f).iloc[-1]
         return float(last["close"]), str(last["timestamp"])[:10]
@@ -235,7 +237,27 @@ def _value_position(p: dict, live: dict) -> None:
         p["net_if_sold"] = p["fees_if_sold"] = None
 
 
-PAPER_ACCOUNTS = [("DRYRUN_ACCOUNT", "Equity + currency"), ("MCX_TREND_CARRY", "MCX trend + carry")]
+PAPER_ACCOUNTS = [("DRYRUN_ACCOUNT", "Equity + currency"), ("EQUITY_BREAKOUT", "Equity breakout"), ("MCX_TREND_CARRY", "MCX trend + carry")]
+
+
+def _value_breakout(p: dict, live: dict) -> None:
+    """An open equity/breakout_pair holding (engine/equity_breakout.py): shares bought for delivery, priced at the live quote."""
+    from markets.equity.strategies.tf_daily.breakout_pair import strategy as BP
+    p.pop("state", None)
+    q = live.get(p.get("instrument_key")) or {}
+    price, source, as_of = q.get("ltp"), "live", q.get("trade_time")
+    if price is None:
+        price, as_of = _last_close(p["symbol"], "equity")
+        source = "last close"
+    p.update(market="equity", lot_size=1, units=p["qty"], price_now=price, price_source=source if price is not None else None, price_time=as_of,
+             bid=q.get("bid"), ask=q.get("ask"), checked_at=datetime.now(IST).isoformat(timespec="seconds") if q else None,
+             margin_used=round(p["qty"] * p["entry_price"], 2), risk_to_stop=round((p["entry_price"] - p["current_stop"]) * p["qty"], 2))
+    p.pop("instrument_key", None)
+    if price is None:
+        p.update(profit_now=None, fees_if_sold=None, net_if_sold=None, move_pct=None)
+        return
+    c = BP.costs(p["entry_price"], price, p["qty"], p["symbol"])
+    p.update(profit_now=round(c["gross"], 2), net_if_sold=round(c["net"], 2), fees_if_sold=round(c["total"], 2), move_pct=round((price / p["entry_price"] - 1) * 100, 3))
 
 
 def _value_mcx(p: dict, live: dict) -> None:
@@ -283,7 +305,7 @@ def paper_summary(account: str = "DRYRUN_ACCOUNT") -> dict:
     finally:
         con.close()
     live = _live_prices([p["instrument_key"] for p in pos if p.get("instrument_key")])
-    value = {"MCX_TREND_CARRY": _value_mcx}.get(account, _value_position)
+    value = {"MCX_TREND_CARRY": _value_mcx, "EQUITY_BREAKOUT": _value_breakout}.get(account, _value_position)
     for p in pos:
         value(p, live)
     if acc:

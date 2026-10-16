@@ -31,6 +31,7 @@ STEPS = [                            # (name, argv, exit codes that count as suc
     ("etf daily candles", [PY, "-m", "markets.equity.download_daily_weekly", "--topup", "--tf", "day", "--symbols", "MON100", "MAFANG",
                            "MASPTOP50", "HNGSNGBEES", "MAHKTECH"], {0}),                 # trend_ema_cross (US / Hong Kong ETFs)
     ("etf premium", [PY, "-m", "markets.equity.etf_premium"], {0}),                     # price vs NAV: trend_ema_cross buys ETFs only at a small premium
+    ("all nse daily", [PY, "-m", "markets.equity.all_daily", "--max-minutes", "25"], {0}),   # equity/breakout_pair: liquid pool + holdings, then the rest oldest-first
     ("research data", [PY, "-m", "engine.research_data", "all", "--max-minutes", "40"], {0}),     # 1-minute stocks/indexes, futures/options OI, NSE participant OI;
                                                                                                 # stops inside STEP_TIMEOUT_S and resumes next night (a 2026-10-09 first backfill was killed at 45 min)
     ("currency daily series", [PY, "-m", "markets.currency.daily_series"], {0}),     # back-adjusted daily futures for currency backtests (from research data)
@@ -43,7 +44,7 @@ STEPS = [                            # (name, argv, exit codes that count as suc
 ]
 # representative archive files whose newest candle date must not lag (market, file)
 FRESHNESS = [("commodity", "CRUDEOILM_1minute.csv"), ("commodity", "GOLD_1minute.csv"), ("commodity", "SILVER_1minute.csv"),
-             ("currency", "USDINR_1minute.csv"), ("equity", "RELIANCE_5minute.csv"), ("equity", "TATASTEEL_5minute.csv"), ("equity", "RELIANCE_daily.csv"), ("equity", "MON100_daily.csv"),
+             ("currency", "USDINR_1minute.csv"), ("equity", "RELIANCE_5minute.csv"), ("equity", "TATASTEEL_5minute.csv"), ("equity", "RELIANCE_daily.csv"), ("equity", "MON100_daily.csv"), ("equity_all", "RELIANCE_daily.csv.gz"),
              ("commodity", "mcx_futures_daily.csv")]
 IST = ZoneInfo("Asia/Kolkata")
 
@@ -75,6 +76,11 @@ def last_trading_day(today: date, holidays: set) -> date:
 
 def newest_candle_date(path) -> date | None:
     try:
+        if str(path).endswith(".gz"):                                  # small daily files: read whole
+            import gzip
+            with gzip.open(path, "rt") as fh:
+                last = fh.read().strip().splitlines()[-1]
+            return date.fromisoformat(last.split(",")[0][:10])
         with open(path, "rb") as fh:
             fh.seek(0, 2)
             fh.seek(max(0, fh.tell() - 512))
