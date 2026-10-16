@@ -14,7 +14,12 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
   const options = strategies.filter((s) => s.market === market);
   const [name, setName] = useState(options[0]?.name ?? "");
   const strategy = options.find((s) => s.name === name) ?? options[0];
-  useEffect(() => { if (strategy) setF((x) => ({ ...x, risk_pct: strategy.default_risk_pct ?? 2, exposure: strategy.exposure ?? 1 })); }, [strategy?.market, strategy?.name]);   // start from the risk the strategy was tested with
+  useEffect(() => { if (strategy) setF((x) => ({ ...x, risk_pct: strategy.default_risk_pct ?? 2, exposure: strategy.exposure ?? 1 })); }, [strategy?.market, strategy?.name]);
+  useEffect(() => {                                   // pre-tick the strategy's own list (what its paper trading uses) when it is narrower than the market
+    const own = strategy?.default_symbols ?? [];
+    const narrower = own.length > 0 && own.length < (strategy?.symbols?.length ?? 0);
+    setAll(!narrower); setChosen(narrower ? own : []);
+  }, [strategy?.market, strategy?.name]);   // start from the risk the strategy was tested with
   const safeRisk = Math.max(3, strategy?.default_risk_pct ?? 0);
   const monthly = !!strategy?.monthly_rank;          // commodity/trend_carry: ranks the chosen contracts together each month; exposure is editable
   const auto = !!strategy?.auto_universe;            // equity/breakout_pair: picks from the day's 200 most-traded NSE stocks itself, fixed 5 + 3 holdings
@@ -23,7 +28,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
   const [f, setF] = useState({ ...yearRange(THIS_YEAR), capital: 100000, slippage_bp: 5, risk_pct: 2, max_positions: 3, leverage: 1, label: "", exposure: 1.5 });
   const [year, setYear] = useState(String(THIS_YEAR));       // "custom" once the dates are edited by hand
 
-  useEffect(() => { const o = strategies.filter((s) => s.market === market); setName(o[0]?.name ?? ""); setChosen([]); setAll(true);
+  useEffect(() => { const o = strategies.filter((s) => s.market === market); setName(o[0]?.name ?? "");
     setF((x) => ({ ...x, slippage_bp: market === "currency" ? 0 : 5 }));   // currency: costs include the real spread; futures margin is ~2-3%
   }, [market, strategies]);
 
@@ -81,6 +86,10 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
         {strategy && !auto && (
           <div className="field">
             <label className="check" htmlFor="all"><input id="all" type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} /> All {strategy.symbols.length} symbols</label>
+            {(strategy.default_symbols?.length ?? 0) > 0 && strategy.default_symbols.length < strategy.symbols.length && (
+              <span className="hint">Its own list is ticked: the {strategy.default_symbols.length} symbols its paper trading uses
+                {" "}(<button type="button" className="linkish" onClick={() => { setAll(false); setChosen(strategy.default_symbols); }}>tick only those again</button>). Tick more to test it on other stocks.</span>
+            )}
             {!all && (
               <div className="symbols">
                 {strategy.symbols.map((s) => <label key={s}><input type="checkbox" checked={chosen.includes(s)} onChange={() => toggle(s)} /> {s}</label>)}

@@ -69,7 +69,8 @@ def catalog() -> list[dict]:
            "summary": (mps.__doc__ or "").strip().split("\n")[0], "intraday": False, "default_risk_pct": None}
     return [{"market": m, "name": n, "timeframe": f"{s.timeframe[1]} {s.timeframe[0]}", "supported": tuple(s.timeframe) == ("days", 1), "symbols": list(getattr(s, "universe", None) or universe(m)),
              "summary": (s.__doc__ or "").strip().split("\n")[0], "intraday": s.intraday,
-             "default_risk_pct": getattr(s, "default_risk_pct", None)}
+             "default_risk_pct": getattr(s, "default_risk_pct", None),
+             "default_symbols": [x for x in (getattr(s, "universe", None) or universe(m)) if s.trades(x)]}     # what its paper trading uses
             for (m, n), s in sorted(registry.discover().items())] + [bp, mom, earn, mcx]
 
 
