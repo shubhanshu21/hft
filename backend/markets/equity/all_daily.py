@@ -98,7 +98,7 @@ def main(argv=None) -> int:
     held = []
     try:
         from engine.database import TradingDB
-        held = [p["symbol"] for p in TradingDB().get_open_positions("EQUITY_BREAKOUT")]
+        held = [p["symbol"] for p in TradingDB().get_open_positions("EQUITY_SWING")]
     except Exception:
         pass
     return run(a.max_minutes, extra=held)

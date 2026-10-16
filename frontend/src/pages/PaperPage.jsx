@@ -11,6 +11,8 @@ import { usePaged } from "../hooks/usePaged.js";
 import { useTheme } from "../hooks/useTheme.js";
 import { inr, signed, tone } from "../lib/format.js";
 
+const STRATEGY_LABEL = { nr7_breakout: "Quiet-day breakout", d55_breakout: "55-day breakout", momentum_portfolio: "Momentum (15 stocks)",
+  earnings_drift: "Earnings drift", trend_ema_cross: "trend_ema_cross", rsi_range: "Currency rsi_range", trend_carry: "MCX trend + carry" };
 const when = (s) => (s ? String(s).replace("T", " ").slice(0, 16) : "-");
 
 /** The paper-trading account as it is now (read-only, refreshed every minute). No real orders are ever placed. */
@@ -48,6 +50,11 @@ export default function PaperPage() {
   const open = d.positions.reduce((a, p) => a + (p.profit_now ?? 0), 0);
   const value = (acc.current_capital ?? 0) + open;
   const live = d.positions.some((p) => p.price_source === "live");
+  const byStrategy = Object.values([...d.positions.map((p) => ({ k: p.strategy, open: 1, openPnl: p.profit_now ?? 0, closed: 0, booked: 0 })),
+    ...d.trades.map((t) => ({ k: t.strategy, open: 0, openPnl: 0, closed: 1, booked: t.net_pnl ?? 0 }))].reduce((m, x) => {
+    const r = m[x.k] ?? (m[x.k] = { name: x.k, label: STRATEGY_LABEL[x.k] ?? x.k, open: 0, openPnl: 0, closed: 0, booked: 0 });
+    r.open += x.open; r.openPnl += x.openPnl; r.closed += x.closed; r.booked += x.booked; return m;
+  }, {}));
   return (
     <div className="wrap">
       {d.accounts?.length > 1 && (
@@ -86,13 +93,22 @@ export default function PaperPage() {
         {!d.positions.length
           ? <div className="none">{{
             MCX_TREND_CARRY: "No open trades. trend_carry rebalances at 09:10 on the first MCX trading day of each month.",
-            EQUITY_MOMENTUM: "No holdings yet. The first 15 stocks are bought at 9:20 on the next trading day, then it rebalances after each quarter end.",
-            EQUITY_BREAKOUT: "No open trades. Breakout buys only while at least half of the 200 most-traded stocks are above their 50-day average: 55-day highs at the 9:15 open, quiet-day breakouts during the day.",
+            EQUITY_SWING: "No holdings yet. Momentum buys its 15 stocks at the next open; breakout and earnings-drift buys wait for a healthy market (half the 200 most-traded stocks above their 50-day average).",
           }[d.account_id] ?? "No open trades. Equity buys only between 9:15 and 10:00 when its rules are met; currency checks at the 9:00 open."}</div>
           : <div className="trade-cards">{d.positions.map((p) => <OpenTradeCard key={p.symbol} p={p} />)}</div>}
         {d.positions.length > 0 && <p className="note">"Last traded price" changes only when someone trades{d.account_id === "DRYRUN_ACCOUNT" ? "; EURINR and GBPINR futures trade a few hundred lots a day, so it can stay the same for many minutes" : ""}. "Buyers / sellers now" are the best live offers: selling now would get the buyers' price. "Profit now" is the price move only. "If sold now" also takes off brokerage, taxes and the buy–sell price gap, the same way the paper trader books a sale.
           The account changes only when a trade is sold.</p>}
       </Panel>
+
+      {byStrategy.length > 1 && (
+        <Panel title="By strategy">
+          <div className="table-wrap"><table className="trades-table">
+            <thead><tr><th>Strategy</th><th>Holding now</th><th>Open profit</th><th>Closed trades</th><th>Booked profit</th></tr></thead>
+            <tbody>{byStrategy.map((r) => <tr key={r.name}><td>{r.label}</td><td>{r.open}</td><td className={tone(r.openPnl)}>{signed(r.openPnl)}</td>
+              <td>{r.closed}</td><td className={tone(r.booked)}>{signed(r.booked)}</td></tr>)}</tbody>
+          </table></div>
+        </Panel>
+      )}
 
       <Panel title="Closed trades">
         {!d.trades.length ? <div className="none">No closed trades yet.</div> : (

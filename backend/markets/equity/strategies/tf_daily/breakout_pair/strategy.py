@@ -23,7 +23,7 @@ sleeve's value to a 2.5-ATR(14) stop, at most 1/K of the sleeve in one stock; tr
 only moves up; a trade still below its buy price after 20 trading days is sold at the next open. Candidates are taken strongest first by
 126-day return. Not proven: four years, about half the profit came from the 5 best trades, 2023 (PSU rally) was the biggest year.
 
-Not a core.strategy.Strategy (it ranks ~200 stocks together every day), so it has its own paper engine (engine/equity_breakout.py) and
+Not a core.strategy.Strategy (it ranks ~200 stocks together every day), so it has its own paper engine (engine/equity_swing.py, the breakout third of the EQUITY_SWING account) and
 its own backtest (backtest() below). Data: var/archive/equity_all/<SYM>_daily.csv.gz, refreshed nightly by markets/equity/all_daily.py.
 """
 from __future__ import annotations
@@ -115,7 +115,7 @@ def _fee(ev: float, xv: float, slip_bp: float = 5.0) -> tuple[float, float]:
 
 def backtest(start="2022-10-03", end=None, capital=100_000.0, ind: dict | None = None, risk_pct: float = RISK_PCT, slip_bp: float = 5.0,
              record: bool = False, lev: float = 1.0, mtf_rate: float = 0.15, slots: dict | None = None) -> dict:
-    """Both sleeves in one account, day by day, the way engine/equity_breakout.py trades: each sleeve has its share of the money and its
+    """Both sleeves in one account, day by day, the way engine/equity_swing.py trades: each sleeve has its share of the money and its
     own slots; one stock is held at most once across the account. Per day: dead-money sales and gap-through stops at the open, d55 buys at
     the open, nr7 buy-stops (strongest first), then stops touched during the day; after the close, trailing stops and the dead-money count.
     record=True also returns the web backtester's replay (days, equity, events, pos, bars, benchmark).

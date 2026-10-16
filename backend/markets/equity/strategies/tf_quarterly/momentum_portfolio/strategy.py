@@ -13,7 +13,7 @@ winners (CUPID, MTARTECH, Apollo Micro in 2026) -- 15 is the compromise. The 6-m
 chosen partly knowing 2025-26, so this is not a clean out-of-sample test. TODAY's NIFTY 200 list flatters momentum by ~10%/yr (the real
 NIFTY200 Momentum 30 ETF lost 6%/yr in 2025-26): never test it on a hindsight list.
 
-Paper: engine/equity_momentum.py (account EQUITY_MOMENTUM). Data: var/archive/equity_all (markets/equity/all_daily.py, nightly).
+Paper: the momentum third of the equity swing account (engine/equity_swing.py, account EQUITY_SWING). Data: var/archive/equity_all (markets/equity/all_daily.py, nightly).
 """
 from __future__ import annotations
 

@@ -31,7 +31,8 @@ STEPS = [                            # (name, argv, exit codes that count as suc
     ("etf daily candles", [PY, "-m", "markets.equity.download_daily_weekly", "--topup", "--tf", "day", "--symbols", "MON100", "MAFANG",
                            "MASPTOP50", "HNGSNGBEES", "MAHKTECH"], {0}),                 # trend_ema_cross (US / Hong Kong ETFs)
     ("etf premium", [PY, "-m", "markets.equity.etf_premium"], {0}),                     # price vs NAV: trend_ema_cross buys ETFs only at a small premium
-    ("all nse daily", [PY, "-m", "markets.equity.all_daily", "--max-minutes", "25"], {0}),   # equity/breakout_pair: liquid pool + holdings, then the rest oldest-first
+    ("all nse daily", [PY, "-m", "markets.equity.all_daily", "--max-minutes", "25"], {0}),   # equity swing: liquid pool + holdings, then the rest oldest-first
+    ("results dates", [PY, "-m", "markets.equity.results_dates"], {0}),          # equity/earnings_drift: NSE results board meetings, all equities
     ("research data", [PY, "-m", "engine.research_data", "all", "--max-minutes", "40"], {0}),     # 1-minute stocks/indexes, futures/options OI, NSE participant OI;
                                                                                                 # stops inside STEP_TIMEOUT_S and resumes next night (a 2026-10-09 first backfill was killed at 45 min)
     ("currency daily series", [PY, "-m", "markets.currency.daily_series"], {0}),     # back-adjusted daily futures for currency backtests (from research data)

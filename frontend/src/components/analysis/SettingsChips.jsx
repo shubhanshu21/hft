@@ -7,6 +7,11 @@ export default function SettingsChips({ params }) {
     ["Commodities", `${params.symbols?.length}: ${(params.symbols ?? []).join(", ")}`],
     ["Rebalance", "monthly"],
     ["Costs", "MCX fees + half-spread"],
+  ] : params.strategy === "equity_swing" ? [                         // the whole paper account
+    ["Start money", `₹${Number(params.capital).toLocaleString("en-IN")}`],
+    ["Split", "1/3 breakout, 1/3 momentum, 1/3 earnings drift"],
+    ["Stocks", "the day's 200 most-traded NSE"],
+    ["Slippage", `${params.slippage_bp} bp`],
   ] : params.strategy === "momentum_portfolio" ? [                   // quarterly ranking of the day's top-200 stocks
     ["Start money", `₹${Number(params.capital).toLocaleString("en-IN")}`],
     ["Stocks", "15 best 6-month return / volatility of the day's 200 most-traded"],
