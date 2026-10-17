@@ -91,27 +91,6 @@ def _funding_between(fund: pd.Series, t0_min: int, t1_min: int) -> float:
     return total
 
 
-def _calc_adx(hb: np.ndarray, lb: np.ndarray, cb: np.ndarray, length: int = 14) -> np.ndarray:
-    """Vectorized Average Directional Index (ADX) over 4-hour bars."""
-    up = hb - np.roll(hb, 1)
-    dn = np.roll(lb, 1) - lb
-    up[0] = 0.0
-    dn[0] = 0.0
-    plus_dm = np.where((up > dn) & (up > 0), up, 0.0)
-    minus_dm = np.where((dn > up) & (dn > 0), dn, 0.0)
-    tr0 = hb - lb
-    tr1 = np.abs(hb - np.roll(cb, 1))
-    tr2 = np.abs(lb - np.roll(cb, 1))
-    tr1[0] = tr0[0]
-    tr2[0] = tr0[0]
-    tr = np.maximum(tr0, np.maximum(tr1, tr2))
-    atr_s = pd.Series(tr).ewm(alpha=1 / length, adjust=False).mean()
-    p_di = 100 * pd.Series(plus_dm).ewm(alpha=1 / length, adjust=False).mean() / np.maximum(atr_s, 1e-9)
-    m_di = 100 * pd.Series(minus_dm).ewm(alpha=1 / length, adjust=False).mean() / np.maximum(atr_s, 1e-9)
-    dx = 100 * np.abs(p_di - m_di) / np.maximum(p_di + m_di, 1e-9)
-    return dx.ewm(alpha=1 / length, adjust=False).mean().bfill().to_numpy()
-
-
 def trades(coin: str, start: str, end: str) -> list[dict]:
     tb, ob, hb, lb, cb, vb = _load_4h(coin)
 
@@ -129,7 +108,6 @@ def trades(coin: str, start: str, end: str) -> list[dict]:
     exit_lo = pd.Series(lb).rolling(EXIT_BARS).min().shift(1).to_numpy()
     ema = pd.Series(cb).ewm(span=EMA_LEN, adjust=False).mean().to_numpy()
     ema_slope = pd.Series(ema).diff(3).to_numpy()
-    adx = _calc_adx(hb, lb, cb, 14)
     cost = FEE + SLIP.get(coin, 0.00015)
     fund = _funding(coin)
 

@@ -61,7 +61,6 @@ def _levels(k: pd.DataFrame) -> pd.DataFrame:
     k["xh"] = k.h.rolling(TB.EXIT_BARS).max().shift(1); k["xl"] = k.l.rolling(TB.EXIT_BARS).min().shift(1)
     k["ema"] = k.c.ewm(span=TB.EMA_LEN, adjust=False).mean()
     k["ema_slope"] = k["ema"].diff(3)
-    k["adx"] = TB._calc_adx(k.h.to_numpy(), k.l.to_numpy(), k.c.to_numpy(), 14)
     return k
 
 
