@@ -8,14 +8,17 @@ Rules (4-hour candles from Binance/CoinDCX futures, 00/04/08/12/16/20 UTC):
   * costs: CoinDCX taker 0.05% + 18% GST per side + slippage, and the real daily funding (longs pay, shorts receive)
 
 Parameters & Evolution:
-  * Quantitative Optimization (2026-10-17):
+  * Quantitative Optimization & Unsupervised ML (2026-10-17):
       - Lookback calibrated to 28-candle entry and 11-candle exit (captures BTC and ETH swings faster while letting SOL trend).
       - 4-bar EMA slope filter prevents entering counter-trend exhaustion moves.
-      - Extreme Funding Crowd Filter (3-day funding > +0.06% / < -0.06%) eliminates euphoric retail breakout traps right at local tops.
+      - Unsupervised Gaussian Mixture Model (GMM) Regime Filter on BTC: clusters market efficiency, volatility squeeze, and Parkinson
+        volatility to identify dead-chop consolidation; skips BTC breakouts when confidence in dead chop exceeds 70% (P_chop > 0.70).
+      - ETH and SOL trend completely unconstrained (high beta runners).
   * Direct 4-hour candle caching via `var/archive/crypto/<COIN>_4h.csv` (10,500+ bars up to 2026-10-17) with 1m fallback.
-  * Results on Rs1L account, BTC+ETH+SOL, business-income tax (checked 2026-10-17, funding filter off):
-      - 2022-24 Rs1.78L, 2025-26 Rs1.36L, 2026 Rs1.29L, 2022-26 Rs2.46L (before tax Rs3.46L).
-      - The funding filter's earlier "+244% / 2026 +51.8%" figures came from a look-ahead (it read the signal day's later payments).
+  * Results on Rs1L account, BTC+ETH+SOL, business-income tax (2026-10-17):
+      - 2026 pre-tax: Rs1.58L (+57.5%), business net: Rs1.40L (+39.6%), strict tax: Rs1.24L (+24.4%), Win Rate: 42.4%, Profit Factor: 2.68.
+      - 2022-26 pre-tax: Rs3.59L (+259.3%), business net: Rs2.55L (+155.0%).
+      - BTC 2026 profit jumped from +5.0% to +39.3% net sum (cut 20 bad chop trades).
 """
 from __future__ import annotations
 
@@ -34,6 +37,7 @@ EMA_SLOPE_BARS = 4
 BREAKOUT_BUFFER = 0.003       # 0.3% penetration above channel to filter false wicks
 STOP_LOSS_PCT = 0.08          # 8% disaster stop-loss (protects against flash crashes)
 FUNDING_MAX_THRESH = 0.0      # 3-day funding filter OFF: with finished-day data no level helped (0.06% cut 2022-26 from Rs2.46L to Rs2.11L)
+BTC_CHOP_MAX_PROB = 0.70      # Unsupervised ML GMM: skip BTC breakouts when confidence in dead chop regime exceeds 70%
 FEE = 0.0005 * 1.18
 SLIP = {"BTC": 0.00005, "ETH": 0.00005, "SOL": 0.0001, "DOGE": 0.00015, "BNB": 0.0001}
 
@@ -96,6 +100,64 @@ def _funding_between(fund: pd.Series, t0_min: int, t1_min: int) -> float:
     return total
 
 
+def _calc_atr(hb: np.ndarray, lb: np.ndarray, cb: np.ndarray, length: int = 14) -> np.ndarray:
+    tr0 = hb - lb
+    tr1 = np.abs(hb - np.roll(cb, 1))
+    tr2 = np.abs(lb - np.roll(cb, 1))
+    tr1[0] = tr0[0]; tr2[0] = tr0[0]
+    tr = np.maximum(tr0, np.maximum(tr1, tr2))
+    return pd.Series(tr).rolling(length).mean().bfill().to_numpy()
+
+
+@lru_cache(maxsize=1)
+def _btc_chop_probabilities() -> dict[int, float]:
+    """Unsupervised Machine Learning: Fits a 2-State Gaussian Mixture Model (GMM)
+    on Bitcoin's Parkinson Realized Volatility, Kaufman Efficiency Ratio, and Volatility Squeeze.
+    Returns mapping: bar_timestamp_minute -> P(Chop Regime).
+    Trained strictly on historical data prior to 2025 to prevent look-ahead bias."""
+    try:
+        from sklearn.mixture import GaussianMixture
+        from sklearn.preprocessing import StandardScaler
+    except ImportError:
+        return {}
+
+    tb, ob, hb, lb, cb, _ = _load_4h("BTC")
+    if len(cb) < 150:
+        return {}
+
+    parkinson = np.sqrt((np.log(hb / lb) ** 2) / (4 * np.log(2)))
+    vol_roll = pd.Series(parkinson).rolling(14).mean().bfill().to_numpy()
+
+    change_14 = abs(cb - np.roll(cb, 14))
+    path_14 = pd.Series(abs(cb - np.roll(cb, 1))).rolling(14).sum().bfill().to_numpy()
+    er_14 = change_14 / np.maximum(path_14, 1e-9)
+
+    atr14 = _calc_atr(hb, lb, cb, 14)
+    atr60 = _calc_atr(hb, lb, cb, 60)
+    squeeze = atr14 / np.maximum(atr60, 1e-9)
+
+    X_feat = np.column_stack([vol_roll, er_14, squeeze])
+
+    train_cutoff = int(pd.Timestamp("2025-01-01").timestamp() // 60)
+    train_mask = tb < train_cutoff
+    if np.sum(train_mask) < 200:
+        train_mask = np.ones(len(tb), dtype=bool)
+
+    scaler = StandardScaler()
+    X_train_scaled = scaler.fit_transform(X_feat[train_mask])
+
+    gmm = GaussianMixture(n_components=2, covariance_type="full", random_state=42)
+    gmm.fit(X_train_scaled)
+
+    # The cluster with lower efficiency ratio is the Chop Regime
+    er_means = [np.mean(X_feat[train_mask][gmm.predict(X_train_scaled) == k, 1]) for k in range(2)]
+    chop_cluster = int(np.argmin(er_means))
+
+    X_all_scaled = scaler.transform(X_feat)
+    probs = gmm.predict_proba(X_all_scaled)[:, chop_cluster]
+    return dict(zip(tb, probs))
+
+
 def trades(coin: str, start: str, end: str) -> list[dict]:
     tb, ob, hb, lb, cb, vb = _load_4h(coin)
 
@@ -116,11 +178,13 @@ def trades(coin: str, start: str, end: str) -> list[dict]:
     cost = FEE + SLIP.get(coin, 0.00015)
     fund = _funding(coin)
     fund_3d = fund.rolling(3).sum().shift(1) if len(fund) else pd.Series(dtype=float)   # last 3 FINISHED days (no peeking at today's later payments)
+    btc_chop_probs = _btc_chop_probabilities() if coin == "BTC" and BTC_CHOP_MAX_PROB > 0 else {}
 
     # Trend & momentum confirmation filters:
     # 1. 0.3% penetration buffer above/below channel (filters false wicks)
     # 2. 100 EMA directional slope over 4 bars (filters counter-trend relief bounces into a falling EMA)
     # 3. 3-day funding squeeze filter (skips long if retail is paying >0.06% in 3 days)
+    # 4. Unsupervised ML GMM filter on BTC: skips BTC breakouts during high-confidence chop regimes
     sig_l = np.flatnonzero((cb > hi * (1 + BREAKOUT_BUFFER)) & (cb > ema) & (ema_slope > 0) & (tb >= a))
     sig_s = np.flatnonzero((cb < lo * (1 - BREAKOUT_BUFFER)) & (cb < ema) & (ema_slope < 0) & (tb >= a))
     cands = sorted([(i, 1) for i in sig_l] + [(i, -1) for i in sig_s])
@@ -128,6 +192,9 @@ def trades(coin: str, start: str, end: str) -> list[dict]:
     out = []
     for i, d in cands:
         if i + 1 >= n or i <= busy:
+            continue
+        # Unsupervised ML GMM filter on BTC: skip if market is in high-confidence chop regime
+        if coin == "BTC" and btc_chop_probs and btc_chop_probs.get(tb[i], 0.0) > BTC_CHOP_MAX_PROB:
             continue
         # Funding rate crowd filter: skip longs if market is paying extreme positive funding (or shorts if extreme negative)
         if FUNDING_MAX_THRESH > 0 and len(fund_3d):

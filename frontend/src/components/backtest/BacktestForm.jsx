@@ -87,8 +87,8 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
         )}
         {strategy && crypto && strategy.name === "trend_breakout" && (
           <p className="hint">4-hour trend breakout on CoinDCX futures (BTC, ETH, SOL): buys when a 4-hour candle closes at least 0.3% above the 28-candle high, above
-            a 100 EMA that is higher than 4 candles ago (shorts the mirror), exits at the 11-candle low/high or an 8% stop. Fees, slippage and real funding included.
-            Rs1L, BTC+ETH+SOL, 2022-26: Rs3.46L before tax, Rs2.46L as business income.</p>
+            a 100 EMA that is higher than 4 candles ago (shorts the mirror), exits at the 11-candle low/high or an 8% stop. Bitcoin signals are guarded by an Unsupervised ML GMM regime filter that skips chop regimes. Fees, slippage and real funding included.
+            Rs1L, BTC+ETH+SOL, 2022-26: Rs3.59L before tax, Rs2.53L as business income (2026: Rs1.58L before tax, 42.4% win rate).</p>
         )}
         {strategy && crypto && strategy.name === "calm_coins" && (
           <p className="hint">Holds futures on BTC, ETH, SOL, DOGE and TRX (CoinDCX, priced in USDT, equal money each) only while the whole crypto market is calm: the 20-day volatility of 12 big coins

@@ -141,6 +141,15 @@ def run(db, now: datetime, send=None) -> dict:
                         lines.append(f"• {coin}: SHORT signal filtered out (extreme funding squeeze: 3d funding {f_3d*100:.3f}% < -{thresh*100:.2f}%)")
                         is_short = False
 
+                # Check Unsupervised ML GMM Regime Filter on BTC (skips chop regimes)
+                if coin == "BTC" and (is_long or is_short):
+                    chop_probs = getattr(TB, "_btc_chop_probabilities", lambda: {})()
+                    btc_thresh = getattr(TB, "BTC_CHOP_MAX_PROB", 0.70)
+                    p_chop = chop_probs.get(int(b.t // 60000), 0.0)
+                    if btc_thresh > 0 and p_chop > btc_thresh:
+                        lines.append(f"• BTC: {'LONG' if is_long else 'SHORT'} signal filtered out by Unsupervised ML GMM Regime Filter (Chop Probability {p_chop*100:.1f}% > {btc_thresh*100:.0f}%)")
+                        is_long = is_short = False
+
                 d = 1 if is_long else (-1 if is_short else 0)
                 px = live["price"].get(coin)
                 if d and px:
