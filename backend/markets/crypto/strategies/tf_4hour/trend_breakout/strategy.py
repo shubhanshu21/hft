@@ -93,8 +93,8 @@ def trades(coin: str, start: str, end: str) -> list[dict]:
     return out
 
 
-def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None = None, tax="strict") -> dict:
-    """Equal money per chosen coin; each trade uses that coin's whole share (1x). Daily replay: chart shows daily candles, trade
+def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None = None, leverage: float = 1.5, tax="strict") -> dict:
+    """Equal money per chosen coin; each trade uses that coin's share multiplied by leverage. Daily replay: chart shows daily candles, trade
     list shows 4-hour trend trades. tax: 'strict' (31.2% per win), 'business' (31.2% annual net), 'none'."""
     from core.backtester import metrics
     coins = [s for s in (symbols or available()) if s in available()]
@@ -113,10 +113,11 @@ def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None
     all_tr = sorted((x for c in coins for x in trades(c, start, str(days[-1].date()))), key=lambda x: x["t1"])
     for x in all_tr:
         c = x["coin"]
-        q = book[c] / x["entry"]
-        pnl_pre = book_pre[c] * x["net"]
+        pos_value = book[c] * leverage
+        q = pos_value / x["entry"]
+        pnl_pre = book_pre[c] * (x["net"] * leverage)
         book_pre[c] += pnl_pre
-        pnl = book[c] * x["net"]
+        pnl = book[c] * (x["net"] * leverage)
         tx = CALM.TAX * pnl if pnl > 0 else 0.0
         book[c] += pnl - tx
         d0 = pd.Timestamp(x["t0"] * 60, unit="s").strftime("%Y-%m-%d")
@@ -124,17 +125,17 @@ def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None
         when = pd.Timestamp(x["t0"] * 60, unit="s").strftime("%H:%M")
         if d0 in pos_of:
             events[pos_of[d0]].append({"t": "buy", "sym": c, "q": round(q, 6), "px": round(x["entry"], 6),
-                                       "note": f"{when} UTC {'BUY' if x['side'] == 'long' else 'SHORT'}: 4H trend breakout "
+                                       "note": f"{when} UTC {'BUY' if x['side'] == 'long' else 'SHORT'} ({leverage:g}x): 4H trend breakout "
                                                f"(20-bar high/low above 100 EMA); stop {x['stop']:.6g}"})
         if d1 in pos_of:
             hours = (x["t1"] - x["t0"]) / 60
             events[pos_of[d1]].append({"t": "sell", "sym": c, "q": round(q, 6), "px": round(x["exit"], 6),
                                        "pnl": round(pnl - tx if tax == "strict" else pnl, 2),
-                                       "fees": round(book[c] * x["fees"], 2), "slip": 0, "days": round(hours / 24, 1),
+                                       "fees": round(pos_value * x["fees"], 2), "slip": 0, "days": round(hours / 24, 1),
                                        "entry": round(x["entry"], 6),
                                        "why": f"Trailing channel exit after {hours:.0f}h ({x['side']})"})
-        closed.append({"net": pnl - tx if tax == "strict" else pnl, "fees": book[c] * x["fees"], "slip": 0.0,
-                       "gross": book[c] * x["gross"], "days": round((x["t1"] - x["t0"]) / 1440, 1)})
+        closed.append({"net": pnl - tx if tax == "strict" else pnl, "fees": pos_value * x["fees"], "slip": 0.0,
+                       "gross": pos_value * x["gross"], "days": round((x["t1"] - x["t0"]) / 1440, 1)})
         daily_strict[d1] = sum(book.values())
         daily_pre[d1] = sum(book_pre.values())
 

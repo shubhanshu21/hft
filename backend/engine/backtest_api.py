@@ -72,9 +72,9 @@ def catalog() -> list[dict]:
               "summary": (cb.__doc__ or "").strip().split("\n")[0], "intraday": False, "default_risk_pct": None,
               "exposure": 1.0, "exposure_min": 1.0, "exposure_max": 3.0}
     from markets.crypto.strategies.tf_4hour.trend_breakout import strategy as tbo
-    breakout = {"market": "crypto", "name": "trend_breakout", "timeframe": "4 hours", "supported": True, "symbols": tbo.available(), "crypto": True, "scalp": True,
-                "default_symbols": ["BTC", "ETH", "SOL", "DOGE"], "summary": (tbo.__doc__ or "").strip().split("\n")[0], "intraday": False, "default_risk_pct": None,
-                "exposure": 1.0, "exposure_min": 1.0, "exposure_max": 1.0}
+    breakout = {"market": "crypto", "name": "trend_breakout", "timeframe": "4 hours", "supported": True, "symbols": tbo.available(), "crypto": True, "scalp": False,
+                "default_symbols": ["SOL", "ETH"], "summary": (tbo.__doc__ or "").strip().split("\n")[0], "intraday": False, "default_risk_pct": None,
+                "exposure": 1.5, "exposure_min": 1.0, "exposure_max": 3.0}
     return [{"market": m, "name": n, "timeframe": f"{s.timeframe[1]} {s.timeframe[0]}", "supported": tuple(s.timeframe) == ("days", 1), "symbols": list(getattr(s, "universe", None) or universe(m)),
              "summary": (s.__doc__ or "").strip().split("\n")[0], "intraday": s.intraday,
              "default_risk_pct": getattr(s, "default_risk_pct", None),
@@ -432,7 +432,7 @@ def work(run: dict) -> None:
         if run["market"] == "crypto" and run["strategy"] == "trend_breakout":
             from markets.crypto.strategies.tf_4hour.trend_breakout import strategy as tbo
             try:
-                run["result"] = tbo.web_backtest(p["capital"], p["start"], p["end"], symbols=p["symbols"], tax=p["tax"])
+                run["result"] = tbo.web_backtest(p["capital"], p["start"], p["end"], symbols=p["symbols"], leverage=p.get("leverage", 1.5), tax=p["tax"])
             except ValueError as e:
                 raise BacktestError(str(e))
         elif run["market"] == "crypto":                              # calm_coins: 5 coins x 7 weekday parts, its own backtest

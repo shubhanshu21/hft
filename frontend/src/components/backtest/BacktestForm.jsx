@@ -95,12 +95,12 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
             About 2 of 3 trades hit the target, but fees (~0.13% a trade) are about as big as the moves, so it loses money. 1-minute data covers 2022-01-01 to 2026-10-16.
             Big date ranges with many coins take a few minutes.</p>
         )}
-        {strategy && crypto && !scalp && (
+        {strategy && crypto && strategy.name === "calm_coins" && (
           <p className="hint">Holds futures on BTC, ETH, SOL, DOGE and TRX (CoinDCX, priced in USDT, equal money each) only while the whole crypto market is calm: the 20-day volatility of 12 big coins
             below 2.43% a day; otherwise it holds cash. Each coin's money is split into 7 parts, each re-checking on its own weekday, so no single day's luck decides.
             Fees, slippage and the real funding paid by longs are included. Data starts January 2022; the first signal is in February 2022.</p>
         )}
-        {strategy && !auto && (!crypto || scalp) && (
+        {strategy && !auto && strategy.name !== "calm_coins" && (
           <div className="field">
             <label className="check" htmlFor="all"><input id="all" type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} /> All {strategy.symbols.length} symbols</label>
             {(strategy.default_symbols?.length ?? 0) > 0 && strategy.default_symbols.length < strategy.symbols.length && (
