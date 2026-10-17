@@ -45,6 +45,18 @@ def _funding(coin: str) -> pd.Series:
     return pd.read_csv(f, index_col="date", parse_dates=True)["fundingRate"] if f.exists() else pd.Series(dtype=float)
 
 
+def _funding_between(fund: pd.Series, t0_min: int, t1_min: int) -> float:
+    """Funding over a holding period: only the 8-hourly payments (00, 08, 16 UTC) that fall while the trade is open, each a third of
+    that day's sum (the archive keeps daily sums)."""
+    total, t = 0.0, (t0_min // 480 + 1) * 480
+    while t <= t1_min:
+        day = pd.Timestamp(t * 60, unit="s").normalize()
+        if day in fund.index:
+            total += float(fund.at[day]) / 3
+        t += 480
+    return total
+
+
 def trades(coin: str, start: str, end: str) -> list[dict]:
     t, o, h, l, c = _load(coin)
     # Resample to 4-hour bars (240 minutes)
@@ -113,8 +125,7 @@ def trades(coin: str, start: str, end: str) -> list[dict]:
         if px is None or j >= n:
             j = min(n - 1, k + 179)
         gross = d * (px - e) / e
-        d0, d1 = pd.Timestamp(tb[k] * 60, unit="s").normalize(), pd.Timestamp(tb[j] * 60, unit="s").normalize()
-        funding = d * float(fund.loc[d0:d1].sum())                    # longs pay positive funding, shorts receive it (daily sums)
+        funding = d * _funding_between(fund, int(tb[k]), int(tb[j]) + 240)  # longs pay positive funding, shorts receive it
         net = gross - 2 * cost - funding
         out.append({"coin": coin, "side": "long" if d == 1 else "short", "t0": int(tb[k]), "t1": int(tb[j]),
                     "entry": e, "exit": px, "stop": stop_px,
