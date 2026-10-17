@@ -71,9 +71,10 @@ export default function PriceChart({ qtyFmt = (q) => q ?? "", tf = "1D", overlay
 
     const markers = [];
     for (const t of trades) {
-      markers.push({ time: calendar[t.i0], position: "belowBar", shape: "arrowUp", color: colors.accent, text: `BUY ${qtyFmt(t.qty)} @ ${t.entry.toFixed(2)}` });
+      const sh = t.side === "short";
+      markers.push({ time: calendar[t.i0], position: sh ? "aboveBar" : "belowBar", shape: sh ? "arrowDown" : "arrowUp", color: colors.accent, text: `${sh ? "SHORT" : "BUY"} ${qtyFmt(t.qty)} @ ${t.entry.toFixed(2)}` });
       for (const a of t.adds ?? []) markers.push({ time: calendar[a.i], position: "belowBar", shape: "arrowUp", color: colors.accent, text: `ADD ${qtyFmt(a.q)} @ ${a.px.toFixed(2)}` });
-      if (t.i1 != null) markers.push({ time: calendar[t.i1], position: "aboveBar", shape: "arrowDown", color: t.pnl >= 0 ? colors.gain : colors.loss, text: `SELL ${qtyFmt(t.soldQty)} ${signed(t.pnl)}` });
+      if (t.i1 != null) markers.push({ time: calendar[t.i1], position: sh ? "belowBar" : "aboveBar", shape: sh ? "arrowUp" : "arrowDown", color: t.pnl >= 0 ? colors.gain : colors.loss, text: `${sh ? "COVER" : "SELL"} ${qtyFmt(t.soldQty)} ${signed(t.pnl)}` });
     }
     for (const m of overlay?.markers ?? []) if (m.i >= first && m.i <= at) markers.push({ time: calendar[m.i], position: "aboveBar", shape: "circle", color: colors.muted, text: m.text });
     candles.setMarkers(markers.filter((m) => m.time >= calendar[first]).sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0)));
@@ -121,7 +122,7 @@ export default function PriceChart({ qtyFmt = (q) => q ?? "", tf = "1D", overlay
     <div className="tv">
       {bar && (
         <div className="tv-legend">
-          <b>{symbol}</b><span className="tf" title={tf === "1M" ? "one candle per month" : "one candle per day"}>{tf}</span><span>{String(bar.time)}</span>
+          <b>{symbol}</b><span className="tf" title={tf === "1M" ? "one candle per month" : tf === "4H" ? "one candle per 4 hours (UTC)" : "one candle per day"}>{tf}</span><span>{typeof bar.time === "number" ? new Date(bar.time * 1000).toISOString().slice(0, 16).replace("T", " ") + " UTC" : String(bar.time)}</span>
           <span>O <i>{bar.open.toFixed(2)}</i></span><span>H <i>{bar.high.toFixed(2)}</i></span><span>L <i>{bar.low.toFixed(2)}</i></span>
           <span>C <i className={bar.close >= bar.open ? "up" : "down"}>{bar.close.toFixed(2)}</i></span>
           {showVolume && bar.volume != null && <span>Vol <i>{Math.round(bar.volume).toLocaleString("en-IN")}</i></span>}

@@ -151,16 +151,17 @@ def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None
         pnl = book[c] * (x["net"] * leverage)
         tx = CALM.TAX * pnl if pnl > 0 else 0.0
         book[c] += pnl - tx
+        x["pnl_rs"] = float(round(pnl - tx if tax == "strict" else pnl, 2)); x["q"] = float(round(q, 6))
         d0 = pd.Timestamp(x["t0"] * 60, unit="s").strftime("%Y-%m-%d")
         d1 = pd.Timestamp(x["t1"] * 60, unit="s").strftime("%Y-%m-%d")
         when = pd.Timestamp(x["t0"] * 60, unit="s").strftime("%H:%M")
         if d0 in pos_of:
-            events[pos_of[d0]].append({"t": "buy", "sym": c, "q": round(q, 6), "px": round(x["entry"], 6),
+            events[pos_of[d0]].append({"t": "buy", "side": x["side"], "sym": c, "q": round(q, 6), "px": round(x["entry"], 6),
                                        "note": f"{when} UTC {'BUY' if x['side'] == 'long' else 'SHORT'} ({leverage:g}x): 4H trend breakout "
                                                f"(20-bar high/low above 100 EMA); stop {x['stop']:.6g}"})
         if d1 in pos_of:
             hours = (x["t1"] - x["t0"]) / 60
-            events[pos_of[d1]].append({"t": "sell", "sym": c, "q": round(q, 6), "px": round(x["exit"], 6),
+            events[pos_of[d1]].append({"t": "sell", "side": x["side"], "sym": c, "q": round(q, 6), "px": round(x["exit"], 6),
                                        "pnl": round(pnl - tx if tax == "strict" else pnl, 2),
                                        "fees": round(pos_value * x["fees"], 2), "slip": 0, "days": round(hours / 24, 1),
                                        "entry": round(x["entry"], 6),
@@ -188,8 +189,24 @@ def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None
         dd = df.resample("1D").agg({"o": "first", "h": "max", "l": "min", "c": "last"}).reindex(days).ffill()
         bars[c] = [[round(float(v), 6) for v in r] for r in dd[["o", "h", "l", "c"]].values]
 
+    # 4-hour chart: its own time line (unix seconds), candles, and each trade placed on its 4-hour candle; day_end maps a replay day to
+    # the last 4-hour candle of that day so the chart can follow the player
+    t0g = int(days[0].timestamp()) // 14400 * 14400; t1g = int((days[-1] + pd.Timedelta(days=1)).timestamp())
+    times = list(range(t0g, t1g, 14400)); pos4 = {v: i for i, v in enumerate(times)}
+    chart = {"tf": "4H", "times": times, "bars": {}, "trades": {}, "day_end": [min(len(times) - 1, max(0, (int((d + pd.Timedelta(days=1)).timestamp()) - t0g) // 14400 - 1)) for d in days]}
+    for c in coins:
+        t, o, h, l, cl = _load(c)
+        sel = (t * 60 >= t0g) & (t * 60 < t1g); t, o, h, l, cl = t[sel], o[sel], h[sel], l[sel], cl[sel]
+        g = (t * 60 - t0g) // 14400; idx = np.r_[0, np.flatnonzero(np.diff(g)) + 1]; last = np.r_[idx[1:] - 1, len(cl) - 1]
+        b4 = [None] * len(times)
+        for gi, a_, z_ in zip(g[idx], idx, last):
+            if 0 <= gi < len(times): b4[gi] = [round(float(o[a_]), 6), round(float(h[a_:z_ + 1].max()), 6), round(float(l[a_:z_ + 1].min()), 6), round(float(cl[z_]), 6)]
+        chart["bars"][c] = b4
+        chart["trades"][c] = [{"i0": pos4.get(x["t0"] * 60 // 14400 * 14400), "i1": pos4.get(x["t1"] * 60 // 14400 * 14400), "entry": float(round(x["entry"], 6)),
+                               "exit": float(round(x["exit"], 6)), "qty": x["q"], "soldQty": x["q"], "pnl": x["pnl_rs"], "side": x["side"], "adds": []}
+                              for x in all_tr if x["coin"] == c and pos4.get(x["t0"] * 60 // 14400 * 14400) is not None]
     rep = {"days": [d.strftime("%Y-%m-%d") for d in days], "equity": [round(v) for v in curve], "events": events,
-           "pos": [[] for _ in days], "bars": bars, "overlays": {}, "skipped_symbols": []}
+           "pos": [[] for _ in days], "bars": bars, "overlays": {}, "skipped_symbols": [], "chart": chart}
     first = np.array([b[0][3] for b in bars.values()])
     rep["benchmark"] = [round(v) for v in (capital / len(coins) * np.array([[b[i][3] for b in bars.values()] for i in range(len(days))]) / first).sum(axis=1)]
     wins = sum(1 for x in all_tr if x["net"] > 0)

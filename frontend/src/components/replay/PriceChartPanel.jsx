@@ -36,16 +36,19 @@ export default function PriceChartPanel({ result, at, focus, onSelect, controls 
     (result.pos ?? []).forEach((day, i) => { const p = day.find((x) => x.sym === sym); if (p?.stop != null) byDay.set(result.days[i], p.stop); });
     return byDay.size ? calendar.map((d) => byDay.get(d) ?? null) : null;
   })();
+  const c4 = result.chart;                                           // a 4-hour strategy brings its own 4-hour candles and trade positions
+  const at4 = c4 ? c4.day_end[at] : at;
+  const mine4 = c4 ? (c4.trades[sym] ?? []).filter((t) => t.i0 != null && t.i0 <= at4).map((t) => (t.i1 != null && t.i1 > at4 ? { ...t, i1: null, pnl: null, exit: null } : t)) : null;
   const sorted = [...syms].sort((a, b) => (trades[b]?.length ?? 0) - (trades[a]?.length ?? 0));
 
   return (
     <Panel>
       <div ref={fsBox} className="chart-fs">
       <div className="chart-head">
-        <h2>{sym} · {result.lots ? "monthly" : "daily"} candles: price and every trade taken <span className="hint-inline">drag to move, scroll to zoom</span></h2>
+        <h2>{sym} · {c4 ? "4-hour" : result.lots ? "monthly" : "daily"} candles: price and every trade taken <span className="hint-inline">drag to move, scroll to zoom</span></h2>
         <div className="row-flex">
-          <span className="legend"><span className="acc">&#9650; buy</span><span className="up">&#9660; sell, profit</span><span className="down">&#9660; sell, loss</span></span>
-          <label className="note check" htmlFor="showvol"><input id="showvol" type="checkbox" checked={showVolume} onChange={(e) => toggleVolume(e.target.checked)} /> Volume</label>
+          <span className="legend"><span className="acc">&#9650; buy</span>{c4 && <span className="acc">&#9660; short</span>}<span className="up">{c4 ? "sell / cover, profit" : "▼ sell, profit"}</span><span className="down">{c4 ? "sell / cover, loss" : "▼ sell, loss"}</span></span>
+          {!c4 && <label className="note check" htmlFor="showvol"><input id="showvol" type="checkbox" checked={showVolume} onChange={(e) => toggleVolume(e.target.checked)} /> Volume</label>}
           <button type="button" onClick={() => setFitKey(fitKey + 1)}>Reset zoom</button>
           <button type="button" onClick={toggleFull} title="Full screen (Esc to leave)">{full ? "Exit full screen" : "Full screen"}</button>
         </div>
@@ -63,7 +66,11 @@ export default function PriceChartPanel({ result, at, focus, onSelect, controls 
           );
         })}
       </div>
-      <PriceChart qtyFmt={(q) => qtyText(result, sym, q, true)} tf={result.lots ? "1M" : "1D"} overlay={result.overlays?.[sym] ?? null} stopPath={stopPath} symbol={sym} bars={result.bars[sym]} calendar={calendar} first={0} last={last} at={at} trades={mine} fitKey={fitKey} showVolume={showVolume} focus={focus && focus.sym === sym ? focus : null} />
+      {c4 ? (
+        <PriceChart qtyFmt={(q) => qtyText(result, sym, q, true)} tf={c4.tf} overlay={null} stopPath={null} symbol={sym} bars={c4.bars[sym]} calendar={c4.times} first={0} last={c4.times.length - 1} at={at4} trades={mine4} fitKey={fitKey} showVolume={false} focus={null} />
+      ) : (
+        <PriceChart qtyFmt={(q) => qtyText(result, sym, q, true)} tf={result.lots ? "1M" : "1D"} overlay={result.overlays?.[sym] ?? null} stopPath={stopPath} symbol={sym} bars={result.bars[sym]} calendar={calendar} first={0} last={last} at={at} trades={mine} fitKey={fitKey} showVolume={showVolume} focus={focus && focus.sym === sym ? focus : null} />
+      )}
       <SymbolTrades result={result} trades={mine} days={result.days} onSelect={(t) => onSelect?.({ sym, at: t.i0 })} />
       </div>
     </Panel>

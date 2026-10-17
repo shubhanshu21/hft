@@ -11,11 +11,11 @@ export default function SymbolTrades({ trades, days, onSelect, result }) {
   return (
     <div className="table-wrap">
       <table className="trades-table clickable">
-        <thead><tr><th>Bought</th><th>{qtyHeader(result)}</th><th>Price</th><th>Sold</th>{!oneQty && <th>{qtyHeader(result)}</th>}<th>Price</th><th>Held</th><th>Profit</th><th>Why it ended</th></tr></thead>
+        <thead><tr><th>Bought / shorted</th><th>{qtyHeader(result)}</th><th>Price</th><th>Sold / covered</th>{!oneQty && <th>{qtyHeader(result)}</th>}<th>Price</th><th>Held</th><th>Profit</th><th>Why it ended</th></tr></thead>
         <tbody>
           {paged.rows.map((t, k) => (
             <tr key={k} title="Zoom the chart to this trade" onClick={() => onSelect?.(t)}>
-              <td>{longDate(days[t.i0])}{t.adds?.length ? ` + added ${shortDate(days[t.adds[0].i])}` : ""}</td>
+              <td>{t.side === "short" ? <b>SHORT </b> : null}{longDate(days[t.i0])}{t.adds?.length ? ` + added ${shortDate(days[t.adds[0].i])}` : ""}</td>
               <td>{qtyText(result, t.sym, t.qty)}{t.adds?.length ? ` + ${t.adds[0].q ?? "?"}` : ""}</td><td>{t.entry.toFixed(2)}{t.adds?.length ? ` / ${t.adds[0].px.toFixed(2)}` : ""}</td>
               <td>{t.i1 != null ? longDate(days[t.i1]) : "open"}</td>{!oneQty && <td>{qtyText(result, t.sym, t.soldQty)}</td>}<td>{t.exit != null ? t.exit.toFixed(2) : "-"}</td>
               <td>{t.days != null ? `${t.days}d` : "-"}</td>

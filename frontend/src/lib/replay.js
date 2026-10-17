@@ -36,7 +36,7 @@ export function tradesBySymbol(result, upto) {
   const open = {}, bySym = {};
   for (let k = 0; k <= upto; k++) for (const e of result.events[k]) {
     if (e.t === "buy" && open[e.sym]) open[e.sym].adds.push({ i: k, px: e.px, q: e.q });          // pyramiding: a second buy into the same trade
-    else if (e.t === "buy") open[e.sym] = { sym: e.sym, i0: k, i1: null, entry: e.px, qty: e.q, soldQty: null, stop: e.stop ?? null, exit: null, pnl: null, why: null, adds: [] };
+    else if (e.t === "buy") open[e.sym] = { sym: e.sym, side: e.side ?? "long", i0: k, i1: null, entry: e.px, qty: e.q, soldQty: null, stop: e.stop ?? null, exit: null, pnl: null, why: null, adds: [] };
     else if (open[e.sym]) {
       const t = { ...open[e.sym], i1: k, exit: e.px, soldQty: e.q, pnl: e.pnl, why: e.why, fees: e.fees, days: e.days };
       (bySym[e.sym] ??= []).push(t);
