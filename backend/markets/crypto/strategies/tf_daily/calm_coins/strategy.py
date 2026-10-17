@@ -12,8 +12,9 @@ Research 2026-10-16/17 (user: "now lets focus on crypto I have coindcx account" 
   * coins: the calm rule run on each of the 12; TRADED = those that made money on 2022-24 (BTC +12%/yr, ETH +6, SOL +29, DOGE +31, TRX +11);
     all five also made money on the judging years 2025-26 (+8, +18, +2, +7, +10%/yr). XRP BNB ADA AVAX LINK DOT LTC lost on 2022-24;
   * costs: CoinDCX futures taker 0.05% + 18% GST per side, 0.05% slippage, real funding (longs mostly pay ~4-8%/yr).
-Results, Rs1L, March 2022 -> Oct 2026, after fees, funding and India's 30% tax on every winning trade (losses not set off), 1x:
-  5 coins, Rs3L+ (every order fits CoinDCX's minimums): 1.87x (+19%/yr 2022-24, +9%/yr 2025-26), worst fall -33%; BTC alone 1.56x, worst -36%.
+Results, Rs1L, March 2022 -> Oct 2026, after fees, funding and India's 31.2% tax (30% + 4% cess) on every winning trade (losses not set off), 1x:
+  5 coins, Rs3L+ (every order fits CoinDCX's minimums): 1.80x (+18%/yr 2022-24, +8.5%/yr 2025-26), worst fall -33%, at 31.2% tax (30% + 4% cess;
+  1.87x at a flat 30%). BTC alone 1.56x at 30%, worst -36%.
   5 coins, Rs1L: Rs1.73L (+16%/yr, +7%/yr), worst -30% -- a BTC part (Rs2,857) is below the smallest BTC order (0.001 BTC ~Rs8,100), so
   BTC's fifth stays in cash; Rs2L 1.76x. Order sizes follow LOT (rounded down to CoinDCX's step) in the backtest and the paper account.
   Checking every day instead was worse (more flips, more tax). Leverage sweet spot (BTC, 1x..3x, by return per unit of worst fall): 1x.
@@ -34,7 +35,7 @@ TRADED = ("BTC", "ETH", "SOL", "DOGE", "TRX")       # equal money each
 CALM_THRESHOLD = 0.0243
 VOL_DAYS = 20
 FEE_SIDE = 0.0005 * 1.18 + 0.0005            # taker 0.05% + GST, + 0.05% slippage
-TAX = 0.30
+TAX = 0.312                                   # 30% (Section 115BBH) + 4% health & education cess; surcharge above Rs50L income not included
 # CoinDCX futures order rules (instrument API, 2026-10-17): quantity step = smallest quantity, and the smallest order value in USDT.
 LOT = {"BTC": (0.001, 60.0), "ETH": (0.001, 24.0), "SOL": (0.01, 6.0), "DOGE": (1.0, 6.0), "TRX": (1.0, 6.0)}
 USDTINR = 90.0                                 # rupees per USDT for the backtest's order-size check (CoinDCX ~85-100 over 2022-26)
@@ -212,7 +213,7 @@ def web_backtest(capital: float, start: str, end: str, leverage: float = 1.0, ta
     rep["metrics"] = m | {"note": f"Futures (CoinDCX, USDT) on {', '.join(TRADED)}, equal money each, long at {leverage:g}x only while the 12-coin market's "
                                   f"20-day volatility is below {CALM_THRESHOLD:.2%}/day; each coin's money is split into 7 parts, each re-deciding on its own "
                                   "weekday; otherwise cash. Fees, slippage and real funding included"
-                                  + (f"; India's 30% tax on each winning trade, losses not set off (tax paid Rs{tax_paid:,.0f})." if tax else "; NO income tax (the before-tax result).")
+                                  + (f"; India's 31.2% tax (30% + 4% cess) on each winning trade, losses not set off (tax paid Rs{tax_paid:,.0f})." if tax else "; NO income tax (the before-tax result).")
                                   + " Benchmark = holding the 5 coins."}
     rep["skipped_symbols"] = []
     return rep

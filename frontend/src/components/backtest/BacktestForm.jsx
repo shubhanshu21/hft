@@ -117,7 +117,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
               <input id="exposure" type="number" min={strategy.exposure_min} max={strategy.exposure_max} step="0.25" value={f.exposure} onChange={set("exposure")} />
               <span className="hint">1x was the best by return per unit of worst fall (the paper account uses 1x). More leverage grows profits and falls together.</span>
               {+f.exposure > 1.5 && <span className="warn" role="alert">High leverage: at 1.5x the worst fall was −60% instead of −36%, for almost no extra profit after tax.</span>}</div>
-            <div className="field"><label className="check" htmlFor="tax"><input id="tax" type="checkbox" checked={f.tax} onChange={(e) => setF((x) => ({ ...x, tax: e.target.checked }))} /> Charge India's 30% crypto tax</label>
+            <div className="field"><label className="check" htmlFor="tax"><input id="tax" type="checkbox" checked={f.tax} onChange={(e) => setF((x) => ({ ...x, tax: e.target.checked }))} /> Charge India's crypto tax (30% + 4% cess = 31.2%)</label>
               <span className="hint">30% of every winning trade; losses cannot be set off. Untick to see the before-tax result.</span></div>
           </>) : monthly ? (
             <div className="field"><label htmlFor="exposure">Exposure (x the account)</label>

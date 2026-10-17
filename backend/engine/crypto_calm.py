@@ -8,7 +8,7 @@ prices come from CoinDCX's public futures price feed, fills are recorded in var/
 Equal money per coin, each coin's money split into 7 parts (as in the backtest). Each day the part for today's UTC weekday re-decides from
 yesterday's completed candles: market calm -> hold the coin (buy if not held), wild -> cash (sell if held). Prices are in USDT; profit is
 turned into rupees at CoinDCX's USDT/INR price when it is booked. Costs: 0.05% fee + 18% GST and 0.05% slippage per side, the real daily
-funding a long pays, and 30% tax on each winning trade (losses not set off), exactly like the backtest. Settings (.env): CRYPTO_CALM_CAPITAL
+funding a long pays, and 31.2% tax (30% + 4% cess) on each winning trade (losses not set off), exactly like the backtest. Settings (.env): CRYPTO_CALM_CAPITAL
 (default Rs3 lakh: below that a BTC part is smaller than CoinDCX's 0.001 BTC minimum order, so BTC's share sits in cash), CRYPTO_CALM_LEVERAGE (default 1 = the sweet spot; 1.5x deepened BTC's worst fall from -36% to -60% for almost no extra profit).
 """
 from __future__ import annotations
@@ -71,7 +71,7 @@ def live_prices() -> dict:
 
 
 def value_if_sold(p: dict, price: float, usdtinr: float) -> dict:
-    """What selling an open position at `price` books, in rupees: gross, fees (both sides + slippage), funding paid, 30% tax on a gain."""
+    """What selling an open position at `price` books, in rupees: gross, fees (both sides + slippage), funding paid, 31.2% tax (S.TAX) on a gain."""
     st = json.loads(p.get("state") or "{}")
     q, e = float(p["qty"]), float(p["entry_price"])
     gross = q * (price - e)
