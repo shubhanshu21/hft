@@ -127,9 +127,8 @@ def run(db, now: datetime, send=None) -> dict:
                     _close(db, p, float(px), why, now, st, fx, lines); closed_now = True
             if not pos and not closed_now and idx == k.index[-1]:                   # 2) a signal on the newest finished candle -> enter now
                 buf = getattr(TB, "BREAKOUT_BUFFER", 0.0)                           # same 0.3% buffer as the backtest
-                adx_thresh = 20 if coin == "BTC" else 18
-                is_long = (b.c > b.hi * (1 + buf)) and (b.c > b.ema) and (b.ema_slope > 0) and (b.adx >= adx_thresh)
-                is_short = (b.c < b.lo * (1 - buf)) and (b.c < b.ema) and (b.ema_slope < 0) and (b.adx >= adx_thresh)
+                is_long = (b.c > b.hi * (1 + buf)) and (b.c > b.ema) and (b.ema_slope > 0)      # same rules as the backtest (no ADX)
+                is_short = (b.c < b.lo * (1 - buf)) and (b.c < b.ema) and (b.ema_slope < 0)
                 d = 1 if is_long else (-1 if is_short else 0)
                 px = live["price"].get(coin)
                 if d and px:
