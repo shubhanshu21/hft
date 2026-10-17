@@ -22,7 +22,8 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
   }, [strategy?.market, strategy?.name]);   // start from the risk the strategy was tested with
   const safeRisk = Math.max(3, strategy?.default_risk_pct ?? 0);
   const monthly = !!strategy?.monthly_rank;          // commodity/trend_carry: ranks the chosen contracts together each month; exposure is editable
-  const crypto = !!strategy?.crypto;                 // crypto/calm_coins: 5 coins' futures; leverage and the tax rule are the choices
+  const crypto = !!strategy?.crypto;
+  const scalp = !!strategy?.scalp;                   // crypto/sr_sweep: 1-minute scalper, coins chosen, no leverage                 // crypto/calm_coins: 5 coins' futures; leverage and the tax rule are the choices
   const auto = !!strategy?.auto_universe;            // equity/breakout_pair: picks from the day's 200 most-traded NSE stocks itself, fixed 5 + 3 holdings
   const [all, setAll] = useState(true);
   const [chosen, setChosen] = useState([]);
@@ -84,12 +85,18 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
               : " Half the money buys quiet-day (NR7) breakouts, up to 5 stocks; half buys 55-day-high breakouts, up to 3 stocks. It buys only while at least half of those 200 stocks are above their 50-day average."}
             {" "}Daily data starts January 2022, so the first signals are in late 2022.</p>
         )}
-        {strategy && crypto && (
+        {strategy && crypto && scalp && (
+          <p className="hint">1-minute scalper (research only): when price dips below the last hour's support (or above resistance) and closes back inside, and the next
+            candle confirms, it trades the bounce with a target of half the risk. Only while support and resistance are 2-3% apart and the 5-minute ADX is below 25.
+            About 2 of 3 trades hit the target, but fees (~0.13% a trade) are about as big as the moves, so it loses money. 1-minute data covers 2022-01-01 to 2026-10-16.
+            Big date ranges with many coins take a few minutes.</p>
+        )}
+        {strategy && crypto && !scalp && (
           <p className="hint">Holds futures on BTC, ETH, SOL, DOGE and TRX (CoinDCX, priced in USDT, equal money each) only while the whole crypto market is calm: the 20-day volatility of 12 big coins
             below 2.43% a day; otherwise it holds cash. Each coin's money is split into 7 parts, each re-checking on its own weekday, so no single day's luck decides.
             Fees, slippage and the real funding paid by longs are included. Data starts January 2022; the first signal is in February 2022.</p>
         )}
-        {strategy && !auto && !crypto && (
+        {strategy && !auto && (!crypto || scalp) && (
           <div className="field">
             <label className="check" htmlFor="all"><input id="all" type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} /> All {strategy.symbols.length} symbols</label>
             {(strategy.default_symbols?.length ?? 0) > 0 && strategy.default_symbols.length < strategy.symbols.length && (
@@ -113,10 +120,10 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
               <span className="hint">5 bp = 0.05%, charged when buying and again when selling.</span></div>
           )}
           {crypto ? (<>
-            <div className="field"><label htmlFor="exposure">Leverage (x the account)</label>
+            {!scalp && <div className="field"><label htmlFor="exposure">Leverage (x the account)</label>
               <input id="exposure" type="number" min={strategy.exposure_min} max={strategy.exposure_max} step="0.25" value={f.exposure} onChange={set("exposure")} />
               <span className="hint">1x was the best by return per unit of worst fall (the paper account uses 1x). More leverage grows profits and falls together.</span>
-              {+f.exposure > 1.5 && <span className="warn" role="alert">High leverage: at 1.5x the worst fall was −60% instead of −36%, for almost no extra profit after tax.</span>}</div>
+              {+f.exposure > 1.5 && <span className="warn" role="alert">High leverage: at 1.5x the worst fall was −60% instead of −36%, for almost no extra profit after tax.</span>}</div>}
             <div className="field"><label htmlFor="tax">Tax rule</label>
               <select id="tax" value={f.tax} onChange={(e) => setF((x) => ({ ...x, tax: e.target.value }))}>
                 <option value="strict">Strict crypto rule: 31.2% of every winning trade (safe)</option>

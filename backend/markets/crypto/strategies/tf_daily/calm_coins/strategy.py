@@ -69,7 +69,7 @@ def calm_on(d: dict, day) -> bool:
     return bool(market_vol(d["close"]).loc[:day].iloc[-1] < CALM_THRESHOLD)
 
 
-def backtest(start="2022-03-01", end=None, capital=100_000.0, leverage=1.0, tax=True, d: dict | None = None, record=False, coin="BTC") -> dict:
+def backtest(start="2022-03-01", end=None, capital=100_000.0, leverage=1.0, tax=True, d: dict | None = None, record=False, coin="BTC", vol_k=None) -> dict:
     """One coin, one part deciding on Mondays."""
     d = d or load()
     TRADE = coin
@@ -93,7 +93,8 @@ def backtest(start="2022-03-01", end=None, capital=100_000.0, leverage=1.0, tax=
                             "days": (t - t0).days, "why": f"Market turned wild (20-day volatility {mv.at[y]:.2%} >= {CALM_THRESHOLD:.2%})", "entry": round(entry, 2)})
                 units = 0.0
             elif not units and on:                                            # buy at the open
-                q = order_qty(TRADE, leverage * E, p) * USDTINR       # real order size (rupee units: price is read as rupees per USDT-coin)
+                lev = size_for(mv.at[y], vol_k) if vol_k else leverage   # smart sizing: more when very calm (up to VOL_MAX)
+                q = order_qty(TRADE, lev * E, p) * USDTINR            # real order size (rupee units: price is read as rupees per USDT-coin)
                 if q > 0:
                     efee = abs(q) * p * FEE_SIDE; E -= efee
                     units, mark, entry, t0 = q, p, p, t
@@ -117,6 +118,14 @@ def backtest(start="2022-03-01", end=None, capital=100_000.0, leverage=1.0, tax=
     return out
 
 
+VOL_K, VOL_MAX = 0.8, 2.0                      # smart sizing (2026-10-17): size = 0.8 x 2.43% / market volatility, at most 2x the part's money
+
+
+def size_for(vol: float, k: float = VOL_K) -> float:
+    """Position size as a multiple of the part's money when buying: bigger when the market is very calm, never above VOL_MAX."""
+    return float(min(VOL_MAX, k * CALM_THRESHOLD / vol)) if vol and vol == vol else 1.0
+
+
 PARTS = 7                                     # the money is split into 7 parts; part k decides on weekday k (Monday = 0)
 
 
@@ -128,7 +137,7 @@ def _shift(d: dict, k: int) -> dict:
     return out
 
 
-def backtest_staggered(start="2022-03-01", end=None, capital=100_000.0, leverage=1.0, tax=True, d: dict | None = None, record=False, coin="BTC") -> dict:
+def backtest_staggered(start="2022-03-01", end=None, capital=100_000.0, leverage=1.0, tax=True, d: dict | None = None, record=False, coin="BTC", vol_k=None) -> dict:
     """7 parts of capital/7, part k re-deciding calm/wild every week on weekday k (removes the luck of one weekday: single-day results ranged
     Rs1.19L-2.22L, the 7 parts together Rs1.57L, worst fall -36%)."""
     d = d or load()
@@ -136,7 +145,7 @@ def backtest_staggered(start="2022-03-01", end=None, capital=100_000.0, leverage
     end = pd.Timestamp(end or d["close"].index[-1])
     runs = []
     for k in range(PARTS):
-        r = backtest(pd.Timestamp(start) - pd.Timedelta(days=k), end - pd.Timedelta(days=k), capital / PARTS, leverage=leverage, tax=tax, d=_shift(d, k), record=record, coin=coin)
+        r = backtest(pd.Timestamp(start) - pd.Timedelta(days=k), end - pd.Timedelta(days=k), capital / PARTS, leverage=leverage, tax=tax, d=_shift(d, k), record=record, coin=coin, vol_k=vol_k)
         r["curve"].index = r["curve"].index + pd.Timedelta(days=k)
         if len(r["trades"]):
             r["trades"]["entry_day"] += pd.Timedelta(days=k); r["trades"]["exit_day"] += pd.Timedelta(days=k); r["trades"]["part"] = k
@@ -172,10 +181,10 @@ def backtest_staggered(start="2022-03-01", end=None, capital=100_000.0, leverage
     return out
 
 
-def backtest_basket(start="2022-03-01", end=None, capital=100_000.0, leverage=1.0, tax=True, d: dict | None = None, record=False, coins=TRADED) -> dict:
+def backtest_basket(start="2022-03-01", end=None, capital=100_000.0, leverage=1.0, tax=True, d: dict | None = None, record=False, coins=TRADED, vol_k=None) -> dict:
     """Equal money in each coin, each run as 7 weekday parts."""
     d = d or load()
-    runs = {c: backtest_staggered(start, end, capital / len(coins), leverage=leverage, tax=tax, d=d, record=record, coin=c) for c in coins}
+    runs = {c: backtest_staggered(start, end, capital / len(coins), leverage=leverage, tax=tax, d=d, record=record, coin=c, vol_k=vol_k) for c in coins}
     curve = pd.concat([r["curve"] for r in runs.values()], axis=1).dropna().sum(axis=1)
     yrs = max((curve.index[-1] - curve.index[0]).days / 365.25, 1 / 365.25)
     yr = curve.groupby(curve.index.year).last(); yr = yr / yr.shift(1).fillna(capital) - 1

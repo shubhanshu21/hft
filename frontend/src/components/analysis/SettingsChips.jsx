@@ -7,6 +7,11 @@ export default function SettingsChips({ params }) {
     ["Commodities", `${params.symbols?.length}: ${(params.symbols ?? []).join(", ")}`],
     ["Rebalance", "monthly"],
     ["Costs", "MCX fees + half-spread"],
+  ] : params.market === "crypto" && params.strategy === "sr_sweep" ? [   // 1-minute scalper
+    ["Start money", `₹${Number(params.capital).toLocaleString("en-IN")}`],
+    ["Coins", `${params.symbols?.length}: ${(params.symbols ?? []).join(", ")}`],
+    ["Rules", "1-min sweep & reclaim + confirmation, target 0.5R"],
+    ["Tax", params.tax === "none" ? "off (before tax)" : params.tax === "business" ? "business income: 31.2% of yearly net profit" : "strict: 31.2% of each winning trade"],
   ] : params.market === "crypto" ? [                                // calm_coins: 5 coins' futures while the market is calm
     ["Start money", `₹${Number(params.capital).toLocaleString("en-IN")}`],
     ["Leverage", `${params.leverage}x`],
