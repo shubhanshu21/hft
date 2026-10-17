@@ -25,6 +25,7 @@ from markets.crypto.strategies.tf_daily.calm_coins import strategy as CALM
 DATA = ARCHIVE_ROOT / "crypto" / "1m"
 COINS = ("BTC", "ETH", "SOL")
 ENTRY_BARS, EXIT_BARS, EMA_LEN = 20, 10, 100
+STOP_LOSS_PCT = 0.08        # 8% disaster stop-loss (protects against flash crashes without choking trend breathing room)
 FEE = 0.0005 * 1.18
 SLIP = {"BTC": 0.00005, "ETH": 0.00005, "SOL": 0.0001, "DOGE": 0.00015}
 
@@ -73,12 +74,22 @@ def trades(coin: str, start: str, end: str) -> list[dict]:
         k = i + 1
         e = ob[k]
         px = None
+        stop_px = e * (1 - d * STOP_LOSS_PCT)
+        why = f"Trailing channel exit after {EXIT_BARS} bars ({'long' if d == 1 else 'short'})"
         for j in range(k, min(n, k + 180)):  # hold up to 30 days
             if d == 1:
+                if lb[j] <= stop_px:
+                    px = stop_px
+                    why = f"Disaster stop-loss ({STOP_LOSS_PCT * 100:.0f}%) hit (long)"
+                    break
                 if lb[j] <= exit_lo[j]:
                     px = min(ob[j], exit_lo[j]) if j > k else exit_lo[j]
                     break
             else:
+                if hb[j] >= stop_px:
+                    px = stop_px
+                    why = f"Disaster stop-loss ({STOP_LOSS_PCT * 100:.0f}%) hit (short)"
+                    break
                 if hb[j] >= exit_hi[j]:
                     px = max(ob[j], exit_hi[j]) if j > k else exit_hi[j]
                     break
@@ -87,13 +98,14 @@ def trades(coin: str, start: str, end: str) -> list[dict]:
         gross = d * (px - e) / e
         net = gross - 2 * cost
         out.append({"coin": coin, "side": "long" if d == 1 else "short", "t0": int(tb[k]), "t1": int(tb[j]),
-                    "entry": e, "exit": px, "stop": exit_lo[k] if d == 1 else exit_hi[k],
-                    "target": e * (1 + 0.15 * d), "gross": gross, "net": net, "fees": 2 * cost, "won": net > 0})
+                    "entry": e, "exit": px, "stop": stop_px,
+                    "target": e * (1 + 0.15 * d), "gross": gross, "net": net, "fees": 2 * cost, "won": net > 0,
+                    "why": why})
         busy = j
     return out
 
 
-def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None = None, leverage: float = 1.5, tax="strict") -> dict:
+def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None = None, leverage: float = 1.0, tax="strict") -> dict:
     """Equal money per chosen coin; each trade uses that coin's share multiplied by leverage. Daily replay: chart shows daily candles, trade
     list shows 4-hour trend trades. tax: 'strict' (31.2% per win), 'business' (31.2% annual net), 'none'."""
     from core.backtester import metrics
@@ -133,7 +145,7 @@ def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None
                                        "pnl": round(pnl - tx if tax == "strict" else pnl, 2),
                                        "fees": round(pos_value * x["fees"], 2), "slip": 0, "days": round(hours / 24, 1),
                                        "entry": round(x["entry"], 6),
-                                       "why": f"Trailing channel exit after {hours:.0f}h ({x['side']})"})
+                                       "why": x.get("why", f"Trailing channel exit after {hours:.0f}h ({x['side']})")})
         closed.append({"net": pnl - tx if tax == "strict" else pnl, "fees": pos_value * x["fees"], "slip": 0.0,
                        "gross": pos_value * x["gross"], "days": round((x["t1"] - x["t0"]) / 1440, 1)})
         daily_strict[d1] = sum(book.values())
