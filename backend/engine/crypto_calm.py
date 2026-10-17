@@ -76,7 +76,7 @@ def value_if_sold(p: dict, price: float, usdtinr: float) -> dict:
     """What selling an open position at `price` books, in rupees: gross, fees (both sides + slippage), funding paid, 31.2% tax (S.TAX) on a gain."""
     st = json.loads(p.get("state") or "{}")
     q, e = float(p["qty"]), float(p["entry_price"])
-    gross = q * (price - e)
+    gross = q * (price - e) * (-1 if p.get("direction") == "short" else 1)     # trend_breakout also sells short
     fee = q * (e + price) * FEE; slip = q * (e + price) * SLIP; fund = float(st.get("funding_usdt", 0.0))
     before = (gross - fee - slip - fund) * usdtinr
     taxable = (gross - fee - slip) * usdtinr                         # funding is not deducted (as in the backtest: the cautious reading)
@@ -110,6 +110,45 @@ def business_value(st: dict, capital0: float, open_pretax: float, today) -> tupl
     return capital0 + sum(fy_net.values()) - tax, tax
 
 
+def account_states() -> dict:
+    """Both sleeves' tax records merged (calm_coins + trend_breakout share the CRYPTO_CALM account)."""
+    from engine.crypto_breakout import _state as bstate
+    a, b = _state(), bstate()
+    fy = dict(a.get("pretax_fy", {}))
+    for k, v in b.get("pretax_fy", {}).items():
+        fy[k] = fy.get(k, 0.0) + v
+    return {"pretax_fy": fy, "strict_tax": a.get("strict_tax", 0.0) + b.get("strict_tax", 0.0)}
+
+
+def sleeve_capitals() -> tuple[float, float]:
+    return float(os.environ.get("CRYPTO_CALM_CAPITAL", 100_000)), float(os.environ.get("CRYPTO_BREAKOUT_CAPITAL", 100_000))
+
+
+def init_account(db) -> None:
+    calm, brk = sleeve_capitals()
+    db.init_account(ACCOUNT, name="Crypto (calm_coins + trend_breakout, CoinDCX futures)", capital=calm + brk, leverage=1.0, risk_pct=0.0)
+
+
+def booked_total() -> float:
+    """Booked money of both sleeves (before tax)."""
+    from engine.crypto_breakout import _state as bstate
+    calm, brk = sleeve_capitals()
+    a, b = _state(), bstate()
+    pa = sum(sum(v) for v in a["parts"].values()) if isinstance(a.get("parts"), dict) else calm
+    pb = sum(b["slots"].values()) if isinstance(b.get("slots"), dict) else brk
+    return pa + pb
+
+
+def _other_booked() -> float:
+    from engine.crypto_breakout import _state as bstate
+    b = bstate()
+    return sum(b["slots"].values()) if isinstance(b.get("slots"), dict) else sleeve_capitals()[1]
+
+
+def _mine(db) -> list:
+    return [p for p in db.get_open_positions(ACCOUNT) if p.get("strategy") == NAME]
+
+
 def _set_state(db, position_id: str, state: dict) -> None:
     with db._get_conn() as conn:
         conn.execute("UPDATE positions SET state = ? WHERE position_id = ?", (json.dumps(state), position_id))
@@ -118,9 +157,9 @@ def _set_state(db, position_id: str, state: dict) -> None:
 def run(db, now: datetime, report: bool = True, send=None) -> dict:
     from services.utils import telegram
     send = send or telegram.send
-    capital0 = float(os.environ.get("CRYPTO_CALM_CAPITAL", 300_000))
+    capital0 = sleeve_capitals()[0]                                       # this sleeve's money (calm_coins); trend_breakout has its own
     lev = float(os.environ.get("CRYPTO_CALM_LEVERAGE", 1.0))
-    db.init_account(ACCOUNT, name="Crypto calm coins (CoinDCX futures)", capital=capital0, leverage=lev, risk_pct=0.0)
+    init_account(db)
     acc = db.get_account(ACCOUNT)
     st = _state()
     parts = st.get("parts") if isinstance(st.get("parts"), dict) else {c: [capital0 / len(S.TRADED) / S.PARTS] * S.PARTS for c in S.TRADED}
@@ -135,7 +174,7 @@ def run(db, now: datetime, report: bool = True, send=None) -> dict:
     fx = live["usdtinr"]
 
     through = pd.Timestamp(st.get("funding_through", "1970-01-01"))       # funding a long paid on completed days, added to each held part
-    for p in db.get_open_positions(ACCOUNT):
+    for p in _mine(db):
         ps = json.loads(p.get("state") or "{}")
         since = max(through, pd.Timestamp(ps["entry_day"]) - pd.Timedelta(days=1))
         days = d["close"].index[(d["close"].index > since) & (d["close"].index <= last)]
@@ -154,7 +193,7 @@ def run(db, now: datetime, report: bool = True, send=None) -> dict:
         lines.append("⚠️ no USDT/INR price: no decision today")
     else:
         held = {}
-        for p in db.get_open_positions(ACCOUNT):
+        for p in _mine(db):
             ps = json.loads(p.get("state") or "{}")
             if ps.get("part") == k:
                 held.setdefault(p["symbol"], []).append(p)
@@ -176,7 +215,7 @@ def run(db, now: datetime, report: bool = True, send=None) -> dict:
                     hold = (now - datetime.fromisoformat(p["entry_time"])).total_seconds() / 60
                     db.record_trade(p["position_id"], coin, "long", p["qty"], p["entry_price"], px, p["entry_time"], now_s, hold, "market_wild", c["gross"],
                                     {"brokerage": c["fees"] / 1.18, "gst": c["fees"] - c["fees"] / 1.18, "slippage": c["slippage"], "total": c["total"] - c["tax"]},
-                                    pre, sum(sum(v) for v in parts.values()), account_id=ACCOUNT, strategy=NAME)
+                                    pre, sum(sum(v) for v in parts.values()) + _other_booked(), account_id=ACCOUNT, strategy=NAME)
                     acted.append(f"• SOLD {coin} {p['qty']:g} @ {p['entry_price']:,.4g} → {px:,.4g} USDT: {'+' if pre >= 0 else ''}{_inr(pre)} "
                                  f"after fees and funding {_inr(c['funding'])}, before tax (strict-rule tax on it: {_inr(c['tax'])})")
                 did = "sell"
@@ -197,10 +236,11 @@ def run(db, now: datetime, report: bool = True, send=None) -> dict:
         st.setdefault("decided", {})[str(k)] = str(today.date())
     st["parts"] = parts
     booked = sum(sum(v) for v in parts.values())
-    db.update_capital(ACCOUNT, booked)
+    STATE.write_text(json.dumps(st, indent=1))
+    db.update_capital(ACCOUNT, booked_total())                           # both sleeves
     STATE.write_text(json.dumps(st, indent=1))
 
-    open_pos = db.get_open_positions(ACCOUNT)
+    open_pos = _mine(db)
     open_net, open_pre, per = 0.0, 0.0, {}
     for p in open_pos:
         px = live["price"].get(p["symbol"])
@@ -211,10 +251,10 @@ def run(db, now: datetime, report: bool = True, send=None) -> dict:
     db.record_snapshot(ACCOUNT)
     value = booked + open_pre                                             # before tax
     strict = booked - st.get("strict_tax", 0.0) + open_net              # strict crypto rule: 31.2% of every winning trade
-    biz, _ = business_value(st, float(acc["initial_capital"]), open_pre, now.date())
+    biz, _ = business_value(st, capital0, open_pre, now.date())        # this sleeve only
     msg = (f"₿ <b>CRYPTO CALM COINS</b> ({now:%d %b %H:%M} IST) · {why}\n"
            + ("\n".join(lines) + "\n\n" if lines else "")
-           + f"Account value if all sold now, after fees and funding: <b>{_inr(value)}</b> before tax (started {_inr(float(acc['initial_capital']))}; booked {_inr(booked)})\n"
+           + f"Account value if all sold now, after fees and funding: <b>{_inr(value)}</b> before tax (calm_coins sleeve, started {_inr(capital0)}; booked {_inr(booked)})\n"
            + f"After tax: <b>{_inr(strict)}</b> strict crypto rule (31.2% of every winning trade) · <b>{_inr(biz)}</b> business-income rule (31.2% of the year's net)\n"
            + f"{len(open_pos)} of {len(S.TRADED) * S.PARTS} parts hold a coin" + (f" · USDT/INR {fx:.2f}" if fx else "") + "\n" + "\n".join(rows))
     if report or did:
@@ -231,7 +271,7 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
     db = TradingDB()
     if a.status:
-        print(db.get_account(ACCOUNT), *db.get_open_positions(ACCOUNT), _state(), sep="\n")
+        print(db.get_account(ACCOUNT), *_mine(db), _state(), sep="\n")
         return 0
     out = run(db, datetime.now(IST), report=True, send=(print if a.no_telegram else None))
     print(out["message"])

@@ -27,7 +27,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
   const auto = !!strategy?.auto_universe;            // equity/breakout_pair: picks from the day's 200 most-traded NSE stocks itself, fixed 5 + 3 holdings
   const [all, setAll] = useState(true);
   const [chosen, setChosen] = useState([]);
-  const [f, setF] = useState({ ...yearRange(THIS_YEAR), capital: 100000, slippage_bp: 5, risk_pct: 2, max_positions: 3, leverage: 1, label: "", exposure: 1.5, tax: "strict" });
+  const [f, setF] = useState({ ...yearRange(THIS_YEAR), capital: 100000, slippage_bp: 5, risk_pct: 2, max_positions: 3, leverage: 1, label: "", exposure: 1.5, tax: "business" });
   const [year, setYear] = useState(String(THIS_YEAR));       // "custom" once the dates are edited by hand
 
   useEffect(() => { const o = strategies.filter((s) => s.market === market); setName(o[0]?.name ?? "");
@@ -125,8 +125,8 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
               {+f.exposure > 1.5 && <span className="warn" role="alert">High leverage: at 1.5x the worst fall was −60% instead of −36%, for almost no extra profit after tax.</span>}</div>}
             <div className="field"><label htmlFor="tax">Tax rule</label>
               <select id="tax" value={f.tax} onChange={(e) => setF((x) => ({ ...x, tax: e.target.value }))}>
-                <option value="strict">Strict crypto rule: 31.2% of every winning trade (safe)</option>
-                <option value="business">Business income: 31.2% of each year's net profit</option>
+                <option value="business">Business income: 31.2% of each year's net profit (main view)</option>
+                <option value="strict">Strict crypto rule: 31.2% of every winning trade (worst case)</option>
                 <option value="none">No tax (before tax)</option>
               </select>
               <span className="hint">India has not decided how crypto futures are taxed. Strict: losses never reduce the tax (the safe reading). Business income:

@@ -12,7 +12,7 @@ import { useTheme } from "../hooks/useTheme.js";
 import { inr, signed, tone } from "../lib/format.js";
 
 const STRATEGY_LABEL = { nr7_breakout: "Quiet-day breakout", d55_breakout: "55-day breakout", momentum_portfolio: "Momentum (15 stocks)",
-  earnings_drift: "Earnings drift", trend_ema_cross: "trend_ema_cross", rsi_range: "Currency rsi_range", trend_carry: "MCX trend + carry", calm_coins: "Crypto calm (5 coins)", calm_btc: "Crypto calm BTC" };
+  earnings_drift: "Earnings drift", trend_ema_cross: "trend_ema_cross", rsi_range: "Currency rsi_range", trend_carry: "MCX trend + carry", calm_coins: "Crypto calm (5 coins)", trend_breakout: "Crypto 4h trend breakout", calm_btc: "Crypto calm BTC" };
 const when = (s) => (s ? String(s).replace("T", " ").slice(0, 16) : "-");
 
 /** The paper-trading account as it is now (read-only, refreshed every minute). No real orders are ever placed. */
@@ -71,14 +71,14 @@ export default function PaperPage() {
       <div className="page-head">
         <div>
           <h1>Paper trading</h1>
-          <div className="sub">Practice account: real prices, no real money. Open trades use the live Upstox price{live ? "" : " when it is available (otherwise the last close)"}.
+          <div className="sub">Practice account: real prices, no real money. Open trades use the live {d.account_id === "CRYPTO_CALM" ? "CoinDCX futures" : "Upstox"} price{live ? "" : " when it is available (otherwise the last close)"}.
             Updated {loadedAt ? loadedAt.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }) : "-"}, refreshes every minute.</div>
         </div>
         <div className="big">
           <div className="eq">{inr(value)}</div>
           <div className="chg"><span className={tone(value - acc.initial_capital)}>{signed(value - acc.initial_capital)}</span> since start ({inr(acc.initial_capital)})</div>
           {acc.business_value != null && (
-            <div className="note">If all sold now: {inr(acc.pretax_value)} before tax · {inr(acc.strict_value)} after tax (strict crypto rule) · {inr(acc.business_value)} after tax (business income)</div>
+            <div className="note">If all sold now: {inr(acc.pretax_value)} before tax · {inr(acc.business_value)} after tax as business income (main view) · {inr(acc.strict_value)} under the strict crypto rule (worst case)</div>
           )}
         </div>
       </div>

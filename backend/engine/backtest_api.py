@@ -128,7 +128,7 @@ def validate(body: dict) -> dict:
         if any(s not in row["symbols"] for s in chosen):
             raise ValueError("Coins must come from the list")
         p = {"symbols": chosen if (row.get("scalp") or name == "trend_breakout") else list(row["symbols"]), "slippage_bp": 0.0, "pyramid_pct": None,
-             "tax": {True: "strict", False: "none"}.get(body.get("tax", "strict"), body.get("tax"))}
+             "tax": {True: "strict", False: "none"}.get(body.get("tax", "business"), body.get("tax"))}
         if p["tax"] not in ("strict", "business", "none"):
             raise ValueError("Tax must be strict, business or none")
         lo, hi = LIMITS["capital"]; p["capital"] = float(body.get("capital", 100_000))
@@ -290,7 +290,7 @@ def _value_position(p: dict, live: dict) -> None:
 
 PAPER_ACCOUNTS = [("EQUITY_SWING", "Equity swing"), ("DRYRUN_ACCOUNT", "Currency"), ("MCX_TREND_CARRY", "MCX trend + carry"), ("CRYPTO_CALM", "Crypto")]
 ACCOUNT_STRATEGIES = {"EQUITY_SWING": "breakout · momentum · earnings drift · trend_ema_cross", "DRYRUN_ACCOUNT": "rsi_range",
-                      "MCX_TREND_CARRY": "trend_carry", "CRYPTO_CALM": "calm_coins (BTC ETH SOL DOGE TRX)"}
+                      "MCX_TREND_CARRY": "trend_carry", "CRYPTO_CALM": "calm_coins + trend_breakout"}
 
 
 MARKET_HOURS = {"EQUITY_SWING": ("09:15", "15:30", "NSE"), "DRYRUN_ACCOUNT": ("09:00", "17:00", "NSE currency"), "MCX_TREND_CARRY": ("09:00", None, "MCX")}
@@ -363,7 +363,8 @@ def _value_crypto(p: dict, live: dict) -> None:
     st = json.loads(p.get("state") or "{}")
     q = live.get("crypto") or live.setdefault("crypto", live_prices())
     price, fx = q.get("price", {}).get(p["symbol"]), q.get("usdtinr")
-    p.update(market="crypto", lot_size=1, units=p["qty"], size_text=f"{p['qty']:g} {p['symbol']} · part {st.get('part', 0) + 1} of 7", price_now=price,
+    size = f"part {st.get('part', 0) + 1} of 7" if p.get("strategy") == "calm_coins" else f"{p['direction']} · stop {st.get('stop', 0):,.4g}"
+    p.update(market="crypto", lot_size=1, units=p["qty"], size_text=f"{p['qty']:g} {p['symbol']} · {size}", price_now=price,
              price_source="live" if price else None, price_time=q.get("at"), bid=None, ask=None, checked_at=q.get("at"),
              margin_used=float(st.get("margin_inr") or 0.0), risk_to_stop=None)
     p.pop("state", None); p.pop("instrument_key", None)
@@ -412,9 +413,10 @@ def paper_summary(account: str = "DRYRUN_ACCOUNT") -> dict:
         acc["margin_used"] = round(sum(p["margin_used"] for p in pos), 2)
         acc["free_cash"] = round(acc["current_capital"] - acc["margin_used"], 2)
         if account == "CRYPTO_CALM":                                   # the other tax reading, next to the strict one
-            from engine.crypto_calm import _state, business_value
-            acc["business_value"] = round(business_value(_state(), acc["initial_capital"], sum(p.get("pretax_if_sold") or 0 for p in pos), datetime.now(IST).date())[0], 2)
-            acc["strict_value"] = round(acc["current_capital"] - _state().get("strict_tax", 0.0) + sum(p.get("net_if_sold") or 0 for p in pos), 2)
+            from engine.crypto_calm import account_states, business_value
+            stt = account_states()                                         # both sleeves (calm_coins + trend_breakout)
+            acc["business_value"] = round(business_value(stt, acc["initial_capital"], sum(p.get("pretax_if_sold") or 0 for p in pos), datetime.now(IST).date())[0], 2)
+            acc["strict_value"] = round(acc["current_capital"] - stt.get("strict_tax", 0.0) + sum(p.get("net_if_sold") or 0 for p in pos), 2)
             acc["pretax_value"] = round(acc["current_capital"] + sum(p.get("pretax_if_sold") or 0 for p in pos), 2)
     return {"available": True, "account_id": account, "accounts": tabs, "account": acc, "positions": pos, "trades": trades, "equity": snaps,
             "stats": {"closed": len(trades), "wins": sum(1 for t in trades if (t["net_pnl"] or 0) > 0), "net": round(sum(t["net_pnl"] or 0 for t in trades)),

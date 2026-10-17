@@ -7,7 +7,7 @@
 > | `EQUITY_SWING` | equity swing: `breakout_pair` (quiet-day + 55-day breakouts), `momentum_portfolio`, `earnings_drift`, `trend_ema_cross` | Rs4L (Rs1L each) | `engine/equity_swing.py`, `hft-equity-swing.timer` (Mon-Fri 09:08-15:31 IST) |
 > | `DRYRUN_ACCOUNT` | currency `rsi_range` (USDINR EURINR GBPINR) | Rs1L | `hft-dryrun.service` |
 > | `MCX_TREND_CARRY` | commodity `trend_carry` (monthly MCX trend + carry) | Rs5L | `engine/mcx_trend_carry.py`, `hft-mcx-trend-carry.timer` |
-> | `CRYPTO_CALM` | crypto `calm_coins`: CoinDCX futures on BTC ETH SOL DOGE TRX, long 1x only while the crypto market is calm (12-coin 20-day volatility below 2.43%/day), else cash; each coin's money in 7 weekday parts | Rs3L (since 2026-10-17; Rs1L before) | `engine/crypto_calm.py`, `hft-crypto-calm.timer` (every day 05:45 IST) |
+> | `CRYPTO_CALM` | crypto, two sleeves: `calm_coins` (Rs1L: BTC ETH SOL DOGE TRX futures long 1x while the 12-coin market is calm, 7 weekday parts; at Rs1L the BTC parts are below CoinDCX's minimum order and stay in cash) + `trend_breakout` (Rs1L: 4-hour breakout on BTC ETH SOL, long and short, 10-candle exit, 8% stop) | Rs2L (since 2026-10-17) | `engine/crypto_calm.py` (`hft-crypto-calm.timer`, daily 05:45 IST) + `engine/crypto_breakout.py` (`hft-crypto-breakout.timer`, every 4 hours at :02 UTC) |
 >
 > Crypto results (Mar 2022 - Oct 2026, after CoinDCX fees, real funding and India's 31.2% tax (30% + 4% cess) on each winning trade with losses not set off, with CoinDCX's real minimum order sizes): Rs3L account (every order clears CoinDCX's minimums): 1.80x, worst fall -33%; at Rs1L a BTC part is below the smallest BTC order, so BTC's fifth stays in cash (1.73x). 91 AI/ML versions, 624 per-coin rules and funding collection were tested and did not beat it. India's tax on crypto futures is unsettled: ask a CA before real money.
 > Every strategy and its status: `backend/markets/README.md`. Sections further down that describe intraday scalpers, MCX scalping or `cli.py backtest` are history.
@@ -413,6 +413,7 @@ All unit files are checked into **`backend/deploy/systemd/`** — not hidden awa
 | `hft-watchdog.service` + `.timer` | oneshot + timer | `engine/watchdog.py`: restarts `hft-dryrun.service` when it is running but has stopped scanning (missed heartbeat in `var/db/heartbeat.json`), and alerts on Telegram. Never touches a service that was stopped on purpose; at most one restart per 15 min; `WATCHDOG_AUTORESTART=false` = alert only | Every 2 min |
 | `hft-equity-swing.service` + `.timer` | oneshot + timer | `engine/equity_swing.py`: the EQUITY_SWING paper account (plan before the open, then trades and marks during the day) | Mon-Fri 09:08-15:31 IST |
 | `hft-mcx-trend-carry.service` + `.timer` | oneshot + timer | `engine/mcx_trend_carry.py`: MCX trend + carry paper account (month-end rebalance, contract rolls, daily mark) | Mon-Fri 09:10 and 23:40 IST |
+| `hft-crypto-breakout.service` + `.timer` | oneshot + timer | `engine/crypto_breakout.py`: the trend_breakout sleeve of the CRYPTO_CALM account; processes each finished 4-hour candle (Binance futures klines), enters at CoinDCX's live price, exits at the 10-candle channel / 8% stop | Every 4 hours, 2 minutes after the candle (00/04/08/12/16/20 UTC) |
 | `hft-crypto-calm.service` + `.timer` | oneshot + timer | `engine/crypto_calm.py`: tops up the crypto daily candles and funding (`markets/crypto/data.py`, CoinDCX + Binance public APIs), then today's weekday part of each coin re-decides calm (hold) / wild (cash) at CoinDCX's live futures price; Telegram summary | Every day 05:45 IST |
 | `hft-db-backup.service` + `.timer` | oneshot + timer | `engine.backup_db --hourly`: snapshot of the paper-trading DB (keeps 48; daily snapshots keep 14). Restore with `python3 cli.py restore-db [FILE|latest]` (stop the daemon first); `reset-db` saves the old DB first | Hourly |
 
@@ -433,7 +434,7 @@ loginctl enable-linger "$USER"
 # 3. Load the units and start everything
 systemctl --user daemon-reload
 systemctl --user enable --now hft-dryrun.service
-systemctl --user enable --now hft-daily-data-topup.timer hft-watchdog.timer hft-db-backup.timer hft-equity-swing.timer hft-mcx-trend-carry.timer hft-crypto-calm.timer
+systemctl --user enable --now hft-daily-data-topup.timer hft-watchdog.timer hft-db-backup.timer hft-equity-swing.timer hft-mcx-trend-carry.timer hft-crypto-calm.timer hft-crypto-breakout.timer
 
 # 4. Confirm
 systemctl --user status hft-dryrun.service --no-pager
