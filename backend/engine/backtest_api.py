@@ -71,15 +71,15 @@ def catalog() -> list[dict]:
     crypto = {"market": "crypto", "name": "calm_coins", "timeframe": "1 days", "supported": True, "symbols": list(cb.TRADED), "crypto": True,
               "summary": (cb.__doc__ or "").strip().split("\n")[0], "intraday": False, "default_risk_pct": None,
               "exposure": 1.0, "exposure_min": 1.0, "exposure_max": 3.0}
-    from markets.crypto.strategies.tf_1min.sr_sweep import strategy as srs
-    sweep = {"market": "crypto", "name": "sr_sweep", "timeframe": "1 minutes", "supported": True, "symbols": srs.available(), "crypto": True, "scalp": True,
-             "default_symbols": ["BTC", "ETH", "SOL"], "summary": (srs.__doc__ or "").strip().split("\n")[0], "intraday": True, "default_risk_pct": None,
-             "exposure": 1.0, "exposure_min": 1.0, "exposure_max": 1.0}
+    from markets.crypto.strategies.tf_4hour.trend_breakout import strategy as tbo
+    breakout = {"market": "crypto", "name": "trend_breakout", "timeframe": "4 hours", "supported": True, "symbols": tbo.available(), "crypto": True, "scalp": True,
+                "default_symbols": ["BTC", "ETH", "SOL", "DOGE"], "summary": (tbo.__doc__ or "").strip().split("\n")[0], "intraday": False, "default_risk_pct": None,
+                "exposure": 1.0, "exposure_min": 1.0, "exposure_max": 1.0}
     return [{"market": m, "name": n, "timeframe": f"{s.timeframe[1]} {s.timeframe[0]}", "supported": tuple(s.timeframe) == ("days", 1), "symbols": list(getattr(s, "universe", None) or universe(m)),
              "summary": (s.__doc__ or "").strip().split("\n")[0], "intraday": s.intraday,
              "default_risk_pct": getattr(s, "default_risk_pct", None),
              "default_symbols": [x for x in (getattr(s, "universe", None) or universe(m)) if s.trades(x)]}     # what its paper trading uses
-            for (m, n), s in sorted(registry.discover().items())] + [bp, mom, earn, mcx, crypto, sweep]
+            for (m, n), s in sorted(registry.discover().items())] + [bp, mom, earn, mcx, crypto, breakout]
 
 
 def prune() -> None:
@@ -429,10 +429,10 @@ def work(run: dict) -> None:
         p = run["params"]
         def progress(i, n):
             run["progress"] = round(i / n * 100)
-        if run["market"] == "crypto" and run["strategy"] == "sr_sweep":   # 1-minute scalper, research only
-            from markets.crypto.strategies.tf_1min.sr_sweep import strategy as srs
+        if run["market"] == "crypto" and run["strategy"] == "trend_breakout":
+            from markets.crypto.strategies.tf_4hour.trend_breakout import strategy as tbo
             try:
-                run["result"] = srs.web_backtest(p["capital"], p["start"], p["end"], symbols=p["symbols"], tax=p["tax"])
+                run["result"] = tbo.web_backtest(p["capital"], p["start"], p["end"], symbols=p["symbols"], tax=p["tax"])
             except ValueError as e:
                 raise BacktestError(str(e))
         elif run["market"] == "crypto":                              # calm_coins: 5 coins x 7 weekday parts, its own backtest

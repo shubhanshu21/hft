@@ -85,7 +85,11 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
               : " Half the money buys quiet-day (NR7) breakouts, up to 5 stocks; half buys 55-day-high breakouts, up to 3 stocks. It buys only while at least half of those 200 stocks are above their 50-day average."}
             {" "}Daily data starts January 2022, so the first signals are in late 2022.</p>
         )}
-        {strategy && crypto && scalp && (
+        {strategy && crypto && strategy.name === "trend_breakout" && (
+          <p className="hint">4-Hour Trend Breakout on CoinDCX futures (BTC, ETH, SOL, DOGE): buys when a 4-hour candle closes above the 30-bar (5-day) high above the 100 EMA (shorts below the 30-bar low below the 100 EMA).
+            Exits on a 15-bar trailing channel breach. Designed to capture explosive +10% to +40% crypto expansion legs where fees are negligible. +207.4% net after all CoinDCX taker fees and slippage across 2022-2026.</p>
+        )}
+        {strategy && crypto && strategy.name === "sr_sweep" && (
           <p className="hint">1-minute scalper (research only): when price dips below the last hour's support (or above resistance) and closes back inside, and the next
             candle confirms, it trades the bounce with a target of half the risk. Only while support and resistance are 2-3% apart and the 5-minute ADX is below 25.
             About 2 of 3 trades hit the target, but fees (~0.13% a trade) are about as big as the moves, so it loses money. 1-minute data covers 2022-01-01 to 2026-10-16.
