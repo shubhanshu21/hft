@@ -145,11 +145,14 @@ def _btc_gmm():
 
 def chop_probability(hb: np.ndarray, lb: np.ndarray, cb: np.ndarray) -> np.ndarray:
     """P(chop regime) for every candle of the given BTC 4-hour arrays (used by the backtest AND by paper trading on live candles)."""
+    if len(cb) < 60:
+        return np.zeros(len(cb))
     m = _btc_gmm()
     if m is None:
         return np.zeros(len(cb))
     scaler, gmm, chop = m
-    return gmm.predict_proba(scaler.transform(_chop_features(hb, lb, cb)))[:, chop]
+    feat = np.nan_to_num(_chop_features(hb, lb, cb), nan=0.0, posinf=0.0, neginf=0.0)
+    return gmm.predict_proba(scaler.transform(feat))[:, chop]
 
 
 @lru_cache(maxsize=1)
