@@ -77,7 +77,8 @@ def value_if_sold(p: dict, price: float, usdtinr: float) -> dict:
     gross = q * (price - e)
     fee = q * (e + price) * FEE; slip = q * (e + price) * SLIP; fund = float(st.get("funding_usdt", 0.0))
     before = (gross - fee - slip - fund) * usdtinr
-    tax = S.TAX * before if before > 0 else 0.0
+    taxable = (gross - fee - slip) * usdtinr                         # funding is not deducted (as in the backtest: the cautious reading)
+    tax = S.TAX * taxable if taxable > 0 else 0.0
     return {"gross": gross * usdtinr, "fees": fee * usdtinr, "slippage": slip * usdtinr, "funding": fund * usdtinr, "tax": tax, "net": before - tax,
             "total": (fee + slip + fund) * usdtinr + tax}
 
