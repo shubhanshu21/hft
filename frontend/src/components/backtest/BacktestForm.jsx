@@ -86,9 +86,9 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
             {" "}Daily data starts January 2022, so the first signals are in late 2022.</p>
         )}
         {strategy && crypto && strategy.name === "trend_breakout" && (
-          <p className="hint">4-hour trend breakout on CoinDCX futures (BTC, ETH, SOL): buys when a 4-hour candle closes above the 20-candle high and above the 100 EMA
-            (shorts the mirror), exits at the 10-candle low/high or an 8% stop. Fees, slippage and real funding included. Rs1L, BTC+ETH+SOL, 2022-26: Rs2.01L before tax,
-            Rs1.65L as business income, only Rs0.30L under the strict crypto tax (about 180 trades a year). Settings were tuned on 2026, so 2026 results flatter it.</p>
+          <p className="hint">4-hour trend breakout on CoinDCX futures (BTC, ETH, SOL): buys when a 4-hour candle closes at least 0.3% above the 30-candle high and above
+            the 100 EMA (shorts the mirror), exits at the 12-candle low/high or an 8% stop. Fees, slippage and real funding included. Rs1L, BTC+ETH+SOL, 2022-26: Rs2.28L
+            before tax, Rs1.82L as business income, Rs0.41L under the strict crypto tax (about 140 trades a year).</p>
         )}
         {strategy && crypto && strategy.name === "calm_coins" && (
           <p className="hint">Holds futures on BTC, ETH, SOL, DOGE and TRX (CoinDCX, priced in USDT, equal money each) only while the whole crypto market is calm: the 20-day volatility of 12 big coins

@@ -6,8 +6,8 @@
 Run by hft-crypto-breakout.timer 2 minutes after every 4-hour candle closes (00/04/08/12/16/20 UTC = 05:32, 09:32 ... IST). No real orders.
 The account (CRYPTO_CALM, Rs2L since 2026-10-17) holds two sleeves of money: calm_coins (engine/crypto_calm.py, CRYPTO_CALM_CAPITAL,
 default Rs1L) and this one (CRYPTO_BREAKOUT_CAPITAL, default Rs1L), split equally over BTC, ETH and SOL, each coin's share compounding.
-Rules = markets/crypto/strategies/tf_4hour/trend_breakout (same constants): on a finished 4-hour candle, close above the previous 20
-candles' high and above the 100 EMA -> buy at the live CoinDCX price (shorts mirrored); exit when a candle reaches the previous 10
+Rules = markets/crypto/strategies/tf_4hour/trend_breakout (same constants): on a finished 4-hour candle, close above the previous ENTRY_BARS
+candles' high (by BREAKOUT_BUFFER) and above the 100 EMA -> buy at the live CoinDCX price (shorts mirrored); exit when a candle reaches the previous 10
 candles' low (high for shorts) or the 8% stop -- treated as a resting stop order: filled at that level, or at the candle's open if it
 opened past it -- or after 30 days. Candles: Binance USDT-M futures 4-hour klines (CoinDCX's futures follow Binance); entries priced at
 CoinDCX's live futures price. Costs: CoinDCX taker 0.059% + slippage per side, real daily funding (longs pay, shorts receive). Profit is
@@ -124,7 +124,8 @@ def run(db, now: datetime, send=None) -> dict:
                 if px is not None:
                     _close(db, p, float(px), why, now, st, fx, lines); closed_now = True
             if not pos and not closed_now and idx == k.index[-1]:                   # 2) a signal on the newest finished candle -> enter now
-                d = 1 if (b.c > b.hi and b.c > b.ema) else (-1 if (b.c < b.lo and b.c < b.ema) else 0)
+                buf = getattr(TB, "BREAKOUT_BUFFER", 0.0)                           # same 0.3% buffer as the backtest
+                d = 1 if (b.c > b.hi * (1 + buf) and b.c > b.ema) else (-1 if (b.c < b.lo * (1 - buf) and b.c < b.ema) else 0)
                 px = live["price"].get(coin)
                 if d and px:
                     q = CALM.order_qty(coin, st["slots"][coin], px, fx)
@@ -136,7 +137,7 @@ def run(db, now: datetime, send=None) -> dict:
                     db.open_position(f"POS_CRYPTOBRK_{now.strftime('%Y%m%d_%H%M%S')}_{coin}", coin, "long" if d == 1 else "short", q, px, stop, 0.0, 0.0,
                                      account_id=ACCOUNT, instrument_key=CC.pair(coin), strategy=NAME, state=json.dumps(ps))
                     lines.append(f"• {'BOUGHT' if d == 1 else 'SHORTED'} {coin} {q:g} @ {px:,.4g} USDT = {CC._inr(q * px * fx)} "
-                                 f"(4h close {b.c:,.4g} {'above the 20-candle high' if d == 1 else 'below the 20-candle low'}; stop {stop:,.4g})")
+                                 f"(4h close {b.c:,.4g} {f'above the {TB.ENTRY_BARS}-candle high' if d == 1 else f'below the {TB.ENTRY_BARS}-candle low'}; stop {stop:,.4g})")
         st["last_bar"][coin] = int(k.t.iloc[-1])
     STATE.write_text(json.dumps(st, indent=1))
     db.update_capital(ACCOUNT, CC.booked_total())
