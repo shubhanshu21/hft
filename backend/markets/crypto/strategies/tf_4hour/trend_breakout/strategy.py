@@ -109,53 +109,56 @@ def _calc_atr(hb: np.ndarray, lb: np.ndarray, cb: np.ndarray, length: int = 14) 
     return pd.Series(tr).rolling(length).mean().bfill().to_numpy()
 
 
+def _chop_features(hb: np.ndarray, lb: np.ndarray, cb: np.ndarray) -> np.ndarray:
+    """Per 4-hour candle, from that candle and earlier ones only: Parkinson volatility (14), Kaufman efficiency ratio (14), ATR14/ATR60."""
+    parkinson = np.sqrt((np.log(hb / lb) ** 2) / (4 * np.log(2)))
+    vol_roll = pd.Series(parkinson).rolling(14).mean().bfill().to_numpy()
+    change_14 = abs(cb - np.roll(cb, 14))
+    path_14 = pd.Series(abs(cb - np.roll(cb, 1))).rolling(14).sum().bfill().to_numpy()
+    er_14 = change_14 / np.maximum(path_14, 1e-9)
+    squeeze = _calc_atr(hb, lb, cb, 14) / np.maximum(_calc_atr(hb, lb, cb, 60), 1e-9)
+    return np.column_stack([vol_roll, er_14, squeeze])
+
+
 @lru_cache(maxsize=1)
-def _btc_chop_probabilities() -> dict[int, float]:
-    """Unsupervised Machine Learning: Fits a 2-State Gaussian Mixture Model (GMM)
-    on Bitcoin's Parkinson Realized Volatility, Kaufman Efficiency Ratio, and Volatility Squeeze.
-    Returns mapping: bar_timestamp_minute -> P(Chop Regime).
-    Trained strictly on historical data prior to 2025 to prevent look-ahead bias."""
+def _btc_gmm():
+    """Unsupervised 2-state Gaussian Mixture Model on BTC's 4-hour features, fitted ONCE on candles before 2025-01-01 (never refitted).
+    Returns (scaler, model, chop_cluster) or None."""
     try:
         from sklearn.mixture import GaussianMixture
         from sklearn.preprocessing import StandardScaler
     except ImportError:
-        return {}
-
+        return None
     tb, ob, hb, lb, cb, _ = _load_4h("BTC")
     if len(cb) < 150:
+        return None
+    X = _chop_features(hb, lb, cb)
+    train = tb < int(pd.Timestamp("2025-01-01").timestamp() // 60)
+    if np.sum(train) < 200:
+        train = np.ones(len(tb), dtype=bool)
+    scaler = StandardScaler().fit(X[train])
+    gmm = GaussianMixture(n_components=2, covariance_type="full", random_state=42).fit(scaler.transform(X[train]))
+    lab = gmm.predict(scaler.transform(X[train]))
+    chop = int(np.argmin([np.mean(X[train][lab == k, 1]) for k in range(2)]))      # the cluster with the lower efficiency ratio
+    return scaler, gmm, chop
+
+
+def chop_probability(hb: np.ndarray, lb: np.ndarray, cb: np.ndarray) -> np.ndarray:
+    """P(chop regime) for every candle of the given BTC 4-hour arrays (used by the backtest AND by paper trading on live candles)."""
+    m = _btc_gmm()
+    if m is None:
+        return np.zeros(len(cb))
+    scaler, gmm, chop = m
+    return gmm.predict_proba(scaler.transform(_chop_features(hb, lb, cb)))[:, chop]
+
+
+@lru_cache(maxsize=1)
+def _btc_chop_probabilities() -> dict[int, float]:
+    """bar_timestamp_minute -> P(chop) over the stored BTC 4-hour history (backtest)."""
+    tb, ob, hb, lb, cb, _ = _load_4h("BTC")
+    if _btc_gmm() is None:
         return {}
-
-    parkinson = np.sqrt((np.log(hb / lb) ** 2) / (4 * np.log(2)))
-    vol_roll = pd.Series(parkinson).rolling(14).mean().bfill().to_numpy()
-
-    change_14 = abs(cb - np.roll(cb, 14))
-    path_14 = pd.Series(abs(cb - np.roll(cb, 1))).rolling(14).sum().bfill().to_numpy()
-    er_14 = change_14 / np.maximum(path_14, 1e-9)
-
-    atr14 = _calc_atr(hb, lb, cb, 14)
-    atr60 = _calc_atr(hb, lb, cb, 60)
-    squeeze = atr14 / np.maximum(atr60, 1e-9)
-
-    X_feat = np.column_stack([vol_roll, er_14, squeeze])
-
-    train_cutoff = int(pd.Timestamp("2025-01-01").timestamp() // 60)
-    train_mask = tb < train_cutoff
-    if np.sum(train_mask) < 200:
-        train_mask = np.ones(len(tb), dtype=bool)
-
-    scaler = StandardScaler()
-    X_train_scaled = scaler.fit_transform(X_feat[train_mask])
-
-    gmm = GaussianMixture(n_components=2, covariance_type="full", random_state=42)
-    gmm.fit(X_train_scaled)
-
-    # The cluster with lower efficiency ratio is the Chop Regime
-    er_means = [np.mean(X_feat[train_mask][gmm.predict(X_train_scaled) == k, 1]) for k in range(2)]
-    chop_cluster = int(np.argmin(er_means))
-
-    X_all_scaled = scaler.transform(X_feat)
-    probs = gmm.predict_proba(X_all_scaled)[:, chop_cluster]
-    return dict(zip(tb, probs))
+    return dict(zip(tb, chop_probability(hb, lb, cb)))
 
 
 def trades(coin: str, start: str, end: str) -> list[dict]:
