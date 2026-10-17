@@ -9,7 +9,7 @@ Equal money per coin, each coin's money split into 7 parts (as in the backtest).
 yesterday's completed candles: market calm -> hold the coin (buy if not held), wild -> cash (sell if held). Prices are in USDT; profit is
 turned into rupees at CoinDCX's USDT/INR price when it is booked. Costs: 0.05% fee + 18% GST and 0.05% slippage per side, the real daily
 funding a long pays, and 30% tax on each winning trade (losses not set off), exactly like the backtest. Settings (.env): CRYPTO_CALM_CAPITAL
-(default Rs1 lakh), CRYPTO_CALM_LEVERAGE (default 1 = the sweet spot; 1.5x deepened BTC's worst fall from -36% to -60% for almost no extra profit).
+(default Rs3 lakh: below that a BTC part is smaller than CoinDCX's 0.001 BTC minimum order, so BTC's share sits in cash), CRYPTO_CALM_LEVERAGE (default 1 = the sweet spot; 1.5x deepened BTC's worst fall from -36% to -60% for almost no extra profit).
 """
 from __future__ import annotations
 
@@ -91,7 +91,7 @@ def _set_state(db, position_id: str, state: dict) -> None:
 def run(db, now: datetime, report: bool = True, send=None) -> dict:
     from services.utils import telegram
     send = send or telegram.send
-    capital0 = float(os.environ.get("CRYPTO_CALM_CAPITAL", 100_000))
+    capital0 = float(os.environ.get("CRYPTO_CALM_CAPITAL", 300_000))
     lev = float(os.environ.get("CRYPTO_CALM_LEVERAGE", 1.0))
     db.init_account(ACCOUNT, name="Crypto calm coins (CoinDCX futures)", capital=capital0, leverage=lev, risk_pct=0.0)
     acc = db.get_account(ACCOUNT)
