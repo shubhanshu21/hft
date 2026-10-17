@@ -11,7 +11,7 @@ export default function SettingsChips({ params }) {
     ["Start money", `₹${Number(params.capital).toLocaleString("en-IN")}`],
     ["Coins", `${params.symbols?.length}: ${(params.symbols ?? []).join(", ")}`],
     ["Timeframe", "4-hour candles"],
-    ["Rules", "30-candle high/low breakout +0.3% with the 100 EMA, 12-candle exit, 8% stop"],
+    ["Rules", "30-candle breakout +0.3% with sloping 100 EMA and ADX, 12-candle exit, 8% stop"],
     ["Tax", params.tax === "none" ? "off (before tax)" : params.tax === "business" ? "business income: 31.2% of yearly net profit" : "strict: 31.2% of each winning trade"],
   ] : params.market === "crypto" && params.strategy === "sr_sweep" ? [   // 1-minute scalper
     ["Start money", `₹${Number(params.capital).toLocaleString("en-IN")}`],

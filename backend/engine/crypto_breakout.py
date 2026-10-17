@@ -60,6 +60,8 @@ def _levels(k: pd.DataFrame) -> pd.DataFrame:
     k["hi"] = k.h.rolling(TB.ENTRY_BARS).max().shift(1); k["lo"] = k.l.rolling(TB.ENTRY_BARS).min().shift(1)
     k["xh"] = k.h.rolling(TB.EXIT_BARS).max().shift(1); k["xl"] = k.l.rolling(TB.EXIT_BARS).min().shift(1)
     k["ema"] = k.c.ewm(span=TB.EMA_LEN, adjust=False).mean()
+    k["ema_slope"] = k["ema"].diff(3)
+    k["adx"] = TB._calc_adx(k.h.to_numpy(), k.l.to_numpy(), k.c.to_numpy(), 14)
     return k
 
 
@@ -125,7 +127,10 @@ def run(db, now: datetime, send=None) -> dict:
                     _close(db, p, float(px), why, now, st, fx, lines); closed_now = True
             if not pos and not closed_now and idx == k.index[-1]:                   # 2) a signal on the newest finished candle -> enter now
                 buf = getattr(TB, "BREAKOUT_BUFFER", 0.0)                           # same 0.3% buffer as the backtest
-                d = 1 if (b.c > b.hi * (1 + buf) and b.c > b.ema) else (-1 if (b.c < b.lo * (1 - buf) and b.c < b.ema) else 0)
+                adx_thresh = 20 if coin == "BTC" else 18
+                is_long = (b.c > b.hi * (1 + buf)) and (b.c > b.ema) and (b.ema_slope > 0) and (b.adx >= adx_thresh)
+                is_short = (b.c < b.lo * (1 - buf)) and (b.c < b.ema) and (b.ema_slope < 0) and (b.adx >= adx_thresh)
+                d = 1 if is_long else (-1 if is_short else 0)
                 px = live["price"].get(coin)
                 if d and px:
                     q = CALM.order_qty(coin, st["slots"][coin], px, fx)

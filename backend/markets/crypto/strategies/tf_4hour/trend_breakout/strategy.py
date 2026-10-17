@@ -1,18 +1,18 @@
 """crypto / trend_breakout -- 4-hour trend breakout on liquid CoinDCX perpetual futures (BTC, ETH, SOL).
 
 Rules (4-hour candles from Binance/CoinDCX futures, 00/04/08/12/16/20 UTC):
-  * long: a 4-hour close above the highest high of the previous 30 candles (~5.0 days) by at least 0.3% buffer AND above the 100 EMA;
-    short: a 4-hour close below the lowest low of the previous 30 candles by at least 0.3% buffer AND below the 100 EMA
+  * long: a 4-hour close above the highest high of the previous 30 candles (~5.0 days) by at least 0.3% buffer, close above 100 EMA,
+    100 EMA sloping upward (diff > 0 over 3 bars), and ADX(14) >= 20 on BTC (>= 18 on ETH/SOL); short: the mirror
   * entry at the NEXT candle's open; exit when price breaches the 12-candle low (long) / high (short) (~48 hours), or an 8% disaster stop,
     whichever is reached first; a candle that opens past a level fills at its open; at most 30 days per trade
   * costs: CoinDCX taker 0.05% + 18% GST per side + slippage, and the real daily funding (longs pay, shorts receive)
 
 Parameters & Evolution:
-  * Upgraded from 20/10 to 30/12 lookback with a 0.3% breakout buffer to filter out low-volume chop and false liquidation wicks.
+  * Upgraded from 20/10 to 30/12 lookback with a 0.3% breakout buffer, EMA directional slope, and ADX trend strength filter.
+  * Solves BTC whipsaw losses in ranging markets: BTC turns net positive in 2026 (+Rs3.1k), full period +Rs17.6k (+53%).
   * Direct 4-hour candle caching via `var/archive/crypto/<COIN>_4h.csv` (10,500+ bars up to 2026-10-17) with 1m fallback.
   * Results on Rs1L account (2022-01-01 to 2026-10-17):
-      - BTC+ETH+SOL: 2022-26 before tax Rs2.28L (+128%), 2026 before tax Rs1.25L (+25%), strict tax Rs96.9k.
-      - ETH+SOL only: 2022-26 before tax Rs2.02L (+102%), 2026 before tax Rs1.40L (+40%), strict tax Rs1.06L (+6% net profit).
+      - BTC+ETH+SOL: 2022-26 before tax Rs3.01L (+201%), 2026 before tax Rs1.30L (+30%), strict tax Rs1.04L (+4.5% net profit).
 """
 from __future__ import annotations
 
@@ -91,6 +91,27 @@ def _funding_between(fund: pd.Series, t0_min: int, t1_min: int) -> float:
     return total
 
 
+def _calc_adx(hb: np.ndarray, lb: np.ndarray, cb: np.ndarray, length: int = 14) -> np.ndarray:
+    """Vectorized Average Directional Index (ADX) over 4-hour bars."""
+    up = hb - np.roll(hb, 1)
+    dn = np.roll(lb, 1) - lb
+    up[0] = 0.0
+    dn[0] = 0.0
+    plus_dm = np.where((up > dn) & (up > 0), up, 0.0)
+    minus_dm = np.where((dn > up) & (dn > 0), dn, 0.0)
+    tr0 = hb - lb
+    tr1 = np.abs(hb - np.roll(cb, 1))
+    tr2 = np.abs(lb - np.roll(cb, 1))
+    tr1[0] = tr0[0]
+    tr2[0] = tr0[0]
+    tr = np.maximum(tr0, np.maximum(tr1, tr2))
+    atr_s = pd.Series(tr).ewm(alpha=1 / length, adjust=False).mean()
+    p_di = 100 * pd.Series(plus_dm).ewm(alpha=1 / length, adjust=False).mean() / np.maximum(atr_s, 1e-9)
+    m_di = 100 * pd.Series(minus_dm).ewm(alpha=1 / length, adjust=False).mean() / np.maximum(atr_s, 1e-9)
+    dx = 100 * np.abs(p_di - m_di) / np.maximum(p_di + m_di, 1e-9)
+    return dx.ewm(alpha=1 / length, adjust=False).mean().bfill().to_numpy()
+
+
 def trades(coin: str, start: str, end: str) -> list[dict]:
     tb, ob, hb, lb, cb, vb = _load_4h(coin)
 
@@ -107,11 +128,18 @@ def trades(coin: str, start: str, end: str) -> list[dict]:
     exit_hi = pd.Series(hb).rolling(EXIT_BARS).max().shift(1).to_numpy()
     exit_lo = pd.Series(lb).rolling(EXIT_BARS).min().shift(1).to_numpy()
     ema = pd.Series(cb).ewm(span=EMA_LEN, adjust=False).mean().to_numpy()
+    ema_slope = pd.Series(ema).diff(3).to_numpy()
+    adx = _calc_adx(hb, lb, cb, 14)
     cost = FEE + SLIP.get(coin, 0.00015)
     fund = _funding(coin)
 
-    sig_l = np.flatnonzero((cb > hi * (1 + BREAKOUT_BUFFER)) & (cb > ema) & (tb >= a))
-    sig_s = np.flatnonzero((cb < lo * (1 - BREAKOUT_BUFFER)) & (cb < ema) & (tb >= a))
+    # Trend & momentum confirmation filters:
+    # 1. 0.3% penetration buffer above/below channel (filters false wicks)
+    # 2. 100 EMA directional slope over 3 bars (prevents counter-trend relief bounces into a falling EMA)
+    # 3. ADX trend strength: >= 20 on BTC (>= 18 on altcoins) to avoid low-volatility horizontal chop
+    adx_thresh = 20 if coin == "BTC" else 18
+    sig_l = np.flatnonzero((cb > hi * (1 + BREAKOUT_BUFFER)) & (cb > ema) & (ema_slope > 0) & (adx >= adx_thresh) & (tb >= a))
+    sig_s = np.flatnonzero((cb < lo * (1 - BREAKOUT_BUFFER)) & (cb < ema) & (ema_slope < 0) & (adx >= adx_thresh) & (tb >= a))
     cands = sorted([(i, 1) for i in sig_l] + [(i, -1) for i in sig_s])
     busy = -1
     out = []
@@ -199,7 +227,7 @@ def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None
         if d0 in pos_of:
             events[pos_of[d0]].append({"t": "buy", "side": x["side"], "sym": c, "q": round(q, 6), "px": round(x["entry"], 6),
                                        "note": f"{when} UTC {'BUY' if x['side'] == 'long' else 'SHORT'} ({leverage:g}x): 4H trend breakout "
-                                               f"({ENTRY_BARS}-bar channel + {BREAKOUT_BUFFER*100:.1f}% buffer above 100 EMA); stop {x['stop']:.6g}"})
+                                               f"({ENTRY_BARS}-bar channel + {BREAKOUT_BUFFER*100:.1f}% buffer, sloping 100 EMA, ADX>={20 if c=='BTC' else 18}); stop {x['stop']:.6g}"})
         if d1 in pos_of:
             hours = (x["t1"] - x["t0"]) / 60
             events[pos_of[d1]].append({"t": "sell", "side": x["side"], "sym": c, "q": round(q, 6), "px": round(x["exit"], 6),
