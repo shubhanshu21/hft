@@ -249,7 +249,7 @@ def web_backtest(capital: float, start: str, end: str, leverage: float = 1.0, ta
     closed = [{"net": x.net, "fees": x.fees, "slip": 0.0, "gross": x.gross, "days": (x.exit_day - x.entry_day).days} for x in t.itertuples()] if len(t) else []
     c = load()["close"][list(TRADED)].reindex(pd.to_datetime(rep["days"])).ffill()
     rep["benchmark"] = [round(v) for v in (capital / len(TRADED) * c / c.iloc[0]).sum(axis=1)]
-    m = metrics(rep["equity"], capital, closed, len(rep["days"]), r["open"])
+    m = metrics(rep["equity"], capital, closed, round(len(rep["days"]) * 250 / 365.25), r["open"])   # crypto: 365 days a year
     st_tax = float(strict["trades"]["tax"].sum()) if len(strict["trades"]) else 0.0
     shown = {"strict": "the STRICT crypto rule", "business": "the BUSINESS-income rule", "none": "NO tax"}[mode]
     rep["metrics"] = m | {"tax_mode": mode, "final_strict": round(strict["final"]), "final_business": round(float(biz.iloc[-1])), "final_pretax": round(pre["final"]),

@@ -142,16 +142,18 @@ def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None
     daily_strict, daily_pre = {}, {}
     pos_of = {d.strftime("%Y-%m-%d"): i for i, d in enumerate(days)}
     all_tr = sorted((x for c in coins for x in trades(c, start, str(days[-1].date()))), key=lambda x: x["t1"])
+    mode = {True: "strict", False: "none"}.get(tax, tax)
     for x in all_tr:
         c = x["coin"]
-        pos_value = book[c] * leverage
+        size_book = book[c] if mode == "strict" else book_pre[c]          # the rupee figures follow the same running balance as the chart
+        pos_value = size_book * leverage
         q = pos_value / x["entry"]
         pnl_pre = book_pre[c] * (x["net"] * leverage)
         book_pre[c] += pnl_pre
         pnl = book[c] * (x["net"] * leverage)
         tx = CALM.TAX * pnl if pnl > 0 else 0.0
         book[c] += pnl - tx
-        x["pnl_rs"] = float(round(pnl - tx if tax == "strict" else pnl, 2)); x["q"] = float(round(q, 6))
+        x["pnl_rs"] = float(round(pos_value * x["net"] * ((1 - CALM.TAX) if (mode == "strict" and x["net"] > 0) else 1), 2)); x["q"] = float(round(q, 6))
         d0 = pd.Timestamp(x["t0"] * 60, unit="s").strftime("%Y-%m-%d")
         d1 = pd.Timestamp(x["t1"] * 60, unit="s").strftime("%Y-%m-%d")
         when = pd.Timestamp(x["t0"] * 60, unit="s").strftime("%H:%M")
@@ -162,12 +164,13 @@ def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None
         if d1 in pos_of:
             hours = (x["t1"] - x["t0"]) / 60
             events[pos_of[d1]].append({"t": "sell", "side": x["side"], "sym": c, "q": round(q, 6), "px": round(x["exit"], 6),
-                                       "pnl": round(pnl - tx if tax == "strict" else pnl, 2),
-                                       "fees": round(pos_value * x["fees"], 2), "slip": 0, "days": round(hours / 24, 1),
+                                       "pnl": round(pos_value * x["net"] * ((1 - CALM.TAX) if (mode == "strict" and x["net"] > 0) else 1), 2),
+                                       "fees": round(pos_value * (x["gross"] - x["net"]), 2), "slip": 0, "days": round(hours / 24, 1),
                                        "entry": round(x["entry"], 6),
                                        "why": x.get("why", f"Trailing channel exit after {hours:.0f}h ({x['side']})")})
-        closed.append({"net": pnl - tx if tax == "strict" else pnl, "fees": pos_value * x["fees"], "slip": 0.0,
-                       "gross": pos_value * x["gross"], "days": round((x["t1"] - x["t0"]) / 1440, 1)})
+        g_rs = pos_value * x["gross"]; net_rs = pos_value * x["net"]; t_rs = (CALM.TAX * net_rs if (mode == "strict" and net_rs > 0) else 0.0)
+        closed.append({"net": net_rs - t_rs, "fees": g_rs - net_rs + t_rs, "slip": 0.0,               # fees = trading fees + funding (+ tax, strict)
+                       "gross": g_rs, "days": round((x["t1"] - x["t0"]) / 1440, 1)})
         daily_strict[d1] = sum(book.values())
         daily_pre[d1] = sum(book_pre.values())
 
@@ -175,7 +178,6 @@ def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None
     s_pre = pd.Series(daily_pre).reindex([d.strftime("%Y-%m-%d") for d in days]).ffill().fillna(capital)
     s_pre.index = pd.to_datetime(s_pre.index)
     biz, biz_tax = CALM.business_tax(s_pre, capital)
-    mode = {True: "strict", False: "none"}.get(tax, tax)
     curve = {"strict": s_strict.values, "none": s_pre.values, "business": biz.values}[mode]
 
     bars = {}
@@ -210,7 +212,11 @@ def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None
     first = np.array([b[0][3] for b in bars.values()])
     rep["benchmark"] = [round(v) for v in (capital / len(coins) * np.array([[b[i][3] for b in bars.values()] for i in range(len(days))]) / first).sum(axis=1)]
     wins = sum(1 for x in all_tr if x["net"] > 0)
-    m = metrics(rep["equity"], capital, closed, len(days), 0)
+    m = metrics(rep["equity"], capital, closed, round(len(days) * 250 / 365.25), 0)   # crypto trades every day: 365 days = one year
+    if mode == "business":                                               # the yearly tax is paid out of the closed profit
+        tax_effect = m["closed_profit"] - (m["final_equity"] - capital)         # tax paid + the growth that money would have earned
+        m["fees"] = round(m["fees"] + tax_effect); m["closed_profit"] = round(m["final_equity"] - capital)
+    m["open_profit"] = round(m["final_equity"] - capital - m["closed_profit"])
     rep["metrics"] = m | {"tax_mode": mode, "final_strict": round(s_strict.iloc[-1]), "final_business": round(float(biz.iloc[-1])),
                           "final_pretax": round(s_pre.iloc[-1]),
                           "note": f"4-hour Trend Breakout on {', '.join(coins)} at {leverage:g}x (CoinDCX taker fees + slippage, real daily funding, gapped stops at the open): "
