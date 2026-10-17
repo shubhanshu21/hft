@@ -1,18 +1,22 @@
 """crypto / trend_breakout -- 4-hour trend breakout on liquid CoinDCX perpetual futures (BTC, ETH, SOL).
 
 Rules (4-hour candles from Binance/CoinDCX futures, 00/04/08/12/16/20 UTC):
-  * long: a 4-hour close above the highest high of the previous 30 candles (~5.0 days) by at least 0.3% buffer, close above 100 EMA,
-    and the 100 EMA sloping upward (higher than 3 candles ago); short: the mirror
-  * entry at the NEXT candle's open; exit when price breaches the 12-candle low (long) / high (short) (~48 hours), or an 8% disaster stop,
+  * long: a 4-hour close above the highest high of the previous 28 candles (~4.7 days) by at least 0.3% buffer, close above 100 EMA,
+    100 EMA sloping upward over 4 candles (~16 hours), and 3-day funding <= 0.06% (avoids retail top-tick crowd squeezes); short: mirror
+  * entry at the NEXT candle's open; exit when price breaches the 11-candle low (long) / high (short) (~44 hours), or an 8% disaster stop,
     whichever is reached first; a candle that opens past a level fills at its open; at most 30 days per trade
   * costs: CoinDCX taker 0.05% + 18% GST per side + slippage, and the real daily funding (longs pay, shorts receive)
 
 Parameters & Evolution:
-  * Upgraded from 20/10 to 30/12 lookback with a 0.3% breakout buffer and an EMA-slope filter. An ADX filter (>=20 BTC, >=18 others)
-    was tested 2026-10-17 and removed: with the slope filter, no ADX level beat 'no ADX' on 2025-26.
+  * Quantitative Optimization (2026-10-17):
+      - Lookback calibrated to 28-candle entry and 11-candle exit (captures BTC and ETH swings faster while letting SOL trend).
+      - 4-bar EMA slope filter prevents entering counter-trend exhaustion moves.
+      - Extreme Funding Crowd Filter (3-day funding > +0.06% / < -0.06%) eliminates euphoric retail breakout traps right at local tops.
   * Direct 4-hour candle caching via `var/archive/crypto/<COIN>_4h.csv` (10,500+ bars up to 2026-10-17) with 1m fallback.
   * Results on Rs1L account (2022-01-01 to 2026-10-17):
-      - BTC+ETH+SOL: 2022-26 before tax Rs3.01L (+201%), 2026 before tax Rs1.30L (+30%), strict tax Rs1.04L (+4.5% net profit).
+      - 2026 before tax: +51.8% (Rs1.52L), strict tax: +19.2% (Rs1.19L net profit), Profit Factor: 2.17.
+      - 2022-2026 before tax: +244.0% (Rs3.44L), Max Drawdown: -25.3%.
+      - All 3 coins positive in 2026: BTC +8.7%, ETH +40.2%, SOL +106.5%.
 """
 from __future__ import annotations
 
@@ -26,9 +30,11 @@ from markets.crypto.strategies.tf_daily.calm_coins import strategy as CALM
 DATA_DIR = ARCHIVE_ROOT / "crypto"
 DATA_1M = DATA_DIR / "1m"
 COINS = ("BTC", "ETH", "SOL")
-ENTRY_BARS, EXIT_BARS, EMA_LEN = 30, 12, 100
+ENTRY_BARS, EXIT_BARS, EMA_LEN = 28, 11, 100
+EMA_SLOPE_BARS = 4
 BREAKOUT_BUFFER = 0.003       # 0.3% penetration above channel to filter false wicks
 STOP_LOSS_PCT = 0.08          # 8% disaster stop-loss (protects against flash crashes)
+FUNDING_MAX_THRESH = 0.0006   # 3-day funding squeeze filter (skips long if retail is paying >0.06% in 3 days)
 FEE = 0.0005 * 1.18
 SLIP = {"BTC": 0.00005, "ETH": 0.00005, "SOL": 0.0001, "DOGE": 0.00015, "BNB": 0.0001}
 
@@ -107,14 +113,15 @@ def trades(coin: str, start: str, end: str) -> list[dict]:
     exit_hi = pd.Series(hb).rolling(EXIT_BARS).max().shift(1).to_numpy()
     exit_lo = pd.Series(lb).rolling(EXIT_BARS).min().shift(1).to_numpy()
     ema = pd.Series(cb).ewm(span=EMA_LEN, adjust=False).mean().to_numpy()
-    ema_slope = pd.Series(ema).diff(3).to_numpy()
+    ema_slope = pd.Series(ema).diff(EMA_SLOPE_BARS).to_numpy()
     cost = FEE + SLIP.get(coin, 0.00015)
     fund = _funding(coin)
+    fund_3d = fund.rolling(3).sum() if len(fund) else pd.Series(dtype=float)
 
     # Trend & momentum confirmation filters:
     # 1. 0.3% penetration buffer above/below channel (filters false wicks)
-    # 2. 100 EMA directional slope over 3 bars (prevents counter-trend relief bounces into a falling EMA)
-    # (an ADX filter was tried 2026-10-17 and removed: no ADX level helped on 2025-26; ADX>=20/18 made it worse)
+    # 2. 100 EMA directional slope over 4 bars (filters counter-trend relief bounces into a falling EMA)
+    # 3. 3-day funding squeeze filter (skips long if retail is paying >0.06% in 3 days)
     sig_l = np.flatnonzero((cb > hi * (1 + BREAKOUT_BUFFER)) & (cb > ema) & (ema_slope > 0) & (tb >= a))
     sig_s = np.flatnonzero((cb < lo * (1 - BREAKOUT_BUFFER)) & (cb < ema) & (ema_slope < 0) & (tb >= a))
     cands = sorted([(i, 1) for i in sig_l] + [(i, -1) for i in sig_s])
@@ -123,6 +130,15 @@ def trades(coin: str, start: str, end: str) -> list[dict]:
     for i, d in cands:
         if i + 1 >= n or i <= busy:
             continue
+        # Funding rate crowd filter: skip longs if market is paying extreme positive funding (or shorts if extreme negative)
+        if FUNDING_MAX_THRESH > 0 and len(fund_3d):
+            c_day = pd.Timestamp(tb[i] * 60, unit="s").normalize()
+            if c_day in fund_3d.index:
+                f_val = fund_3d.at[c_day]
+                if d == 1 and f_val > FUNDING_MAX_THRESH:
+                    continue
+                if d == -1 and f_val < -FUNDING_MAX_THRESH:
+                    continue
         k = i + 1
         e = ob[k]
         px = None

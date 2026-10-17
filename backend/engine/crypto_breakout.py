@@ -60,7 +60,7 @@ def _levels(k: pd.DataFrame) -> pd.DataFrame:
     k["hi"] = k.h.rolling(TB.ENTRY_BARS).max().shift(1); k["lo"] = k.l.rolling(TB.ENTRY_BARS).min().shift(1)
     k["xh"] = k.h.rolling(TB.EXIT_BARS).max().shift(1); k["xl"] = k.l.rolling(TB.EXIT_BARS).min().shift(1)
     k["ema"] = k.c.ewm(span=TB.EMA_LEN, adjust=False).mean()
-    k["ema_slope"] = k["ema"].diff(3)
+    k["ema_slope"] = k["ema"].diff(getattr(TB, "EMA_SLOPE_BARS", 4))
     return k
 
 
@@ -126,8 +126,21 @@ def run(db, now: datetime, send=None) -> dict:
                     _close(db, p, float(px), why, now, st, fx, lines); closed_now = True
             if not pos and not closed_now and idx == k.index[-1]:                   # 2) a signal on the newest finished candle -> enter now
                 buf = getattr(TB, "BREAKOUT_BUFFER", 0.0)                           # same 0.3% buffer as the backtest
-                is_long = (b.c > b.hi * (1 + buf)) and (b.c > b.ema) and (b.ema_slope > 0)      # same rules as the backtest (no ADX)
+                is_long = (b.c > b.hi * (1 + buf)) and (b.c > b.ema) and (b.ema_slope > 0)
                 is_short = (b.c < b.lo * (1 - buf)) and (b.c < b.ema) and (b.ema_slope < 0)
+
+                # Check 3-day funding squeeze filter
+                f_series = TB._funding(coin)
+                thresh = getattr(TB, "FUNDING_MAX_THRESH", 0.0006)
+                if thresh > 0 and len(f_series) >= 3:
+                    f_3d = float(f_series.iloc[-3:].sum())
+                    if is_long and f_3d > thresh:
+                        lines.append(f"• {coin}: LONG signal filtered out (extreme funding squeeze: 3d funding {f_3d*100:.3f}% > {thresh*100:.2f}%)")
+                        is_long = False
+                    if is_short and f_3d < -thresh:
+                        lines.append(f"• {coin}: SHORT signal filtered out (extreme funding squeeze: 3d funding {f_3d*100:.3f}% < -{thresh*100:.2f}%)")
+                        is_short = False
+
                 d = 1 if is_long else (-1 if is_short else 0)
                 px = live["price"].get(coin)
                 if d and px:
