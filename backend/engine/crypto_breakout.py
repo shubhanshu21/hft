@@ -6,8 +6,8 @@
 Run by hft-crypto-breakout.timer 2 minutes after every 4-hour candle closes (00/04/08/12/16/20 UTC = 05:32, 09:32 ... IST). No real orders.
 The account (CRYPTO_CALM, Rs2L since 2026-10-17) holds two sleeves of money: calm_coins (engine/crypto_calm.py, CRYPTO_CALM_CAPITAL,
 default Rs1L) and this one (CRYPTO_BREAKOUT_CAPITAL, default Rs1L), split equally over BTC, ETH and SOL, each coin's share compounding.
-Rules = markets/crypto/strategies/tf_4hour/trend_breakout (same constants): on a finished 4-hour candle, close above the previous ENTRY_BARS
-candles' high (by BREAKOUT_BUFFER) and above the 100 EMA -> buy at the live CoinDCX price (shorts mirrored); exit when a candle reaches the previous 10
+Rules = markets/crypto/strategies/tf_4hour/trend_breakout (same constants): on a finished 4-hour candle, close above the previous ENTRY_BARS (28)
+candles' high (by BREAKOUT_BUFFER 0.3%) and above the 100 EMA with 4-bar rising slope -> buy at the live CoinDCX price (shorts mirrored); exit when a candle reaches the previous 11
 candles' low (high for shorts) or the 8% stop -- treated as a resting stop order: filled at that level, or at the candle's open if it
 opened past it -- or after 30 days. Candles: Binance USDT-M futures 4-hour klines (CoinDCX's futures follow Binance); entries priced at
 CoinDCX's live futures price. Costs: CoinDCX taker 0.059% + slippage per side, real daily funding (longs pay, shorts receive). Profit is
@@ -131,7 +131,7 @@ def run(db, now: datetime, send=None) -> dict:
 
                 # Check 3-day funding squeeze filter
                 f_series = TB._funding(coin)
-                thresh = getattr(TB, "FUNDING_MAX_THRESH", 0.0006)
+                thresh = getattr(TB, "FUNDING_MAX_THRESH", 0.0)
                 if thresh > 0 and len(f_series) >= 3:
                     f_3d = float(f_series.iloc[-3:].sum())
                     if is_long and f_3d > thresh:
