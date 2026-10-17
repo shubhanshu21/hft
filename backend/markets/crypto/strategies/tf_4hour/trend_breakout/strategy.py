@@ -2,7 +2,7 @@
 
 Rules (4-hour candles from Binance/CoinDCX futures, 00/04/08/12/16/20 UTC):
   * long: a 4-hour close above the highest high of the previous 28 candles (~4.7 days) by at least 0.3% buffer, close above 100 EMA,
-    100 EMA sloping upward over 4 candles (~16 hours), and 3-day funding <= 0.06% (avoids retail top-tick crowd squeezes); short: mirror
+    100 EMA sloping upward over 4 candles (~16 hours), short: mirror (an optional 3-day funding filter exists, OFF)
   * entry at the NEXT candle's open; exit when price breaches the 11-candle low (long) / high (short) (~44 hours), or an 8% disaster stop,
     whichever is reached first; a candle that opens past a level fills at its open; at most 30 days per trade
   * costs: CoinDCX taker 0.05% + 18% GST per side + slippage, and the real daily funding (longs pay, shorts receive)
@@ -13,10 +13,9 @@ Parameters & Evolution:
       - 4-bar EMA slope filter prevents entering counter-trend exhaustion moves.
       - Extreme Funding Crowd Filter (3-day funding > +0.06% / < -0.06%) eliminates euphoric retail breakout traps right at local tops.
   * Direct 4-hour candle caching via `var/archive/crypto/<COIN>_4h.csv` (10,500+ bars up to 2026-10-17) with 1m fallback.
-  * Results on Rs1L account (2022-01-01 to 2026-10-17):
-      - 2026 before tax: +51.8% (Rs1.52L), strict tax: +19.2% (Rs1.19L net profit), Profit Factor: 2.17.
-      - 2022-2026 before tax: +244.0% (Rs3.44L), Max Drawdown: -25.3%.
-      - All 3 coins positive in 2026: BTC +8.7%, ETH +40.2%, SOL +106.5%.
+  * Results on Rs1L account, BTC+ETH+SOL, business-income tax (checked 2026-10-17, funding filter off):
+      - 2022-24 Rs1.78L, 2025-26 Rs1.36L, 2026 Rs1.29L, 2022-26 Rs2.46L (before tax Rs3.46L).
+      - The funding filter's earlier "+244% / 2026 +51.8%" figures came from a look-ahead (it read the signal day's later payments).
 """
 from __future__ import annotations
 
@@ -34,7 +33,7 @@ ENTRY_BARS, EXIT_BARS, EMA_LEN = 28, 11, 100
 EMA_SLOPE_BARS = 4
 BREAKOUT_BUFFER = 0.003       # 0.3% penetration above channel to filter false wicks
 STOP_LOSS_PCT = 0.08          # 8% disaster stop-loss (protects against flash crashes)
-FUNDING_MAX_THRESH = 0.0006   # 3-day funding squeeze filter (skips long if retail is paying >0.06% in 3 days)
+FUNDING_MAX_THRESH = 0.0      # 3-day funding filter OFF: with finished-day data no level helped (0.06% cut 2022-26 from Rs2.46L to Rs2.11L)
 FEE = 0.0005 * 1.18
 SLIP = {"BTC": 0.00005, "ETH": 0.00005, "SOL": 0.0001, "DOGE": 0.00015, "BNB": 0.0001}
 
@@ -116,7 +115,7 @@ def trades(coin: str, start: str, end: str) -> list[dict]:
     ema_slope = pd.Series(ema).diff(EMA_SLOPE_BARS).to_numpy()
     cost = FEE + SLIP.get(coin, 0.00015)
     fund = _funding(coin)
-    fund_3d = fund.rolling(3).sum() if len(fund) else pd.Series(dtype=float)
+    fund_3d = fund.rolling(3).sum().shift(1) if len(fund) else pd.Series(dtype=float)   # last 3 FINISHED days (no peeking at today's later payments)
 
     # Trend & momentum confirmation filters:
     # 1. 0.3% penetration buffer above/below channel (filters false wicks)
