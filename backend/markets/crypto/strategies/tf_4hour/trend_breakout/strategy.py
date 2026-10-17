@@ -1,17 +1,16 @@
 """crypto / trend_breakout -- 4-hour trend breakout on liquid CoinDCX perpetual futures (BTC, ETH, SOL).
 
-High-profit strategy for CoinDCX USDT perpetual futures:
-  1. Liquid universe: BTC, ETH, SOL (deepest order books, lowest spreads, compliant with CoinDCX lot sizes)
-  2. 4-Hour Timeframe: Resampled from 1-minute data into true 4-hour candles (00:00, 04:00, 08:00, 12:00, 16:00, 20:00 UTC)
-  3. Entry rules:
-     - Long: 4-hour close breaks above the highest high of the previous 20 bars (~3.3 days) AND closes above 100 EMA
-     - Short: 4-hour close breaks below the lowest low of the previous 20 bars AND closes below 100 EMA
-  4. Exit rules:
-     - Long exit: 4-hour low breaches the lowest low of the previous 10 bars (trailing channel exit)
-     - Short exit: 4-hour high breaches the highest high of the previous 10 bars
-  5. Payoff profile: Captures massive +10% to +40% crypto trend runs; stops out quickly on false breakouts
-  6. Costs: Full CoinDCX futures taker fee (0.05% + 18% GST = 0.059%) + slippage per side on every trade.
-Backtest result: +23.1% in 2026 alone; +240%+ net across full 2022-2026 after all exchange fees and slippage.
+Rules (4-hour candles built from Binance 1-minute futures data, 00/04/08/12/16/20 UTC):
+  * long: a 4-hour close above the highest high of the previous 20 candles (~3.3 days) AND above the 100 EMA; short: the mirror
+  * entry at the NEXT candle's open; exit when price breaches the 10-candle low (long) / high (short), or an 8% disaster stop,
+    whichever is reached first; a candle that opens past a level fills at its open; at most 30 days per trade
+  * costs: CoinDCX taker 0.05% + 18% GST per side + slippage, and the real daily funding (longs pay, shorts receive)
+Settings history: 30/15 at first, then tuned to 20/10/100 and the SOL+ETH default on 2026 results (so 2026 is NOT a fair test).
+Results, Rs1L, BTC+ETH+SOL, 1x (checked 2026-10-17 with funding and gap fills):
+  2022-24: before tax Rs1.98L; 2025-26: Rs1.12L; 2022-26: Rs2.01L before tax, Rs1.65L as business income, Rs0.30L under the strict
+  crypto rule (31.2% of every winning trade, ~180 trades a year); worst fall -32%. A real trend edge on the 3 biggest coins (doing the
+  opposite loses 85% / 48%), but neighbouring settings work on only 15 of 27 versions for BTC/ETH/SOL and 1 of 27 across 12 coins,
+  and 2025 was negative. Weaker than calm_coins (Rs3.4L before tax, Rs1.7L strict). Research / backtest page only.
 """
 from __future__ import annotations
 
@@ -40,6 +39,12 @@ def _load(coin: str):
     return z["t"].astype(np.int64), *(z[k].astype(np.float64) for k in ("o", "h", "l", "c"))
 
 
+@lru_cache(maxsize=12)
+def _funding(coin: str) -> pd.Series:
+    f = ARCHIVE_ROOT / "crypto" / f"{coin}_funding_daily.csv"
+    return pd.read_csv(f, index_col="date", parse_dates=True)["fundingRate"] if f.exists() else pd.Series(dtype=float)
+
+
 def trades(coin: str, start: str, end: str) -> list[dict]:
     t, o, h, l, c = _load(coin)
     # Resample to 4-hour bars (240 minutes)
@@ -62,6 +67,7 @@ def trades(coin: str, start: str, end: str) -> list[dict]:
     exit_lo = pd.Series(lb).rolling(EXIT_BARS).min().shift(1).to_numpy()
     ema = pd.Series(cb).ewm(span=EMA_LEN, adjust=False).mean().to_numpy()
     cost = FEE + SLIP.get(coin, 0.00015)
+    fund = _funding(coin)
 
     sig_l = np.flatnonzero((cb > hi) & (cb > ema) & (tb >= a))
     sig_s = np.flatnonzero((cb < lo) & (cb < ema) & (tb >= a))
@@ -77,29 +83,42 @@ def trades(coin: str, start: str, end: str) -> list[dict]:
         stop_px = e * (1 - d * STOP_LOSS_PCT)
         why = f"Trailing channel exit after {EXIT_BARS} bars ({'long' if d == 1 else 'short'})"
         for j in range(k, min(n, k + 180)):  # hold up to 30 days
+            # the level price reaches first: the channel exit when it sits before the disaster stop, else the stop;
+            # a candle that OPENS past a level fills at its open (gap), not at the level
             if d == 1:
+                if lb[j] <= exit_lo[j] and exit_lo[j] > stop_px:
+                    px = min(ob[j], exit_lo[j]) if j > k else exit_lo[j]
+                    break
                 if lb[j] <= stop_px:
-                    px = stop_px
+                    px = min(ob[j], stop_px) if j > k else stop_px
                     why = f"Disaster stop-loss ({STOP_LOSS_PCT * 100:.0f}%) hit (long)"
                     break
                 if lb[j] <= exit_lo[j]:
                     px = min(ob[j], exit_lo[j]) if j > k else exit_lo[j]
                     break
             else:
+                if hb[j] >= exit_hi[j] and exit_hi[j] < stop_px:
+                    px = max(ob[j], exit_hi[j]) if j > k else exit_hi[j]
+                    break
                 if hb[j] >= stop_px:
-                    px = stop_px
+                    px = max(ob[j], stop_px) if j > k else stop_px
                     why = f"Disaster stop-loss ({STOP_LOSS_PCT * 100:.0f}%) hit (short)"
                     break
                 if hb[j] >= exit_hi[j]:
                     px = max(ob[j], exit_hi[j]) if j > k else exit_hi[j]
                     break
         if px is None:
-            px = cb[min(n - 1, k + 179)]
+            j = min(n - 1, k + 179)
+            px = cb[j]
+        if px is None or j >= n:
+            j = min(n - 1, k + 179)
         gross = d * (px - e) / e
-        net = gross - 2 * cost
+        d0, d1 = pd.Timestamp(tb[k] * 60, unit="s").normalize(), pd.Timestamp(tb[j] * 60, unit="s").normalize()
+        funding = d * float(fund.loc[d0:d1].sum())                    # longs pay positive funding, shorts receive it (daily sums)
+        net = gross - 2 * cost - funding
         out.append({"coin": coin, "side": "long" if d == 1 else "short", "t0": int(tb[k]), "t1": int(tb[j]),
                     "entry": e, "exit": px, "stop": stop_px,
-                    "target": e * (1 + 0.15 * d), "gross": gross, "net": net, "fees": 2 * cost, "won": net > 0,
+                    "target": e * (1 + 0.15 * d), "gross": gross, "net": net, "fees": 2 * cost, "funding": funding, "won": net > 0,
                     "why": why})
         busy = j
     return out
@@ -177,7 +196,7 @@ def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None
     m = metrics(rep["equity"], capital, closed, len(days), 0)
     rep["metrics"] = m | {"tax_mode": mode, "final_strict": round(s_strict.iloc[-1]), "final_business": round(float(biz.iloc[-1])),
                           "final_pretax": round(s_pre.iloc[-1]),
-                          "note": f"4-hour Trend Breakout on {', '.join(coins)} (CoinDCX futures costs, 2026): "
+                          "note": f"4-hour Trend Breakout on {', '.join(coins)} at {leverage:g}x (CoinDCX taker fees + slippage, real daily funding, gapped stops at the open): "
                                   f"{len(all_tr):,} trades, {wins / max(len(all_tr), 1):.0%} won after fees. "
                                   f"Before tax: Rs{s_pre.iloc[-1]:,.0f}; strict tax: Rs{s_strict.iloc[-1]:,.0f}; business income: Rs{biz.iloc[-1]:,.0f}. "
                                   "Benchmark = holding the chosen coins."}

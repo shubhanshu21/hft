@@ -73,7 +73,7 @@ def catalog() -> list[dict]:
               "exposure": 1.0, "exposure_min": 1.0, "exposure_max": 3.0}
     from markets.crypto.strategies.tf_4hour.trend_breakout import strategy as tbo
     breakout = {"market": "crypto", "name": "trend_breakout", "timeframe": "4 hours", "supported": True, "symbols": tbo.available(), "crypto": True, "scalp": False,
-                "default_symbols": ["SOL", "ETH"], "summary": (tbo.__doc__ or "").strip().split("\n")[0], "intraday": False, "default_risk_pct": None,
+                "default_symbols": ["BTC", "ETH", "SOL"], "summary": (tbo.__doc__ or "").strip().split("\n")[0], "intraday": False, "default_risk_pct": None,
                 "exposure": 1.0, "exposure_min": 0.5, "exposure_max": 2.0}
     return [{"market": m, "name": n, "timeframe": f"{s.timeframe[1]} {s.timeframe[0]}", "supported": tuple(s.timeframe) == ("days", 1), "symbols": list(getattr(s, "universe", None) or universe(m)),
              "summary": (s.__doc__ or "").strip().split("\n")[0], "intraday": s.intraday,

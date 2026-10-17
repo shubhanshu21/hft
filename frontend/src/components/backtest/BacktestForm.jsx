@@ -23,7 +23,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
   const safeRisk = Math.max(3, strategy?.default_risk_pct ?? 0);
   const monthly = !!strategy?.monthly_rank;          // commodity/trend_carry: ranks the chosen contracts together each month; exposure is editable
   const crypto = !!strategy?.crypto;
-  const scalp = !!strategy?.scalp;                   // crypto/sr_sweep: 1-minute scalper, coins chosen, no leverage                 // crypto/calm_coins: 5 coins' futures; leverage and the tax rule are the choices
+  const scalp = !!strategy?.scalp;                   // a crypto scalper (none listed now): coins chosen, no leverage box
   const auto = !!strategy?.auto_universe;            // equity/breakout_pair: picks from the day's 200 most-traded NSE stocks itself, fixed 5 + 3 holdings
   const [all, setAll] = useState(true);
   const [chosen, setChosen] = useState([]);
@@ -86,14 +86,9 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
             {" "}Daily data starts January 2022, so the first signals are in late 2022.</p>
         )}
         {strategy && crypto && strategy.name === "trend_breakout" && (
-          <p className="hint">4-Hour Trend Breakout on CoinDCX futures (BTC, ETH, SOL, DOGE): buys when a 4-hour candle closes above the 30-bar (5-day) high above the 100 EMA (shorts below the 30-bar low below the 100 EMA).
-            Exits on a 15-bar trailing channel breach. Designed to capture explosive +10% to +40% crypto expansion legs where fees are negligible. +207.4% net after all CoinDCX taker fees and slippage across 2022-2026.</p>
-        )}
-        {strategy && crypto && strategy.name === "sr_sweep" && (
-          <p className="hint">1-minute scalper (research only): when price dips below the last hour's support (or above resistance) and closes back inside, and the next
-            candle confirms, it trades the bounce with a target of half the risk. Only while support and resistance are 2-3% apart and the 5-minute ADX is below 25.
-            About 2 of 3 trades hit the target, but fees (~0.13% a trade) are about as big as the moves, so it loses money. 1-minute data covers 2022-01-01 to 2026-10-16.
-            Big date ranges with many coins take a few minutes.</p>
+          <p className="hint">4-hour trend breakout on CoinDCX futures (BTC, ETH, SOL): buys when a 4-hour candle closes above the 20-candle high and above the 100 EMA
+            (shorts the mirror), exits at the 10-candle low/high or an 8% stop. Fees, slippage and real funding included. Rs1L, BTC+ETH+SOL, 2022-26: Rs2.01L before tax,
+            Rs1.65L as business income, only Rs0.30L under the strict crypto tax (about 180 trades a year). Settings were tuned on 2026, so 2026 results flatter it.</p>
         )}
         {strategy && crypto && strategy.name === "calm_coins" && (
           <p className="hint">Holds futures on BTC, ETH, SOL, DOGE and TRX (CoinDCX, priced in USDT, equal money each) only while the whole crypto market is calm: the 20-day volatility of 12 big coins
