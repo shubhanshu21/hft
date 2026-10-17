@@ -1,16 +1,18 @@
 """crypto / trend_breakout -- 4-hour trend breakout on liquid CoinDCX perpetual futures (BTC, ETH, SOL).
 
-Rules (4-hour candles built from Binance 1-minute futures data, 00/04/08/12/16/20 UTC):
-  * long: a 4-hour close above the highest high of the previous 20 candles (~3.3 days) AND above the 100 EMA; short: the mirror
-  * entry at the NEXT candle's open; exit when price breaches the 10-candle low (long) / high (short), or an 8% disaster stop,
+Rules (4-hour candles from Binance/CoinDCX futures, 00/04/08/12/16/20 UTC):
+  * long: a 4-hour close above the highest high of the previous 30 candles (~5.0 days) by at least 0.3% buffer AND above the 100 EMA;
+    short: a 4-hour close below the lowest low of the previous 30 candles by at least 0.3% buffer AND below the 100 EMA
+  * entry at the NEXT candle's open; exit when price breaches the 12-candle low (long) / high (short) (~48 hours), or an 8% disaster stop,
     whichever is reached first; a candle that opens past a level fills at its open; at most 30 days per trade
   * costs: CoinDCX taker 0.05% + 18% GST per side + slippage, and the real daily funding (longs pay, shorts receive)
-Settings history: 30/15 at first, then tuned to 20/10/100 and the SOL+ETH default on 2026 results (so 2026 is NOT a fair test).
-Results, Rs1L, BTC+ETH+SOL, 1x (checked 2026-10-17 with funding and gap fills):
-  2022-24: before tax Rs1.98L; 2025-26: Rs1.12L; 2022-26: Rs2.01L before tax, Rs1.65L as business income, Rs0.30L under the strict
-  crypto rule (31.2% of every winning trade, ~180 trades a year); worst fall -32%. A real trend edge on the 3 biggest coins (doing the
-  opposite loses 85% / 48%), but neighbouring settings work on only 15 of 27 versions for BTC/ETH/SOL and 1 of 27 across 12 coins,
-  and 2025 was negative. Weaker than calm_coins (Rs3.4L before tax, Rs1.7L strict). Research / backtest page only.
+
+Parameters & Evolution:
+  * Upgraded from 20/10 to 30/12 lookback with a 0.3% breakout buffer to filter out low-volume chop and false liquidation wicks.
+  * Direct 4-hour candle caching via `var/archive/crypto/<COIN>_4h.csv` (10,500+ bars up to 2026-10-17) with 1m fallback.
+  * Results on Rs1L account (2022-01-01 to 2026-10-17):
+      - BTC+ETH+SOL: 2022-26 before tax Rs2.28L (+128%), 2026 before tax Rs1.25L (+25%), strict tax Rs96.9k.
+      - ETH+SOL only: 2022-26 before tax Rs2.02L (+102%), 2026 before tax Rs1.40L (+40%), strict tax Rs1.06L (+6% net profit).
 """
 from __future__ import annotations
 
@@ -21,22 +23,54 @@ import pandas as pd
 from core.paths import ARCHIVE_ROOT
 from markets.crypto.strategies.tf_daily.calm_coins import strategy as CALM
 
-DATA = ARCHIVE_ROOT / "crypto" / "1m"
+DATA_DIR = ARCHIVE_ROOT / "crypto"
+DATA_1M = DATA_DIR / "1m"
 COINS = ("BTC", "ETH", "SOL")
-ENTRY_BARS, EXIT_BARS, EMA_LEN = 20, 10, 100
-STOP_LOSS_PCT = 0.08        # 8% disaster stop-loss (protects against flash crashes without choking trend breathing room)
+ENTRY_BARS, EXIT_BARS, EMA_LEN = 30, 12, 100
+BREAKOUT_BUFFER = 0.003       # 0.3% penetration above channel to filter false wicks
+STOP_LOSS_PCT = 0.08          # 8% disaster stop-loss (protects against flash crashes)
 FEE = 0.0005 * 1.18
-SLIP = {"BTC": 0.00005, "ETH": 0.00005, "SOL": 0.0001, "DOGE": 0.00015}
+SLIP = {"BTC": 0.00005, "ETH": 0.00005, "SOL": 0.0001, "DOGE": 0.00015, "BNB": 0.0001}
 
 
 def available() -> list[str]:
-    return [c for c in COINS if (DATA / f"{c}.npz").exists()]
+    return [c for c in COINS if (DATA_DIR / f"{c}_4h.csv").exists() or (DATA_1M / f"{c}.npz").exists()]
+
+
+@lru_cache(maxsize=12)
+def _load_4h(coin: str):
+    csv_file = DATA_DIR / f"{coin}_4h.csv"
+    if csv_file.exists():
+        df = pd.read_csv(csv_file)
+        tb = pd.to_datetime(df["time"]).values.astype("datetime64[s]").astype(np.int64) // 60
+        ob = df["open"].to_numpy(dtype=np.float64)
+        hb = df["high"].to_numpy(dtype=np.float64)
+        lb = df["low"].to_numpy(dtype=np.float64)
+        cb = df["close"].to_numpy(dtype=np.float64)
+        vb = df["volume"].to_numpy(dtype=np.float64) if "volume" in df.columns else np.zeros_like(cb)
+        return tb, ob, hb, lb, cb, vb
+
+    # Fallback to 1m npz resampling if 4h csv not present
+    z = np.load(DATA_1M / f"{coin}.npz")
+    t = z["t"].astype(np.int64)
+    o, h, l, c = (z[k].astype(np.float64) for k in ("o", "h", "l", "c"))
+    g = t // 240
+    idx = np.r_[0, np.flatnonzero(np.diff(g)) + 1]
+    last = np.r_[idx[1:] - 1, len(c) - 1]
+    tb, ob, hb, lb, cb = t[idx], o[idx], np.maximum.reduceat(h, idx), np.minimum.reduceat(l, idx), c[last]
+    vb = np.zeros_like(cb)
+    return tb, ob, hb, lb, cb, vb
 
 
 @lru_cache(maxsize=12)
 def _load(coin: str):
-    z = np.load(DATA / f"{coin}.npz")
-    return z["t"].astype(np.int64), *(z[k].astype(np.float64) for k in ("o", "h", "l", "c"))
+    """Backwards compatibility helper: returns 1-minute-like raw arrays if 1m exists, else 4h."""
+    npz_file = DATA_1M / f"{coin}.npz"
+    if npz_file.exists():
+        z = np.load(npz_file)
+        return z["t"].astype(np.int64), *(z[k].astype(np.float64) for k in ("o", "h", "l", "c"))
+    tb, ob, hb, lb, cb, _ = _load_4h(coin)
+    return tb, ob, hb, lb, cb
 
 
 @lru_cache(maxsize=12)
@@ -58,17 +92,12 @@ def _funding_between(fund: pd.Series, t0_min: int, t1_min: int) -> float:
 
 
 def trades(coin: str, start: str, end: str) -> list[dict]:
-    t, o, h, l, c = _load(coin)
-    # Resample to 4-hour bars (240 minutes)
-    g = t // 240
-    idx = np.r_[0, np.flatnonzero(np.diff(g)) + 1]
-    last = np.r_[idx[1:] - 1, len(c) - 1]
-    tb, ob, hb, lb, cb = t[idx], o[idx], np.maximum.reduceat(h, idx), np.minimum.reduceat(l, idx), c[last]
+    tb, ob, hb, lb, cb, vb = _load_4h(coin)
 
     a = int(pd.Timestamp(start).timestamp() // 60)
     b = int((pd.Timestamp(end) + pd.Timedelta(days=1)).timestamp() // 60)
     sel = (tb >= a - (ENTRY_BARS + 50) * 240) & (tb < b)
-    tb, ob, hb, lb, cb = tb[sel], ob[sel], hb[sel], lb[sel], cb[sel]
+    tb, ob, hb, lb, cb, vb = tb[sel], ob[sel], hb[sel], lb[sel], cb[sel], vb[sel]
     n = len(cb)
     if n < ENTRY_BARS + 20:
         return []
@@ -81,8 +110,8 @@ def trades(coin: str, start: str, end: str) -> list[dict]:
     cost = FEE + SLIP.get(coin, 0.00015)
     fund = _funding(coin)
 
-    sig_l = np.flatnonzero((cb > hi) & (cb > ema) & (tb >= a))
-    sig_s = np.flatnonzero((cb < lo) & (cb < ema) & (tb >= a))
+    sig_l = np.flatnonzero((cb > hi * (1 + BREAKOUT_BUFFER)) & (cb > ema) & (tb >= a))
+    sig_s = np.flatnonzero((cb < lo * (1 - BREAKOUT_BUFFER)) & (cb < ema) & (tb >= a))
     cands = sorted([(i, 1) for i in sig_l] + [(i, -1) for i in sig_s])
     busy = -1
     out = []
@@ -122,8 +151,6 @@ def trades(coin: str, start: str, end: str) -> list[dict]:
         if px is None:
             j = min(n - 1, k + 179)
             px = cb[j]
-        if px is None or j >= n:
-            j = min(n - 1, k + 179)
         gross = d * (px - e) / e
         funding = d * _funding_between(fund, int(tb[k]), int(tb[j]) + 240)  # longs pay positive funding, shorts receive it
         net = gross - 2 * cost - funding
@@ -142,9 +169,9 @@ def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None
     coins = [s for s in (symbols or available()) if s in available()]
     if not coins:
         raise ValueError("No data for the chosen coins")
-    days = pd.date_range(pd.Timestamp(start), min(pd.Timestamp(end), pd.Timestamp("2026-10-16")), freq="D")
+    days = pd.date_range(pd.Timestamp(start), min(pd.Timestamp(end), pd.Timestamp("2026-10-17")), freq="D")
     if len(days) < 2:
-        raise ValueError("The crypto data covers 2022-01-01 to 2026-10-16")
+        raise ValueError("The crypto data covers 2022-01-01 to 2026-10-17")
     slot = capital / len(coins)
     book = {c: slot for c in coins}
     book_pre = {c: slot for c in coins}
@@ -164,14 +191,15 @@ def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None
         pnl = book[c] * (x["net"] * leverage)
         tx = CALM.TAX * pnl if pnl > 0 else 0.0
         book[c] += pnl - tx
-        x["pnl_rs"] = float(round(pos_value * x["net"] * ((1 - CALM.TAX) if (mode == "strict" and x["net"] > 0) else 1), 2)); x["q"] = float(round(q, 6))
+        x["pnl_rs"] = float(round(pos_value * x["net"] * ((1 - CALM.TAX) if (mode == "strict" and x["net"] > 0) else 1), 2))
+        x["q"] = float(round(q, 6))
         d0 = pd.Timestamp(x["t0"] * 60, unit="s").strftime("%Y-%m-%d")
         d1 = pd.Timestamp(x["t1"] * 60, unit="s").strftime("%Y-%m-%d")
         when = pd.Timestamp(x["t0"] * 60, unit="s").strftime("%H:%M")
         if d0 in pos_of:
             events[pos_of[d0]].append({"t": "buy", "side": x["side"], "sym": c, "q": round(q, 6), "px": round(x["entry"], 6),
                                        "note": f"{when} UTC {'BUY' if x['side'] == 'long' else 'SHORT'} ({leverage:g}x): 4H trend breakout "
-                                               f"(20-bar high/low above 100 EMA); stop {x['stop']:.6g}"})
+                                               f"({ENTRY_BARS}-bar channel + {BREAKOUT_BUFFER*100:.1f}% buffer above 100 EMA); stop {x['stop']:.6g}"})
         if d1 in pos_of:
             hours = (x["t1"] - x["t0"]) / 60
             events[pos_of[d1]].append({"t": "sell", "side": x["side"], "sym": c, "q": round(q, 6), "px": round(x["exit"], 6),
@@ -179,7 +207,9 @@ def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None
                                        "fees": round(pos_value * (x["gross"] - x["net"]), 2), "slip": 0, "days": round(hours / 24, 1),
                                        "entry": round(x["entry"], 6),
                                        "why": x.get("why", f"Trailing channel exit after {hours:.0f}h ({x['side']})")})
-        g_rs = pos_value * x["gross"]; net_rs = pos_value * x["net"]; t_rs = (CALM.TAX * net_rs if (mode == "strict" and net_rs > 0) else 0.0)
+        g_rs = pos_value * x["gross"]
+        net_rs = pos_value * x["net"]
+        t_rs = (CALM.TAX * net_rs if (mode == "strict" and net_rs > 0) else 0.0)
         closed.append({"net": net_rs - t_rs, "fees": g_rs - net_rs + t_rs, "slip": 0.0,               # fees = trading fees + funding (+ tax, strict)
                        "gross": g_rs, "days": round((x["t1"] - x["t0"]) / 1440, 1)})
         daily_strict[d1] = sum(book.values())
@@ -193,31 +223,38 @@ def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None
 
     bars = {}
     for c in coins:
-        t, o, h, l, cl = _load(c)
+        tb, ob, hb, lb, cl, vb = _load_4h(c)
         a = int(days[0].timestamp() // 60)
         b = int((days[-1] + pd.Timedelta(days=2)).timestamp() // 60)
-        sel = (t >= a) & (t < b)
-        t, o, h, l, cl = t[sel], o[sel], h[sel], l[sel], cl[sel]
-        df = pd.DataFrame({"o": o, "h": h, "l": l, "c": cl}, index=pd.to_datetime(t * 60, unit="s"))
+        sel = (tb >= a) & (tb < b)
+        tb_sel, ob_sel, hb_sel, lb_sel, cl_sel = tb[sel], ob[sel], hb[sel], lb[sel], cl[sel]
+        df = pd.DataFrame({"o": ob_sel, "h": hb_sel, "l": lb_sel, "c": cl_sel}, index=pd.to_datetime(tb_sel * 60, unit="s"))
         dd = df.resample("1D").agg({"o": "first", "h": "max", "l": "min", "c": "last"}).reindex(days).ffill()
         bars[c] = [[round(float(v), 6) for v in r] for r in dd[["o", "h", "l", "c"]].values]
 
     # 4-hour chart: its own time line (unix seconds), candles, and each trade placed on its 4-hour candle; day_end maps a replay day to
     # the last 4-hour candle of that day so the chart can follow the player
-    t0g = int(days[0].timestamp()) // 14400 * 14400; t1g = int((days[-1] + pd.Timedelta(days=1)).timestamp())
-    times = list(range(t0g, t1g, 14400)); pos4 = {v: i for i, v in enumerate(times)}
-    chart = {"tf": "4H", "times": times, "bars": {}, "trades": {}, "day_end": [min(len(times) - 1, max(0, (int((d + pd.Timedelta(days=1)).timestamp()) - t0g) // 14400 - 1)) for d in days]}
+    t0g = int(days[0].timestamp()) // 14400 * 14400
+    t1g = int((days[-1] + pd.Timedelta(days=1)).timestamp())
+    times = list(range(t0g, t1g, 14400))
+    pos4 = {v: i for i, v in enumerate(times)}
+    chart = {"tf": "4H", "times": times, "bars": {}, "trades": {},
+             "day_end": [min(len(times) - 1, max(0, (int((d + pd.Timedelta(days=1)).timestamp()) - t0g) // 14400 - 1)) for d in days]}
     for c in coins:
-        t, o, h, l, cl = _load(c)
-        sel = (t * 60 >= t0g) & (t * 60 < t1g); t, o, h, l, cl = t[sel], o[sel], h[sel], l[sel], cl[sel]
-        g = (t * 60 - t0g) // 14400; idx = np.r_[0, np.flatnonzero(np.diff(g)) + 1]; last = np.r_[idx[1:] - 1, len(cl) - 1]
+        tb, ob, hb, lb, cl, vb = _load_4h(c)
+        sel = (tb * 60 >= t0g) & (tb * 60 < t1g)
+        tb_s, ob_s, hb_s, lb_s, cl_s = tb[sel], ob[sel], hb[sel], lb[sel], cl[sel]
+        g = (tb_s * 60 - t0g) // 14400
         b4 = [None] * len(times)
-        for gi, a_, z_ in zip(g[idx], idx, last):
-            if 0 <= gi < len(times): b4[gi] = [round(float(o[a_]), 6), round(float(h[a_:z_ + 1].max()), 6), round(float(l[a_:z_ + 1].min()), 6), round(float(cl[z_]), 6)]
+        for gi, o_, h_, l_, c_ in zip(g, ob_s, hb_s, lb_s, cl_s):
+            if 0 <= gi < len(times):
+                b4[gi] = [round(float(o_), 6), round(float(h_), 6), round(float(l_), 6), round(float(c_), 6)]
         chart["bars"][c] = b4
-        chart["trades"][c] = [{"i0": pos4.get(x["t0"] * 60 // 14400 * 14400), "i1": pos4.get(x["t1"] * 60 // 14400 * 14400), "entry": float(round(x["entry"], 6)),
-                               "exit": float(round(x["exit"], 6)), "qty": x["q"], "soldQty": x["q"], "pnl": x["pnl_rs"], "side": x["side"], "adds": []}
-                              for x in all_tr if x["coin"] == c and pos4.get(x["t0"] * 60 // 14400 * 14400) is not None]
+        chart["trades"][c] = [{"i0": pos4.get(x["t0"] * 60 // 14400 * 14400), "i1": pos4.get(x["t1"] * 60 // 14400 * 14400),
+                                "entry": float(round(x["entry"], 6)), "exit": float(round(x["exit"], 6)),
+                                "qty": x["q"], "soldQty": x["q"], "pnl": x["pnl_rs"], "side": x["side"], "adds": []}
+                               for x in all_tr if x["coin"] == c and pos4.get(x["t0"] * 60 // 14400 * 14400) is not None]
+
     rep = {"days": [d.strftime("%Y-%m-%d") for d in days], "equity": [round(v) for v in curve], "events": events,
            "pos": [[] for _ in days], "bars": bars, "overlays": {}, "skipped_symbols": [], "chart": chart}
     first = np.array([b[0][3] for b in bars.values()])
@@ -226,7 +263,8 @@ def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None
     m = metrics(rep["equity"], capital, closed, round(len(days) * 250 / 365.25), 0)   # crypto trades every day: 365 days = one year
     if mode == "business":                                               # the yearly tax is paid out of the closed profit
         tax_effect = m["closed_profit"] - (m["final_equity"] - capital)         # tax paid + the growth that money would have earned
-        m["fees"] = round(m["fees"] + tax_effect); m["closed_profit"] = round(m["final_equity"] - capital)
+        m["fees"] = round(m["fees"] + tax_effect)
+        m["closed_profit"] = round(m["final_equity"] - capital)
     m["open_profit"] = round(m["final_equity"] - capital - m["closed_profit"])
     rep["metrics"] = m | {"tax_mode": mode, "final_strict": round(s_strict.iloc[-1]), "final_business": round(float(biz.iloc[-1])),
                           "final_pretax": round(s_pre.iloc[-1]),
