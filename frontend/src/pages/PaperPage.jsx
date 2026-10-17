@@ -77,6 +77,9 @@ export default function PaperPage() {
         <div className="big">
           <div className="eq">{inr(value)}</div>
           <div className="chg"><span className={tone(value - acc.initial_capital)}>{signed(value - acc.initial_capital)}</span> since start ({inr(acc.initial_capital)})</div>
+          {acc.business_value != null && (
+            <div className="note">If all sold now: {inr(acc.pretax_value)} before tax · {inr(acc.strict_value)} after tax (strict crypto rule) · {inr(acc.business_value)} after tax (business income)</div>
+          )}
         </div>
       </div>
 

@@ -8,7 +8,9 @@ prices come from CoinDCX's public futures price feed, fills are recorded in var/
 Equal money per coin, each coin's money split into 7 parts (as in the backtest). Each day the part for today's UTC weekday re-decides from
 yesterday's completed candles: market calm -> hold the coin (buy if not held), wild -> cash (sell if held). Prices are in USDT; profit is
 turned into rupees at CoinDCX's USDT/INR price when it is booked. Costs: 0.05% fee + 18% GST and 0.05% slippage per side, the real daily
-funding a long pays, and 31.2% tax (30% + 4% cess) on each winning trade (losses not set off), exactly like the backtest. Settings (.env): CRYPTO_CALM_CAPITAL
+funding a long pays. Profit is booked BEFORE tax (India has not settled how crypto futures are taxed); the report shows the after-tax
+value under both readings: strict crypto rule (31.2% of every winning trade, losses never set off) and business income (31.2% of each
+financial year's net profit, losses carried 4 years). Settings (.env): CRYPTO_CALM_CAPITAL
 (default Rs3 lakh: below that a BTC part is smaller than CoinDCX's 0.001 BTC minimum order, so BTC's share sits in cash), CRYPTO_CALM_LEVERAGE (default 1 = the sweet spot; 1.5x deepened BTC's worst fall from -36% to -60% for almost no extra profit).
 """
 from __future__ import annotations
@@ -83,6 +85,31 @@ def value_if_sold(p: dict, price: float, usdtinr: float) -> dict:
             "total": (fee + slip + fund) * usdtinr + tax}
 
 
+def _fy(d) -> int:
+    """Indian financial year, named by the year it ends (April 2026 - March 2027 -> 2027)."""
+    return d.year + (1 if d.month >= 4 else 0)
+
+
+def business_value(st: dict, capital0: float, open_pretax: float, today) -> tuple[float, float]:
+    """The account under the BUSINESS-income reading: before-tax booked profit of each financial year (kept in the state, 'pretax_fy'),
+    the open positions' before-tax value counted in the current year, 31.2% on each year's net profit, losses carried 4 years.
+    Returns (account value, tax)."""
+    fy_net = {int(k): v for k, v in st.get("pretax_fy", {}).items()}
+    cur = _fy(today); fy_net[cur] = fy_net.get(cur, 0.0) + open_pretax
+    carry, tax = [], 0.0
+    for y in sorted(fy_net):
+        p = fy_net[y]
+        if p > 0:
+            use = 0.0
+            for c in carry:
+                take = min(c[1], p - use); c[1] -= take; use += take
+            tax += S.TAX * (p - use)
+        elif p < 0:
+            carry.append([y, -p])
+        carry = [c for c in carry if c[1] > 0 and y - c[0] < 4]
+    return capital0 + sum(fy_net.values()) - tax, tax
+
+
 def _set_state(db, position_id: str, state: dict) -> None:
     with db._get_conn() as conn:
         conn.execute("UPDATE positions SET state = ? WHERE position_id = ?", (json.dumps(state), position_id))
@@ -141,14 +168,17 @@ def run(db, now: datetime, report: bool = True, send=None) -> dict:
             if mine and not calm:
                 for p in mine:
                     c = value_if_sold(p, px, fx)
-                    parts[coin][k] += c["net"]
-                    db.close_position(p["position_id"], px, "market_wild", c["gross"], c["net"], c["total"])
+                    pre = c["net"] + c["tax"]                                # booked BEFORE tax; tax is estimated separately (rule unsettled)
+                    parts[coin][k] += pre
+                    fyk = str(_fy(now.date())); fyd = st.setdefault("pretax_fy", {}); fyd[fyk] = fyd.get(fyk, 0.0) + pre
+                    st["strict_tax"] = st.get("strict_tax", 0.0) + c["tax"]  # what the strict crypto rule would charge on this trade
+                    db.close_position(p["position_id"], px, "market_wild", c["gross"], pre, c["total"] - c["tax"])
                     hold = (now - datetime.fromisoformat(p["entry_time"])).total_seconds() / 60
                     db.record_trade(p["position_id"], coin, "long", p["qty"], p["entry_price"], px, p["entry_time"], now_s, hold, "market_wild", c["gross"],
-                                    {"brokerage": c["fees"] / 1.18, "gst": c["fees"] - c["fees"] / 1.18, "slippage": c["slippage"], "total": c["total"]},
-                                    c["net"], sum(sum(v) for v in parts.values()), account_id=ACCOUNT, strategy=NAME)
-                    acted.append(f"• SOLD {coin} {p['qty']:g} @ {p['entry_price']:,.4g} → {px:,.4g} USDT: {'+' if c['net'] >= 0 else ''}{_inr(c['net'])} "
-                                 f"after fees, funding {_inr(c['funding'])} and tax {_inr(c['tax'])}")
+                                    {"brokerage": c["fees"] / 1.18, "gst": c["fees"] - c["fees"] / 1.18, "slippage": c["slippage"], "total": c["total"] - c["tax"]},
+                                    pre, sum(sum(v) for v in parts.values()), account_id=ACCOUNT, strategy=NAME)
+                    acted.append(f"• SOLD {coin} {p['qty']:g} @ {p['entry_price']:,.4g} → {px:,.4g} USDT: {'+' if pre >= 0 else ''}{_inr(pre)} "
+                                 f"after fees and funding {_inr(c['funding'])}, before tax (strict-rule tax on it: {_inr(c['tax'])})")
                 did = "sell"
             elif not mine and calm:
                 q = S.order_qty(coin, parts[coin][k] * lev, px, fx)        # CoinDCX's quantity step and smallest order
@@ -171,22 +201,25 @@ def run(db, now: datetime, report: bool = True, send=None) -> dict:
     STATE.write_text(json.dumps(st, indent=1))
 
     open_pos = db.get_open_positions(ACCOUNT)
-    open_net, per = 0.0, {}
+    open_net, open_pre, per = 0.0, 0.0, {}
     for p in open_pos:
         px = live["price"].get(p["symbol"])
         if px and fx:
-            c = value_if_sold(p, px, fx); open_net += c["net"]
+            c = value_if_sold(p, px, fx); open_net += c["net"]; open_pre += c["net"] + c["tax"]
             per.setdefault(p["symbol"], [0, 0.0]); per[p["symbol"]][0] += 1; per[p["symbol"]][1] += c["net"]
-    rows = [f"• {c}: {n} of 7 parts held, if sold now <b>{'+' if v >= 0 else ''}{_inr(v)}</b>" for c, (n, v) in per.items()]
+    rows = [f"• {c}: {n} of 7 parts held, if sold now <b>{'+' if v >= 0 else ''}{_inr(v)}</b> (strict-rule after tax)" for c, (n, v) in per.items()]
     db.record_snapshot(ACCOUNT)
-    value = booked + open_net
+    value = booked + open_pre                                             # before tax
+    strict = booked - st.get("strict_tax", 0.0) + open_net              # strict crypto rule: 31.2% of every winning trade
+    biz, _ = business_value(st, float(acc["initial_capital"]), open_pre, now.date())
     msg = (f"₿ <b>CRYPTO CALM COINS</b> ({now:%d %b %H:%M} IST) · {why}\n"
            + ("\n".join(lines) + "\n\n" if lines else "")
-           + f"Account value: <b>{_inr(value)}</b> if all sold now, after fees and tax (started {_inr(float(acc['initial_capital']))}; booked {_inr(booked)})\n"
+           + f"Account value if all sold now, after fees and funding: <b>{_inr(value)}</b> before tax (started {_inr(float(acc['initial_capital']))}; booked {_inr(booked)})\n"
+           + f"After tax: <b>{_inr(strict)}</b> strict crypto rule (31.2% of every winning trade) · <b>{_inr(biz)}</b> business-income rule (31.2% of the year's net)\n"
            + f"{len(open_pos)} of {len(S.TRADED) * S.PARTS} parts hold a coin" + (f" · USDT/INR {fx:.2f}" if fx else "") + "\n" + "\n".join(rows))
     if report or did:
         send(msg)
-    return {"did": did, "value": value, "lines": lines, "message": msg}
+    return {"did": did, "value": value, "strict_value": strict, "business_value": biz, "lines": lines, "message": msg}
 
 
 def main(argv=None) -> int:

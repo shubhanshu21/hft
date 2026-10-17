@@ -22,11 +22,11 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
   }, [strategy?.market, strategy?.name]);   // start from the risk the strategy was tested with
   const safeRisk = Math.max(3, strategy?.default_risk_pct ?? 0);
   const monthly = !!strategy?.monthly_rank;          // commodity/trend_carry: ranks the chosen contracts together each month; exposure is editable
-  const crypto = !!strategy?.crypto;                 // crypto/calm_coins: 5 coins' futures; leverage and the 30% tax are the choices
+  const crypto = !!strategy?.crypto;                 // crypto/calm_coins: 5 coins' futures; leverage and the tax rule are the choices
   const auto = !!strategy?.auto_universe;            // equity/breakout_pair: picks from the day's 200 most-traded NSE stocks itself, fixed 5 + 3 holdings
   const [all, setAll] = useState(true);
   const [chosen, setChosen] = useState([]);
-  const [f, setF] = useState({ ...yearRange(THIS_YEAR), capital: 100000, slippage_bp: 5, risk_pct: 2, max_positions: 3, leverage: 1, label: "", exposure: 1.5, tax: true });
+  const [f, setF] = useState({ ...yearRange(THIS_YEAR), capital: 100000, slippage_bp: 5, risk_pct: 2, max_positions: 3, leverage: 1, label: "", exposure: 1.5, tax: "strict" });
   const [year, setYear] = useState(String(THIS_YEAR));       // "custom" once the dates are edited by hand
 
   useEffect(() => { const o = strategies.filter((s) => s.market === market); setName(o[0]?.name ?? "");
@@ -117,8 +117,14 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
               <input id="exposure" type="number" min={strategy.exposure_min} max={strategy.exposure_max} step="0.25" value={f.exposure} onChange={set("exposure")} />
               <span className="hint">1x was the best by return per unit of worst fall (the paper account uses 1x). More leverage grows profits and falls together.</span>
               {+f.exposure > 1.5 && <span className="warn" role="alert">High leverage: at 1.5x the worst fall was −60% instead of −36%, for almost no extra profit after tax.</span>}</div>
-            <div className="field"><label className="check" htmlFor="tax"><input id="tax" type="checkbox" checked={f.tax} onChange={(e) => setF((x) => ({ ...x, tax: e.target.checked }))} /> Charge India's crypto tax (30% + 4% cess = 31.2%)</label>
-              <span className="hint">30% of every winning trade; losses cannot be set off. Untick to see the before-tax result.</span></div>
+            <div className="field"><label htmlFor="tax">Tax rule</label>
+              <select id="tax" value={f.tax} onChange={(e) => setF((x) => ({ ...x, tax: e.target.value }))}>
+                <option value="strict">Strict crypto rule: 31.2% of every winning trade (safe)</option>
+                <option value="business">Business income: 31.2% of each year's net profit</option>
+                <option value="none">No tax (before tax)</option>
+              </select>
+              <span className="hint">India has not decided how crypto futures are taxed. Strict: losses never reduce the tax (the safe reading). Business income:
+                a year's losses reduce that year's tax and are carried 4 years (what many CAs use for futures; not confirmed). The result note always shows all three.</span></div>
           </>) : monthly ? (
             <div className="field"><label htmlFor="exposure">Exposure (x the account)</label>
               <input id="exposure" type="number" min={strategy.exposure_min} max={strategy.exposure_max} step="0.25" value={f.exposure} onChange={set("exposure")} />

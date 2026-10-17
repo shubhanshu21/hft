@@ -198,22 +198,57 @@ def backtest_basket(start="2022-03-01", end=None, capital=100_000.0, leverage=1.
     return out
 
 
-def web_backtest(capital: float, start: str, end: str, leverage: float = 1.0, tax: bool = True) -> dict:
+def business_tax(curve: pd.Series, capital: float, rate: float = TAX, carry_years: int = 4) -> tuple[pd.Series, float]:
+    """The other tax reading: futures profit as speculative BUSINESS income -- tax on each financial year's NET profit (April-March), a
+    year's loss carried forward up to 4 years against later profits. `curve` is the BEFORE-tax account value; the result is the account
+    after paying that tax at each 31 March (and on the last day, as if the account were closed then), plus the total tax."""
+    r = curve / curve.shift(1) - 1; r.iloc[0] = curve.iloc[0] / capital - 1
+    fy = [d.year + (1 if d.month >= 4 else 0) for d in curve.index]          # FY 2026-27 -> 2027
+    A, start, out, carry, paid = capital, capital, [], [], 0.0
+    for k, (d, g) in enumerate(r.items()):
+        A *= 1 + g
+        if k == len(r) - 1 or fy[k + 1] != fy[k]:
+            profit = A - start
+            if profit > 0:
+                use = 0.0
+                for c in carry:
+                    take = min(c[1], profit - use); c[1] -= take; use += take
+                tax = rate * (profit - use); A -= tax; paid += tax
+            elif profit < 0:
+                carry.append([fy[k], -profit])
+            carry = [c for c in carry if c[1] > 0 and fy[k] - c[0] < carry_years]
+            start = A
+        out.append(A)
+    return pd.Series(out, index=curve.index), paid
+
+
+def web_backtest(capital: float, start: str, end: str, leverage: float = 1.0, tax="strict") -> dict:
+    """tax: 'strict' (31.2% on every winning trade, losses never set off), 'business' (31.2% on each year's net profit, losses carried 4
+    years), 'none' (before tax). The chart follows the chosen rule; the note always shows all three results."""
     from core.backtester import metrics
-    r = backtest_basket(start, end, capital, leverage=leverage, tax=tax, record=True)
+    mode = {True: "strict", False: "none"}.get(tax, tax)
+    r = backtest_basket(start, end, capital, leverage=leverage, tax=(mode == "strict"), record=True)
     rep = r["replay"]
     if len(rep["days"]) < 2:
         raise ValueError("No days in the chosen dates (crypto data starts 2022-01; the volatility needs 20 days)")
+    pre = r if mode != "strict" else backtest_basket(start, end, capital, leverage=leverage, tax=False)
+    strict = r if mode == "strict" else backtest_basket(start, end, capital, leverage=leverage, tax=True)
+    biz, biz_tax = business_tax(pre["curve"], capital)
+    if mode == "business":
+        rep["equity"] = [round(v) for v in biz.reindex(pd.to_datetime(rep["days"])).ffill().values]
     t = r["trades"]
     closed = [{"net": x.net, "fees": x.fees, "slip": 0.0, "gross": x.gross, "days": (x.exit_day - x.entry_day).days} for x in t.itertuples()] if len(t) else []
     c = load()["close"][list(TRADED)].reindex(pd.to_datetime(rep["days"])).ffill()
     rep["benchmark"] = [round(v) for v in (capital / len(TRADED) * c / c.iloc[0]).sum(axis=1)]
     m = metrics(rep["equity"], capital, closed, len(rep["days"]), r["open"])
-    tax_paid = float(t["tax"].sum()) if len(t) else 0.0
-    rep["metrics"] = m | {"note": f"Futures (CoinDCX, USDT) on {', '.join(TRADED)}, equal money each, long at {leverage:g}x only while the 12-coin market's "
-                                  f"20-day volatility is below {CALM_THRESHOLD:.2%}/day; each coin's money is split into 7 parts, each re-deciding on its own "
-                                  "weekday; otherwise cash. Fees, slippage and real funding included"
-                                  + (f"; India's 31.2% tax (30% + 4% cess) on each winning trade, losses not set off (tax paid Rs{tax_paid:,.0f})." if tax else "; NO income tax (the before-tax result).")
-                                  + " Benchmark = holding the 5 coins."}
+    st_tax = float(strict["trades"]["tax"].sum()) if len(strict["trades"]) else 0.0
+    shown = {"strict": "the STRICT crypto rule", "business": "the BUSINESS-income rule", "none": "NO tax"}[mode]
+    rep["metrics"] = m | {"tax_mode": mode, "final_strict": round(strict["final"]), "final_business": round(float(biz.iloc[-1])), "final_pretax": round(pre["final"]),
+                          "note": f"Futures (CoinDCX, USDT) on {', '.join(TRADED)}, equal money each, long at {leverage:g}x only while the 12-coin market's "
+                                  f"20-day volatility is below {CALM_THRESHOLD:.2%}/day; each coin's money in 7 weekday parts; otherwise cash. Fees, slippage "
+                                  f"and real funding included. Chart and figures use {shown}. All three: before tax Rs{pre['final']:,.0f}; "
+                                  f"STRICT crypto rule (31.2% of every winning trade, losses never set off -- the safe reading) Rs{strict['final']:,.0f} "
+                                  f"(tax Rs{st_tax:,.0f}); BUSINESS income (31.2% of each April-March year's net profit, losses carried 4 years -- what many CAs "
+                                  f"use for futures, not confirmed by CBDT) Rs{biz.iloc[-1]:,.0f} (tax Rs{biz_tax:,.0f}). Benchmark = holding the 5 coins."}
     rep["skipped_symbols"] = []
     return rep

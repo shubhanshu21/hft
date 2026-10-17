@@ -12,7 +12,7 @@ export default function SettingsChips({ params }) {
     ["Leverage", `${params.leverage}x`],
     ["Holds", "BTC ETH SOL DOGE TRX futures (equal money) while the crypto market is calm, else cash"],
     ["Checks", "weekly, 7 weekday parts"],
-    ["Tax", params.tax === false ? "off (before tax)" : "31.2% of each winning trade (30% + cess)"],
+    ["Tax", params.tax === false || params.tax === "none" ? "off (before tax)" : params.tax === "business" ? "business income: 31.2% of yearly net profit" : "strict: 31.2% of each winning trade"],
   ] : params.strategy === "earnings_drift" ? [                       // results reaction across the day's top-200 stocks
     ["Start money", `₹${Number(params.capital).toLocaleString("en-IN")}`],
     ["Buys", "after results beat the market by 4%+ on 2x volume"],

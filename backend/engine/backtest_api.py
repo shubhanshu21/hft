@@ -118,9 +118,12 @@ def validate(body: dict) -> dict:
         raise ValueError("Unknown market or strategy")
     if not known[(market, name)]["supported"]:
         raise ValueError(f"{market}/{name} uses {known[(market, name)]['timeframe']} bars; the web backtester runs daily-bar strategies")
-    if known[(market, name)].get("crypto"):                      # calm_coins: 5 coins' futures; leverage 1-3x and the 30% tax are the choices
+    if known[(market, name)].get("crypto"):                      # calm_coins: 5 coins' futures; leverage 1-3x and the tax rule are the choices
         row = known[(market, name)]
-        p = {"symbols": list(row["symbols"]), "slippage_bp": 0.0, "pyramid_pct": None, "tax": bool(body.get("tax", True))}
+        p = {"symbols": list(row["symbols"]), "slippage_bp": 0.0, "pyramid_pct": None,
+             "tax": {True: "strict", False: "none"}.get(body.get("tax", "strict"), body.get("tax"))}
+        if p["tax"] not in ("strict", "business", "none"):
+            raise ValueError("Tax must be strict, business or none")
         lo, hi = LIMITS["capital"]; p["capital"] = float(body.get("capital", 100_000))
         if not lo <= p["capital"] <= hi:
             raise ValueError(f"capital must be between {lo} and {hi}")
@@ -360,7 +363,8 @@ def _value_crypto(p: dict, live: dict) -> None:
     if not (price and fx):
         p.update(profit_now=None, fees_if_sold=None, net_if_sold=None, move_pct=None); return
     c = value_if_sold(p | {"state": json.dumps(st)}, price, fx)
-    p.update(profit_now=round(c["gross"], 2), net_if_sold=round(c["net"], 2), fees_if_sold=round(c["total"], 2), move_pct=round((price / p["entry_price"] - 1) * 100, 3))
+    p.update(profit_now=round(c["gross"], 2), net_if_sold=round(c["net"], 2), fees_if_sold=round(c["total"], 2), move_pct=round((price / p["entry_price"] - 1) * 100, 3),
+             pretax_if_sold=round(c["net"] + c["tax"], 2))
 
 
 def paper_summary(account: str = "DRYRUN_ACCOUNT") -> dict:
@@ -400,6 +404,11 @@ def paper_summary(account: str = "DRYRUN_ACCOUNT") -> dict:
         acc = dict(acc)
         acc["margin_used"] = round(sum(p["margin_used"] for p in pos), 2)
         acc["free_cash"] = round(acc["current_capital"] - acc["margin_used"], 2)
+        if account == "CRYPTO_CALM":                                   # the other tax reading, next to the strict one
+            from engine.crypto_calm import _state, business_value
+            acc["business_value"] = round(business_value(_state(), acc["initial_capital"], sum(p.get("pretax_if_sold") or 0 for p in pos), datetime.now(IST).date())[0], 2)
+            acc["strict_value"] = round(acc["current_capital"] - _state().get("strict_tax", 0.0) + sum(p.get("net_if_sold") or 0 for p in pos), 2)
+            acc["pretax_value"] = round(acc["current_capital"] + sum(p.get("pretax_if_sold") or 0 for p in pos), 2)
     return {"available": True, "account_id": account, "accounts": tabs, "account": acc, "positions": pos, "trades": trades, "equity": snaps,
             "stats": {"closed": len(trades), "wins": sum(1 for t in trades if (t["net_pnl"] or 0) > 0), "net": round(sum(t["net_pnl"] or 0 for t in trades)),
                       "fees": round(sum(t["total_friction"] or 0 for t in trades))}}
