@@ -27,7 +27,7 @@ export default function PriceChartPanel({ result, at, focus, onSelect, controls 
   if (!syms.length) return null;
 
   const trades = tradesBySymbol(result, at);
-  const sym = picked || followedSymbol(result, at);
+  const sym = (picked && syms.includes(picked)) ? picked : (followedSymbol(result, at) || syms[0]);
   const mine = trades[sym] ?? [];
   const calendar = result.days_all ?? result.days;
   const last = calendar.length - 1;

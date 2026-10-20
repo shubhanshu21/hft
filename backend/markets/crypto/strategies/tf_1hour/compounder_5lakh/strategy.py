@@ -188,7 +188,7 @@ def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None
     bars = {}
     for c in coins:
         df_c = d_map[c].reindex(date_range)
-        dd = df_c.resample("1D").agg({"open": "first", "high": "max", "low": "min", "close": "last"}).reindex(days).ffill()
+        dd = df_c.resample("1D").agg({"open": "first", "high": "max", "low": "min", "close": "last"}).reindex(days).ffill().bfill()
         bars[c] = [[round(float(v), 4) for v in r] for r in dd[["open", "high", "low", "close"]].values]
 
     closed_formatted = [
@@ -201,15 +201,98 @@ def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None
     m["final_equity"] = round(cur_cap)
 
     events = [[] for _ in days]
+    pos = [[] for _ in days]
     pos_of = {d.strftime("%Y-%m-%d"): i for i, d in enumerate(days)}
+
     for x in all_tr:
+        dt_entry = pd.Timestamp(x["t0"] * 60, unit="s").strftime("%Y-%m-%d")
         dt_exit = pd.Timestamp(x["t1"] * 60, unit="s").strftime("%Y-%m-%d")
+        when = pd.Timestamp(x["t0"] * 60, unit="s").strftime("%H:%M")
+        hours = max(1.0, (x["t1"] - x["t0"]) / 60)
+
+        # Standard buy/entry event
+        if dt_entry in pos_of:
+            events[pos_of[dt_entry]].append({
+                "t": "buy",
+                "side": x["side"],
+                "sym": x["coin"],
+                "q": round(x["q"], 4),
+                "px": round(x["entry"], 4),
+                "entry": round(x["entry"], 4),
+                "stop": round(x.get("stop", x["entry"] * 0.95), 4),
+                "note": f"{when} UTC {'BUY' if x['side'] == 'long' else 'SHORT'} ({x['coin']}) at ${x['entry']:,.2f}"
+            })
+
+        # Standard sell/exit event
         if dt_exit in pos_of:
             events[pos_of[dt_exit]].append({
-                "type": "exit", "symbol": x["coin"], "price": round(x["exit"], 2),
-                "qty": round(x["q"], 4), "pnl": round(x["pnl_rs"], 2), "pnl_pct": round(x["net"] / max(1, capital) * 100, 2),
-                "fees": round(x["fees"], 2), "why": x["why"]
+                "t": "sell",
+                "side": x["side"],
+                "sym": x["coin"],
+                "q": round(x["q"], 4),
+                "px": round(x["exit"], 4),
+                "entry": round(x["entry"], 4),
+                "pnl": round(x["pnl_rs"], 2),
+                "fees": round(x["fees"], 2),
+                "slip": 0.0,
+                "days": round(hours / 24, 1),
+                "why": x["why"]
             })
+
+        # Position tracking across calendar days
+        i_start = pos_of.get(dt_entry)
+        i_end = pos_of.get(dt_exit)
+        if i_start is not None and i_end is not None:
+            for d_idx in range(i_start, min(i_end, len(days))):
+                pos[d_idx].append({
+                    "sym": x["coin"],
+                    "q": round(x["q"], 4),
+                    "e": round(x["entry"], 4),
+                    "px": round(x["exit"], 4),
+                    "start": i_start
+                })
+
+    # Hourly chart data for full-fidelity interactive replay
+    t0g = int(days[0].timestamp()) // 3600 * 3600
+    t1g = int((days[-1] + pd.Timedelta(days=1)).timestamp())
+    times = list(range(t0g, t1g, 3600))
+    pos1h = {v: i for i, v in enumerate(times)}
+    chart = {
+        "tf": "1H",
+        "times": times,
+        "bars": {},
+        "trades": {},
+        "day_end": [min(len(times) - 1, max(0, (int((d + pd.Timedelta(days=1)).timestamp()) - t0g) // 3600 - 1)) for d in days]
+    }
+    for c in coins:
+        df_c = d_map[c].reindex(date_range)
+        b1 = [None] * len(times)
+        for t_idx, row in df_c.iterrows():
+            ts_sec = int(t_idx.timestamp()) // 3600 * 3600
+            gi = pos1h.get(ts_sec)
+            if gi is not None and 0 <= gi < len(times):
+                b1[gi] = [round(float(row["open"]), 4), round(float(row["high"]), 4), round(float(row["low"]), 4), round(float(row["close"]), 4)]
+        last_b = None
+        for k_idx in range(len(b1)):
+            if b1[k_idx] is not None:
+                last_b = b1[k_idx]
+            elif last_b is not None:
+                b1[k_idx] = list(last_b)
+        chart["bars"][c] = b1
+        chart["trades"][c] = [
+            {
+                "i0": pos1h.get(x["t0"] * 60 // 3600 * 3600),
+                "i1": pos1h.get(x["t1"] * 60 // 3600 * 3600),
+                "entry": float(round(x["entry"], 4)),
+                "exit": float(round(x["exit"], 4)),
+                "qty": round(x["q"], 4),
+                "soldQty": round(x["q"], 4),
+                "pnl": round(x["pnl_rs"], 2),
+                "side": x["side"],
+                "adds": []
+            }
+            for x in all_tr if x["coin"] == c and pos1h.get(x["t0"] * 60 // 3600 * 3600) is not None
+        ]
 
     first_px = np.array([b[0][3] for b in bars.values()])
     bench = (capital / len(coins) * np.array([[b[i][3] for b in bars.values()] for i in range(len(days))]) / first_px).sum(axis=1)
@@ -218,8 +301,9 @@ def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None
         "days": [d.strftime("%Y-%m-%d") for d in days],
         "equity": [round(v) for v in s_eq.values],
         "events": events,
-        "pos": [[] for _ in days],
+        "pos": pos,
         "bars": bars,
+        "chart": chart,
         "overlays": {},
         "skipped_symbols": [],
         "benchmark": [round(v) for v in bench],

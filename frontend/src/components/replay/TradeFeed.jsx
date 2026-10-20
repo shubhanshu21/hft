@@ -17,7 +17,7 @@ export default function TradeFeed({ result, upto, onSelect }) {
           <span className="dt">{shortDate(result.days[k])}<br />{String(result.days[k]).slice(0, 4)}</span>
           <span className={`pill ${e.t}${e.t === "sell" && e.pnl > 0 ? " win" : ""}`}>{e.t === "buy" ? (e.add ? "ADD" : e.side === "short" ? "SHORT" : "BUY") : e.side === "short" ? "COVER" : "SELL"}</span>
           <div>
-            <div><b>{e.sym}</b> {qtyText(result, e.sym, e.q)} at {e.px.toFixed(2)}{e.t === "sell" && ` (${e.side === "short" ? "shorted" : "bought"} ${e.entry.toFixed(2)})`}</div>
+            <div><b>{e.sym}</b> {qtyText(result, e.sym, e.q)} at {e.px != null ? e.px.toFixed(2) : "-"}{e.t === "sell" && ` (${e.side === "short" ? "shorted" : "bought"} ${e.entry != null ? e.entry.toFixed(2) : "-"})`}</div>
             <div className="why">
               {e.t === "buy" ? e.note : `${e.why}, held ${e.days} days, fees ${Math.round(e.fees)}${e.slip != null ? `, slippage ${Math.round(e.slip)}` : ""}`}
             </div>
