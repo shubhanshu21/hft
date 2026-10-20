@@ -14,7 +14,9 @@ import time
 import pandas as pd
 import requests
 
-from markets.crypto.strategies.tf_daily.calm_coins.strategy import COINS, DATA_DIR
+from core.paths import ARCHIVE_ROOT
+DATA_DIR = ARCHIVE_ROOT / "crypto"
+COINS = ("BTC", "ETH", "SOL")
 
 DAY_MS = 86_400_000
 LOOKBACK_DAYS = 30

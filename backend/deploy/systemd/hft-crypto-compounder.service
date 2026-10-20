@@ -1,0 +1,11 @@
+[Unit]
+Description=Crypto 5 Lakh Perpetual Futures Compounder (BTC, ETH, SOL 1h Asymmetric Engine)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/var/www/html/hft/backend
+ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m engine.crypto_compounder_5lakh
+TimeoutStartSec=5min
+
+[Install]
+WantedBy=multi-user.target

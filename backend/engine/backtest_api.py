@@ -67,19 +67,15 @@ def catalog() -> list[dict]:
     from markets.equity.strategies.tf_quarterly.momentum_portfolio import strategy as mps
     mom = {"market": "equity", "name": "momentum_portfolio", "timeframe": "1 days", "supported": True, "symbols": [], "auto_universe": True,
            "summary": (mps.__doc__ or "").strip().split("\n")[0], "intraday": False, "default_risk_pct": None}
-    from markets.crypto.strategies.tf_daily.calm_coins import strategy as cb
-    crypto = {"market": "crypto", "name": "calm_coins", "timeframe": "1 days", "supported": True, "symbols": list(cb.TRADED), "crypto": True,
-              "summary": (cb.__doc__ or "").strip().split("\n")[0], "intraday": False, "default_risk_pct": None,
-              "exposure": 1.0, "exposure_min": 1.0, "exposure_max": 3.0}
-    from markets.crypto.strategies.tf_4hour.trend_breakout import strategy as tbo
-    breakout = {"market": "crypto", "name": "trend_breakout", "timeframe": "4 hours", "supported": True, "symbols": tbo.available(), "crypto": True, "scalp": False,
-                "default_symbols": ["BTC", "ETH", "SOL"], "summary": (tbo.__doc__ or "").strip().split("\n")[0], "intraday": False, "default_risk_pct": None,
-                "exposure": 1.0, "exposure_min": 0.5, "exposure_max": 2.0}
+    from markets.crypto.strategies.tf_1hour.compounder_5lakh import strategy as cmp
+    compounder = {"market": "crypto", "name": "compounder_5lakh", "timeframe": "1 hours", "supported": True, "symbols": cmp.available(), "crypto": True, "scalp": False,
+                  "default_symbols": ["SOL", "ETH", "BTC"], "summary": (cmp.__doc__ or "").strip().split("\n")[0], "intraday": False, "default_risk_pct": 4.0,
+                  "exposure": 3.8, "exposure_min": 1.0, "exposure_max": 3.8}
     return [{"market": m, "name": n, "timeframe": f"{s.timeframe[1]} {s.timeframe[0]}", "supported": tuple(s.timeframe) == ("days", 1), "symbols": list(getattr(s, "universe", None) or universe(m)),
              "summary": (s.__doc__ or "").strip().split("\n")[0], "intraday": s.intraday,
              "default_risk_pct": getattr(s, "default_risk_pct", None),
              "default_symbols": [x for x in (getattr(s, "universe", None) or universe(m)) if s.trades(x)]}     # what its paper trading uses
-            for (m, n), s in sorted(registry.discover().items())] + [bp, mom, earn, mcx, crypto, breakout]
+            for (m, n), s in sorted(registry.discover().items())] + [bp, mom, earn, mcx, compounder]
 
 
 def prune() -> None:
@@ -288,9 +284,9 @@ def _value_position(p: dict, live: dict) -> None:
         p["net_if_sold"] = p["fees_if_sold"] = None
 
 
-PAPER_ACCOUNTS = [("EQUITY_SWING", "Equity swing"), ("DRYRUN_ACCOUNT", "Currency"), ("MCX_TREND_CARRY", "MCX trend + carry"), ("CRYPTO_CALM", "Crypto")]
+PAPER_ACCOUNTS = [("EQUITY_SWING", "Equity swing"), ("DRYRUN_ACCOUNT", "Currency"), ("MCX_TREND_CARRY", "MCX trend + carry"), ("CRYPTO_COMPOUNDER_5LAKH", "Crypto 5L Compounder")]
 ACCOUNT_STRATEGIES = {"EQUITY_SWING": "breakout · momentum · earnings drift · trend_ema_cross", "DRYRUN_ACCOUNT": "rsi_range",
-                      "MCX_TREND_CARRY": "trend_carry", "CRYPTO_CALM": "calm_coins + trend_breakout"}
+                      "MCX_TREND_CARRY": "trend_carry", "CRYPTO_COMPOUNDER_5LAKH": "asymmetric_5lakh_compounder"}
 
 
 MARKET_HOURS = {"EQUITY_SWING": ("09:15", "15:30", "NSE"), "DRYRUN_ACCOUNT": ("09:00", "17:00", "NSE currency"), "MCX_TREND_CARRY": ("09:00", None, "MCX")}
@@ -299,7 +295,7 @@ MARKET_HOURS = {"EQUITY_SWING": ("09:15", "15:30", "NSE"), "DRYRUN_ACCOUNT": ("0
 def market_status(account: str) -> tuple[bool, str]:
     """Is this account's market open right now (IST)? Crypto never closes; NSE/MCX: weekdays, not on a trading holiday, within session hours.
     MCX closes 23:30 while the US is on summer time, 23:55 otherwise. Holidays: the NSE/CDS list (an MCX evening session on an NSE holiday shows closed)."""
-    if account == "CRYPTO_CALM":
+    if account in ("CRYPTO_CALM", "CRYPTO_COMPOUNDER_5LAKH"):
         return True, "Crypto trades 24 hours, every day"
     start, end, name = MARKET_HOURS.get(account, ("09:15", "15:30", "NSE"))
     now = datetime.now(IST)
@@ -357,22 +353,26 @@ def _value_mcx(p: dict, live: dict) -> None:
 
 
 def _value_crypto(p: dict, live: dict) -> None:
-    """An open crypto calm_coins part (engine/crypto_calm.py): a coin's futures in USDT, profit in rupees at CoinDCX's USDT/INR, 'if sold now' after
-    fees, funding paid so far and the 30% tax."""
-    from engine.crypto_calm import live_prices, value_if_sold
+    """An open crypto position in USDT, profit in rupees at CoinDCX's USDT/INR, 'if sold now'."""
+    from engine.crypto_compounder_5lakh import fetch_live_prices
     st = json.loads(p.get("state") or "{}")
-    q = live.get("crypto") or live.setdefault("crypto", live_prices())
-    price, fx = q.get("price", {}).get(p["symbol"]), q.get("usdtinr")
-    size = f"part {st.get('part', 0) + 1} of 7" if p.get("strategy") == "calm_coins" else f"{p['direction']} · stop {st.get('stop', 0):,.4g}"
+    q = live.get("crypto") or live.setdefault("crypto", fetch_live_prices())
+    price, fx = q.get("prices", {}).get(p["symbol"]), q.get("usdtinr", 92.5)
+    size = f"{p['direction']} · stop {p.get('current_stop', 0):,.4g}"
     p.update(market="crypto", lot_size=1, units=p["qty"], size_text=f"{p['qty']:g} {p['symbol']} · {size}", price_now=price,
-             price_source="live" if price else None, price_time=q.get("at"), bid=None, ask=None, checked_at=q.get("at"),
+             price_source="live" if price else None, price_time=q.get("timestamp"), bid=None, ask=None, checked_at=q.get("timestamp"),
              margin_used=float(st.get("margin_inr") or 0.0), risk_to_stop=None)
     p.pop("state", None); p.pop("instrument_key", None)
     if not (price and fx):
         p.update(profit_now=None, fees_if_sold=None, net_if_sold=None, move_pct=None); return
-    c = value_if_sold(p | {"state": json.dumps(st)}, price, fx)
-    p.update(profit_now=round(c["gross"], 2), net_if_sold=round(c["net"], 2), fees_if_sold=round(c["total"], 2), move_pct=round((price / p["entry_price"] - 1) * 100, 3),
-             pretax_if_sold=round(c["net"] + c["tax"], 2))
+    entry = float(p["entry_price"])
+    qty = float(p["qty"])
+    d = 1 if p["direction"] == "long" else -1
+    gross = (price - entry) * qty * d * fx
+    fee = (price + entry) * qty * 0.0002 * fx
+    net = gross - fee
+    p.update(profit_now=round(gross, 2), net_if_sold=round(net, 2), fees_if_sold=round(fee, 2), move_pct=round((price / entry - 1) * 100 * d, 3),
+             pretax_if_sold=round(net, 2))
 
 
 def paper_summary(account: str = "DRYRUN_ACCOUNT") -> dict:
@@ -404,20 +404,19 @@ def paper_summary(account: str = "DRYRUN_ACCOUNT") -> dict:
                                                 "GROUP BY date ORDER BY date", (account,))]
     finally:
         con.close()
-    live = {} if account == "CRYPTO_CALM" else _live_prices([p["instrument_key"] for p in pos if p.get("instrument_key")])   # crypto: CoinDCX prices
-    value = {"MCX_TREND_CARRY": _value_mcx, "EQUITY_SWING": _value_breakout, "CRYPTO_CALM": _value_crypto}.get(account, _value_position)
+    live = {} if account in ("CRYPTO_CALM", "CRYPTO_COMPOUNDER_5LAKH") else _live_prices([p["instrument_key"] for p in pos if p.get("instrument_key")])   # crypto: CoinDCX prices
+    value = {"MCX_TREND_CARRY": _value_mcx, "EQUITY_SWING": _value_breakout, "CRYPTO_CALM": _value_crypto, "CRYPTO_COMPOUNDER_5LAKH": _value_crypto}.get(account, _value_position)
     for p in pos:
         value(p, live)
     if acc:
         acc = dict(acc)
         acc["margin_used"] = round(sum(p["margin_used"] for p in pos), 2)
         acc["free_cash"] = round(acc["current_capital"] - acc["margin_used"], 2)
-        if account == "CRYPTO_CALM":                                   # the other tax reading, next to the strict one
-            from engine.crypto_calm import account_states, business_value
-            stt = account_states()                                         # both sleeves (calm_coins + trend_breakout)
-            acc["business_value"] = round(business_value(stt, acc["initial_capital"], sum(p.get("pretax_if_sold") or 0 for p in pos), datetime.now(IST).date())[0], 2)
-            acc["strict_value"] = round(acc["current_capital"] - stt.get("strict_tax", 0.0) + sum(p.get("net_if_sold") or 0 for p in pos), 2)
-            acc["pretax_value"] = round(acc["current_capital"] + sum(p.get("pretax_if_sold") or 0 for p in pos), 2)
+        if account in ("CRYPTO_CALM", "CRYPTO_COMPOUNDER_5LAKH"):
+            open_pnl = sum(p.get("net_if_sold") or 0 for p in pos)
+            acc["business_value"] = round(acc["current_capital"] + open_pnl, 2)
+            acc["strict_value"] = round(acc["current_capital"] + open_pnl, 2)
+            acc["pretax_value"] = round(acc["current_capital"] + open_pnl, 2)
     return {"available": True, "account_id": account, "accounts": tabs, "account": acc, "positions": pos, "trades": trades, "equity": snaps,
             "stats": {"closed": len(trades), "wins": sum(1 for t in trades if (t["net_pnl"] or 0) > 0), "net": round(sum(t["net_pnl"] or 0 for t in trades)),
                       "fees": round(sum(t["total_friction"] or 0 for t in trades))}}
@@ -431,16 +430,10 @@ def work(run: dict) -> None:
         p = run["params"]
         def progress(i, n):
             run["progress"] = round(i / n * 100)
-        if run["market"] == "crypto" and run["strategy"] == "trend_breakout":
-            from markets.crypto.strategies.tf_4hour.trend_breakout import strategy as tbo
+        if run["market"] == "crypto":
+            from markets.crypto.strategies.tf_1hour.compounder_5lakh import strategy as cmp
             try:
-                run["result"] = tbo.web_backtest(p["capital"], p["start"], p["end"], symbols=p["symbols"], leverage=p.get("leverage", 1.0), tax=p["tax"])
-            except ValueError as e:
-                raise BacktestError(str(e))
-        elif run["market"] == "crypto":                              # calm_coins: 5 coins x 7 weekday parts, its own backtest
-            from markets.crypto.strategies.tf_daily.calm_coins import strategy as cb
-            try:
-                run["result"] = cb.web_backtest(p["capital"], p["start"], p["end"], leverage=p["leverage"], tax=p["tax"])
+                run["result"] = cmp.web_backtest(p["capital"], p["start"], p["end"], symbols=p.get("symbols"), leverage=p.get("leverage", 3.8))
             except ValueError as e:
                 raise BacktestError(str(e))
         elif run["strategy"] == "earnings_drift":                   # results dates + reaction across ~200 stocks: its own backtest

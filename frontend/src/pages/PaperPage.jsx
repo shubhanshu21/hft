@@ -71,7 +71,7 @@ export default function PaperPage() {
       <div className="page-head">
         <div>
           <h1>Paper trading</h1>
-          <div className="sub">Practice account: real prices, no real money. Open trades use the live {d.account_id === "CRYPTO_CALM" ? "CoinDCX futures" : "Upstox"} price{live ? "" : " when it is available (otherwise the last close)"}.
+          <div className="sub">Practice account: real prices, no real money. Open trades use the live {["CRYPTO_CALM", "CRYPTO_COMPOUNDER_5LAKH"].includes(d.account_id) ? "CoinDCX futures" : "Upstox"} price{live ? "" : " when it is available (otherwise the last close)"}.
             Updated {loadedAt ? loadedAt.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }) : "-"}, refreshes every minute.</div>
         </div>
         <div className="big">
@@ -96,6 +96,7 @@ export default function PaperPage() {
       <Panel title={`Open trades (${d.positions.length})`}>
         {!d.positions.length
           ? <div className="none">{{
+            CRYPTO_COMPOUNDER_5LAKH: "No open trades. The 1h All-Weather Compounder scans BTC, ETH, and SOL for breakout momentum at every hourly candle close.",
             MCX_TREND_CARRY: "No open trades. trend_carry rebalances at 09:10 on the first MCX trading day of each month.",
             EQUITY_SWING: "No holdings yet. Momentum buys its 15 stocks at the next open; breakout, earnings-drift and trend_ema_cross buys wait for a healthy market (half the stocks above their 50-day average).",
           }[d.account_id] ?? "No open trades. Currency (rsi_range) checks for entries at the 9:00 open."}</div>

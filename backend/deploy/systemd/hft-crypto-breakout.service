@@ -1,8 +1,0 @@
-[Unit]
-Description=Crypto trend_breakout paper trading (4-hour breakout on BTC ETH SOL, CRYPTO_CALM account's second sleeve; paper only, no real orders)
-
-[Service]
-Type=oneshot
-WorkingDirectory=/var/www/html/hft/backend
-ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m engine.crypto_breakout
-TimeoutStartSec=10min

@@ -1,0 +1,10 @@
+[Unit]
+Description=Crypto 5 Lakh Compounder Schedule (Runs 2 minutes after every 1-hour candle close)
+
+[Timer]
+# 2 minutes after every 1-hour candle closes (e.g., 01:02, 02:02, 03:02 ... UTC); crypto trades 24/7.
+OnCalendar=*-*-* *:02:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target
