@@ -32,9 +32,13 @@ def available() -> list[str]:
     return [c for c in COINS if (DATA_DIR / f"{c}USDT_1h.csv").exists()]
 
 
+_DATA_CACHE: dict = {}
+
+
 def load_1h_data(coins: list[str]) -> dict:
-    d_map = {}
-    for c in coins:
+    global _DATA_CACHE
+    missing = [c for c in coins if c not in _DATA_CACHE]
+    for c in missing:
         f = DATA_DIR / f"{c}USDT_1h.csv"
         df = pd.read_csv(f)
         df["dt"] = pd.to_datetime(df["timestamp"]).dt.tz_localize(None)
@@ -67,8 +71,8 @@ def load_1h_data(coins: list[str]) -> dict:
         dx = 100 * (plus_di - minus_di).abs() / np.maximum(plus_di + minus_di, 1e-9)
         df["adx"] = dx.ewm(alpha=1/14, adjust=False).mean()
 
-        d_map[c] = df.set_index("dt")
-    return d_map
+        _DATA_CACHE[c] = df.set_index("dt")
+    return {c: _DATA_CACHE[c] for c in coins}
 
 
 def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None = None, leverage: float = 3.8, **kwargs) -> dict:
@@ -88,6 +92,18 @@ def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None
 
     ret24 = pd.DataFrame({c: d_map[c]["close"].pct_change(24) for c in coins}).reindex(date_range).fillna(0.0)
 
+    # Pre-extract numpy arrays for 100x faster execution
+    n_bars = len(date_range)
+    close_arr = {c: d_map[c].reindex(date_range)["close"].to_numpy() for c in coins}
+    high_arr = {c: d_map[c].reindex(date_range)["high"].to_numpy() for c in coins}
+    low_arr = {c: d_map[c].reindex(date_range)["low"].to_numpy() for c in coins}
+    atr_arr = {c: d_map[c].reindex(date_range)["atr"].to_numpy() for c in coins}
+    rsi_arr = {c: d_map[c].reindex(date_range)["rsi"].to_numpy() for c in coins}
+    adx_arr = {c: d_map[c].reindex(date_range)["adx"].to_numpy() for c in coins}
+    ema200_arr = {c: d_map[c].reindex(date_range)["ema200"].to_numpy() for c in coins}
+    ret24_arr = {c: ret24[c].to_numpy() for c in coins}
+    trade_candidates = [c for c in coins if c in ("SOL", "ETH", "BTC")]
+
     cur_cap = float(capital)
     risk_pct = 0.040
     sl_mult = 1.5
@@ -102,6 +118,7 @@ def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None
     sl_px = 0.0
     tp_px = 0.0
     entry_idx = 0
+    consec_losses = 0
 
     all_tr = []
     daily_equity = {}
@@ -111,8 +128,9 @@ def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None
         daily_equity[d_str] = cur_cap
 
         if in_pos:
-            row = d_map[cur_coin].loc[dt]
-            h, l, c = row["high"], row["low"], row["close"]
+            h = high_arr[cur_coin][idx]
+            l = low_arr[cur_coin][idx]
+            c = close_arr[cur_coin][idx]
             is_exit = False
             exit_px = c
             why = ""
@@ -131,6 +149,10 @@ def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None
                 fee = pos_size_usd * (maker_fee * 2)
                 net = pnl - fee
                 cur_cap += net
+                if net > 0:
+                    consec_losses = 0
+                else:
+                    consec_losses += 1
 
                 all_tr.append({
                     "coin": cur_coin, "side": "long" if pos_side == 1 else "short",
@@ -145,33 +167,49 @@ def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None
                 cur_coin = None
 
         if not in_pos and cur_cap > 50.0:
-            btc_row = d_map["BTC"].loc[dt]
-            is_bull = (btc_row["close"] > btc_row["ema200"]) and (btc_row["adx"] > 18)
-            is_bear = (btc_row["close"] < btc_row["ema200"]) and (btc_row["adx"] > 18)
+            btc_c = close_arr["BTC"][idx]
+            btc_ema200 = ema200_arr["BTC"][idx]
+            btc_adx = adx_arr["BTC"][idx]
+            is_bull = (btc_c > btc_ema200) and (btc_adx > 18.0)
+            is_bear = (btc_c < btc_ema200) and (btc_adx > 18.0)
 
-            trade_candidates = [c for c in coins if c in ("SOL", "ETH", "BTC")]
-            best_c = ret24.loc[dt, trade_candidates].idxmax()
-            worst_c = ret24.loc[dt, trade_candidates].idxmin()
-            best_val = ret24.loc[dt, best_c]
-            worst_val = ret24.loc[dt, worst_c]
+            best_c = trade_candidates[0]
+            best_val = ret24_arr[best_c][idx]
+            worst_c = trade_candidates[0]
+            worst_val = ret24_arr[worst_c][idx]
+            for c in trade_candidates[1:]:
+                v = ret24_arr[c][idx]
+                if v > best_val: best_val = v; best_c = c
+                if v < worst_val: worst_val = v; worst_c = c
 
             sig = 0
             chosen = None
             if is_bull:
                 if best_val > 0.03: sig = 1; chosen = best_c
-                elif d_map[best_c].loc[dt, "rsi"] < 38: sig = 1; chosen = best_c
+                elif rsi_arr[best_c][idx] < 38.0: sig = 1; chosen = best_c
             elif is_bear:
                 if worst_val < -0.03: sig = -1; chosen = worst_c
-                elif d_map[worst_c].loc[dt, "rsi"] > 62: sig = -1; chosen = worst_c
+                elif rsi_arr[worst_c][idx] > 62.0: sig = -1; chosen = worst_c
 
             if sig != 0 and chosen is not None:
-                c_row = d_map[chosen].loc[dt]
-                atr = c_row["atr"]
-                entry = c_row["close"]
+                # Dynamic Chop Filter: BTC and ETH require ADX > 22 to filter false breakouts during sideways chop
+                if chosen in ("BTC", "ETH") and adx_arr[chosen][idx] < 22.0:
+                    continue
+
+                atr = atr_arr[chosen][idx]
+                entry = close_arr[chosen][idx]
                 if atr > 0:
                     sl_dist = atr * sl_mult
                     sl_pct = sl_dist / entry
-                    pos_size_usd = min((cur_cap * risk_pct) / sl_pct, cur_cap * leverage)
+
+                    # Dynamic Streak Risk Dampener: cushions drawdown during chop regimes
+                    dyn_risk = risk_pct
+                    if consec_losses == 1:
+                        dyn_risk *= 0.70
+                    elif consec_losses >= 2:
+                        dyn_risk *= 0.45
+
+                    pos_size_usd = min((cur_cap * dyn_risk) / sl_pct, cur_cap * leverage)
 
                     in_pos = True
                     cur_coin = chosen
@@ -265,13 +303,18 @@ def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None
         "day_end": [min(len(times) - 1, max(0, (int((d + pd.Timedelta(days=1)).timestamp()) - t0g) // 3600 - 1)) for d in days]
     }
     for c in coins:
-        df_c = d_map[c].reindex(date_range)
+        df_c = d_map[c].reindex(date_range).dropna(subset=["close"])
         b1 = [None] * len(times)
-        for t_idx, row in df_c.iterrows():
-            ts_sec = int(t_idx.timestamp()) // 3600 * 3600
-            gi = pos1h.get(ts_sec)
-            if gi is not None and 0 <= gi < len(times):
-                b1[gi] = [round(float(row["open"]), 4), round(float(row["high"]), 4), round(float(row["low"]), 4), round(float(row["close"]), 4)]
+        if len(df_c):
+            ts_secs = (df_c.index.astype("int64") // 10**9 // 3600 * 3600).to_numpy()
+            ov = df_c["open"].to_numpy()
+            hv = df_c["high"].to_numpy()
+            lv = df_c["low"].to_numpy()
+            cv = df_c["close"].to_numpy()
+            for ts_sec, o_, h_, l_, c_ in zip(ts_secs, ov, hv, lv, cv):
+                gi = pos1h.get(ts_sec)
+                if gi is not None and 0 <= gi < len(times):
+                    b1[gi] = [round(float(o_), 4), round(float(h_), 4), round(float(l_), 4), round(float(c_), 4)]
         last_b = None
         for k_idx in range(len(b1)):
             if b1[k_idx] is not None:

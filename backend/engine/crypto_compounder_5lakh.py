@@ -403,6 +403,11 @@ def process_entries(db: TradingDB, state: dict, candles_map: dict, live_info: di
             chosen_coin = worst_coin
 
     if sig != 0 and chosen_coin is not None:
+        # Dynamic Chop Filter: BTC and ETH require ADX > 22 to filter false breakouts during sideways chop
+        if chosen_coin in ("BTC", "ETH") and float(candles_map[chosen_coin].iloc[-1]["adx"]) < 22.0:
+            lines.append(f"ℹ️ Skipping {chosen_coin}: ADX {float(candles_map[chosen_coin].iloc[-1]['adx']):.1f} < 22.0 (sideways chop gate active)")
+            return
+
         c_df = candles_map[chosen_coin]
         last_row = c_df.iloc[-1]
         entry_px = float(last_row["c"])
