@@ -113,7 +113,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
           )}
           {crypto ? (<>
             {!scalp && <div className="field"><label htmlFor="exposure">Leverage (x the account)</label>
-              <input id="exposure" type="number" min={strategy.exposure_min ?? 1} max={strategy.exposure_max ?? 3.8} step="0.25" value={f.exposure} onChange={set("exposure")} />
+              <input id="exposure" type="number" min={strategy.exposure_min ?? 1} max={strategy.exposure_max ?? 3.8} step="0.1" value={f.exposure} onChange={set("exposure")} />
               <span className="hint">Leverage multiple (capped at 3.8x max per trade to protect against gap liquidation; tested at 3.8x).</span>
             </div>}
             <div className="field"><label htmlFor="tax">Tax rule</label>
@@ -146,7 +146,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
           </>)}
         </div>
         <p className="fees-box">
-          {"Every trade is charged the strategy's full cost model (brokerage, STT, exchange charges, GST, stamp duty, SEBI fees) and slippage on entry and exit (currency: the real bid-ask spread, built into its cost model). Stops that gap are filled at the open, not at the stop price. Fees cannot be switched off. Leverage is set for you: shares are bought with your own money (1x); currency futures use the margin Upstox really charges (about 34-41x), and the strategy caps itself at 20x in total. Commodity (MCX): brokerage, CTT, stamp duty, exchange charges, GST and a half-spread on every trade, real month-end MCX prices including the monthly contract-switch cost. Crypto (CoinDCX futures): 0.05% fee + 18% GST and 0.05% slippage per side, plus real funding."}
+          {"Every trade is charged the strategy's full cost model (brokerage, STT, exchange charges, GST, stamp duty, SEBI fees) and slippage on entry and exit (currency: the real bid-ask spread, built into its cost model). Stops that gap are filled at the open, not at the stop price. Fees cannot be switched off. Leverage is set for you: shares are bought with your own money (1x); currency futures use the margin Upstox really charges (about 34-41x), and the strategy caps itself at 20x in total. Commodity (MCX): brokerage, CTT, stamp duty, exchange charges, GST and a half-spread on every trade, real month-end MCX prices including the monthly contract-switch cost. Crypto (CoinDCX / Binance perpetual futures): 0.02% maker fee per side + slippage."}
         </p>
       </Panel>
 
