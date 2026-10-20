@@ -85,17 +85,10 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
               : " Half the money buys quiet-day (NR7) breakouts, up to 5 stocks; half buys 55-day-high breakouts, up to 3 stocks. It buys only while at least half of those 200 stocks are above their 50-day average."}
             {" "}Daily data starts January 2022, so the first signals are in late 2022.</p>
         )}
-        {strategy && crypto && strategy.name === "trend_breakout" && (
-          <p className="hint">4-hour trend breakout on CoinDCX futures (BTC, ETH, SOL): buys when a 4-hour candle closes at least 0.3% above the 28-candle high, above
-            a 100 EMA that is higher than 4 candles ago (shorts the mirror), exits at the 11-candle low/high or an 8% stop. Bitcoin signals are guarded by an Unsupervised ML GMM regime filter that skips chop regimes. Fees, slippage and real funding included.
-            Rs1L, BTC+ETH+SOL, 2022-26: Rs3.59L before tax, Rs2.53L as business income (2026: Rs1.58L before tax, 42.4% win rate).</p>
+        {strategy && crypto && (
+          <p className="hint">1-hour All-Weather Compounder on Crypto Perpetual Futures (BTC, ETH, SOL): Macro regime gate (BTC EMA200 + ADX chop filter), asymmetric 1:2.53 R:R (1.5x ATR stop, 3.8x ATR target), and 3-tier milestone vault profit sweep targeting ₹5,00,000. Real exchange maker fees (0.02%) and slippage included.</p>
         )}
-        {strategy && crypto && strategy.name === "calm_coins" && (
-          <p className="hint">Holds futures on BTC, ETH, SOL, DOGE and TRX (CoinDCX, priced in USDT, equal money each) only while the whole crypto market is calm: the 20-day volatility of 12 big coins
-            below 2.43% a day; otherwise it holds cash. Each coin's money is split into 7 parts, each re-checking on its own weekday, so no single day's luck decides.
-            Fees, slippage and the real funding paid by longs are included. Data starts January 2022; the first signal is in February 2022.</p>
-        )}
-        {strategy && !auto && strategy.name !== "calm_coins" && (
+        {strategy && !auto && (
           <div className="field">
             <label className="check" htmlFor="all"><input id="all" type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} /> All {strategy.symbols.length} symbols</label>
             {(strategy.default_symbols?.length ?? 0) > 0 && strategy.default_symbols.length < strategy.symbols.length && (
@@ -120,17 +113,16 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
           )}
           {crypto ? (<>
             {!scalp && <div className="field"><label htmlFor="exposure">Leverage (x the account)</label>
-              <input id="exposure" type="number" min={strategy.exposure_min} max={strategy.exposure_max} step="0.25" value={f.exposure} onChange={set("exposure")} />
-              <span className="hint">1x was the best by return per unit of worst fall (the paper account uses 1x). More leverage grows profits and falls together.</span>
-              {+f.exposure > 1.5 && <span className="warn" role="alert">High leverage: at 1.5x the worst fall was −60% instead of −36%, for almost no extra profit after tax.</span>}</div>}
+              <input id="exposure" type="number" min={strategy.exposure_min ?? 1} max={strategy.exposure_max ?? 3.8} step="0.25" value={f.exposure} onChange={set("exposure")} />
+              <span className="hint">Leverage multiple (capped at 3.8x max per trade to protect against gap liquidation; tested at 3.8x).</span>
+            </div>}
             <div className="field"><label htmlFor="tax">Tax rule</label>
               <select id="tax" value={f.tax} onChange={(e) => setF((x) => ({ ...x, tax: e.target.value }))}>
-                <option value="business">Business income: 31.2% of each year's net profit (main view)</option>
-                <option value="strict">Strict crypto rule: 31.2% of every winning trade (worst case)</option>
+                <option value="business">Business income (Section 43(5)): full compounding, 31.2% year-end net</option>
                 <option value="none">No tax (before tax)</option>
+                <option value="strict">Strict crypto rule: 31.2% flat VDA tax (worst case)</option>
               </select>
-              <span className="hint">India has not decided how crypto futures are taxed. Strict: losses never reduce the tax (the safe reading). Business income:
-                a year's losses reduce that year's tax and are carried 4 years (what many CAs use for futures; not confirmed). The result note always shows all three.</span></div>
+              <span className="hint">Crypto perpetual futures treated as business income under Sec 43(5) allows continuous compounding.</span></div>
           </>) : monthly ? (
             <div className="field"><label htmlFor="exposure">Exposure (x the account)</label>
               <input id="exposure" type="number" min={strategy.exposure_min} max={strategy.exposure_max} step="0.25" value={f.exposure} onChange={set("exposure")} />

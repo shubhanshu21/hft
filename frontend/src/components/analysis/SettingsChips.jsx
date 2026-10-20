@@ -7,23 +7,17 @@ export default function SettingsChips({ params }) {
     ["Commodities", `${params.symbols?.length}: ${(params.symbols ?? []).join(", ")}`],
     ["Rebalance", "monthly"],
     ["Costs", "MCX fees + half-spread"],
-  ] : params.market === "crypto" && params.strategy === "trend_breakout" ? [ // 4-hour trend breakout
+  ] : params.market === "crypto" && params.strategy === "compounder_5lakh" ? [
+    ["Start money", `₹${Number(params.capital).toLocaleString("en-IN")}`],
+    ["Perps", `${params.symbols?.length}: ${(params.symbols ?? []).join(", ")}`],
+    ["Timeframe", "1-hour candles"],
+    ["Rules", "Macro EMA200 + ADX regime gate, 1:2.53 R:R, Milestone Vault"],
+    ["Leverage", `${params.leverage ?? 3.8}x`],
+    ["Costs", "0.02% maker fee + slippage"],
+  ] : params.market === "crypto" ? [
     ["Start money", `₹${Number(params.capital).toLocaleString("en-IN")}`],
     ["Coins", `${params.symbols?.length}: ${(params.symbols ?? []).join(", ")}`],
-    ["Timeframe", "4-hour candles"],
-    ["Rules", "28-candle breakout +0.3% with rising/falling 100 EMA, 11-candle exit, 8% stop (BTC GMM chop filter)"],
-    ["Tax", params.tax === "none" ? "off (before tax)" : params.tax === "business" ? "business income: 31.2% of yearly net profit" : "strict: 31.2% of each winning trade"],
-  ] : params.market === "crypto" && params.strategy === "sr_sweep" ? [   // 1-minute scalper
-    ["Start money", `₹${Number(params.capital).toLocaleString("en-IN")}`],
-    ["Coins", `${params.symbols?.length}: ${(params.symbols ?? []).join(", ")}`],
-    ["Rules", "1-min sweep & reclaim + confirmation, target 0.5R"],
-    ["Tax", params.tax === "none" ? "off (before tax)" : params.tax === "business" ? "business income: 31.2% of yearly net profit" : "strict: 31.2% of each winning trade"],
-  ] : params.market === "crypto" ? [                                // calm_coins: 5 coins' futures while the market is calm
-    ["Start money", `₹${Number(params.capital).toLocaleString("en-IN")}`],
-    ["Leverage", `${params.leverage}x`],
-    ["Holds", "BTC ETH SOL DOGE TRX futures (equal money) while the crypto market is calm, else cash"],
-    ["Checks", "weekly, 7 weekday parts"],
-    ["Tax", params.tax === false || params.tax === "none" ? "off (before tax)" : params.tax === "business" ? "business income: 31.2% of yearly net profit" : "strict: 31.2% of each winning trade"],
+    ["Strategy", params.strategy],
   ] : params.strategy === "earnings_drift" ? [                       // results reaction across the day's top-200 stocks
     ["Start money", `₹${Number(params.capital).toLocaleString("en-IN")}`],
     ["Buys", "after results beat the market by 4%+ on 2x volume"],
