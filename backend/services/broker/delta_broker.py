@@ -23,6 +23,15 @@ import requests
 
 _log = logging.getLogger("delta_broker")
 
+
+class DeltaAPIError(RuntimeError):
+    """Carries the parsed {"code": ..., "context": {...}} Delta returns, so callers can react to e.g. insufficient_margin instead of
+    just parsing the message string."""
+
+    def __init__(self, status: int, method: str, path: str, error: dict):
+        self.status, self.error = status, error or {}
+        super().__init__(f"Delta demo API error {status} on {method} {path}: {error}")
+
 HOST = "https://cdn-ind.testnet.deltaex.org"      # testnet ONLY -- no live host constant exists in this file, by design
 
 PRODUCTS = {       # symbol -> (product_id, contract_value in base units per contract); from /v2/products on testnet, 2026-10-21
@@ -51,7 +60,7 @@ class DeltaDemoBroker:
         r = requests.request(method, f"{HOST}{path}{query}", headers=headers, data=body_str or None, timeout=15)
         data = r.json()
         if not data.get("success"):
-            raise RuntimeError(f"Delta demo API error {r.status_code} on {method} {path}: {data.get('error')}")
+            raise DeltaAPIError(r.status_code, method, path, data.get("error"))
         return data.get("result")
 
     def balances(self) -> dict:
@@ -79,6 +88,45 @@ class DeltaDemoBroker:
         product_id, _ = PRODUCTS[coin]
         body = {"product_id": product_id, "size": int(contracts), "side": side, "order_type": "market_order"}
         return self._request("POST", "/v2/orders", body=body)
+
+    def place_market_order_fit_margin(self, coin: str, side: str, contracts: int) -> dict:
+        """Like place_market_order, but if the account doesn't have enough margin for the full size (the demo account's seeded
+        funds are small relative to a RISK_PCT-sized position -- 2026-10-21), scale down to what it can actually afford using the
+        available_balance/required_additional_balance Delta's own error tells us, and place that instead. Raises if even 1
+        contract doesn't fit."""
+        try:
+            return self.place_market_order(coin, side, contracts)
+        except DeltaAPIError as e:
+            if e.error.get("code") != "insufficient_margin" or contracts <= 1:
+                raise
+            ctx = e.error.get("context") or {}
+            avail = float(ctx.get("available_balance", 0))
+            extra = float(ctx.get("required_additional_balance", 0))
+            total_needed = avail + extra
+            if total_needed <= 0:
+                raise
+            scaled = max(1, int(contracts * avail / total_needed * 0.95))   # 5% headroom for price movement between the two calls
+            scaled = min(scaled, contracts - 1) if scaled >= contracts else scaled
+            if scaled < 1:
+                raise
+            _log.warning("%s: full size %d contracts needs more margin than available -- placing %d instead", coin, contracts, scaled)
+            return self.place_market_order(coin, side, scaled)
+
+    def place_limit_order(self, coin: str, side: str, contracts: int, limit_price: float, reduce_only: bool = False) -> dict:
+        """A resting GTC limit order (the take-profit: a maker fill if it's reached, not a market/taker exit)."""
+        if coin not in PRODUCTS:
+            raise ValueError(f"{coin} is not on Delta's testnet product list")
+        product_id, _ = PRODUCTS[coin]
+        body = {"product_id": product_id, "size": int(contracts), "side": side, "order_type": "limit_order",
+                "limit_price": str(round(limit_price, 8)), "time_in_force": "gtc", "reduce_only": reduce_only}
+        return self._request("POST", "/v2/orders", body=body)
+
+    def get_order(self, order_id: int) -> dict:
+        return self._request("GET", f"/v2/orders/{order_id}")
+
+    def cancel_order(self, coin: str, order_id: int) -> dict:
+        product_id, _ = PRODUCTS[coin]
+        return self._request("DELETE", "/v2/orders", body={"id": order_id, "product_id": product_id})
 
     def close_position(self, coin: str) -> dict | None:
         """Flatten an open position at market, whichever side it's on. No-op (returns None) if already flat."""

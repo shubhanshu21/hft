@@ -148,24 +148,46 @@ def process_exits(db: TradingDB, state: dict, candles_map: dict, live_info: dict
         o, h, l, c = float(last["open"]), float(last["high"]), float(last["low"]), float(last["close"])
         entry_bar_t, entry_px, sl_px, tp_px, pos_usd = pos["entry_bar_t"], pos["entry_price"], pos["sl_price"], pos["tp_price"], pos["pos_usd"]
         px = None; fee_pct = 0.0; why = ""
-        if l <= sl_px:
-            px, fee_pct, why = min(o, sl_px), S.TAKER + S.SLIP.get(coin, 0.00015), "STOP LOSS (7%)"
-        elif h >= tp_px:
-            px, fee_pct, why = max(o, tp_px) if int(last["t"]) > entry_bar_t else tp_px, S.MAKER, "TAKE PROFIT (7%)"
-        elif not pd.isna(last["bb_mid20"]) and c > float(last["bb_mid20"]) and int(last["t"]) > entry_bar_t:
-            px, fee_pct, why = o, S.TAKER + S.SLIP.get(coin, 0.00015), "EXIT SIGNAL (close > 20-candle mid-band)"
-        elif (int(last["t"]) - entry_bar_t) >= S.TIME_STOP_BARS * 5 * 60 * 1000:
-            px, fee_pct, why = c, S.TAKER + S.SLIP.get(coin, 0.00015), "TIME STOP (24h)"
-        if px is None:
-            continue
-        if pos.get("real") and broker is not None:
+
+        # A real position's resting target limit order may already have filled on Delta's own book -- check that FIRST, since it's
+        # the actual source of truth for whether the target was hit (not our own candle's high crossing tp_px).
+        tgt_id = pos.get("target_order_id")
+        if pos.get("real") and broker is not None and tgt_id:
             try:
-                order = broker.close_position(coin)
-                fill = order.get("average_fill_price") if order else None
-                if fill:
-                    px = float(fill)                                 # the real fill Delta's demo matching engine gave us
+                tgt = broker.get_order(tgt_id)
+                if tgt.get("state") in ("closed", "filled") and tgt.get("average_fill_price"):
+                    px, fee_pct, why = float(tgt["average_fill_price"]), S.MAKER, "TAKE PROFIT (15%, Delta demo limit order filled)"
             except Exception as e:
-                _log.warning("Delta demo close failed for %s, using the simulated exit price instead: %s", coin, e)
+                _log.warning("Delta demo target-order check failed for %s (falling back to the candle check): %s", coin, e)
+
+        if px is None:
+            if l <= sl_px:
+                px, fee_pct, why = min(o, sl_px), S.TAKER + S.SLIP.get(coin, 0.00015), "STOP LOSS (7%)"
+            elif h >= tp_px:
+                px, fee_pct, why = max(o, tp_px) if int(last["t"]) > entry_bar_t else tp_px, S.MAKER, "TAKE PROFIT (7%)"
+            elif not pd.isna(last["bb_mid20"]) and c > float(last["bb_mid20"]) and int(last["t"]) > entry_bar_t:
+                px, fee_pct, why = o, S.TAKER + S.SLIP.get(coin, 0.00015), "EXIT SIGNAL (close > 20-candle mid-band)"
+            elif (int(last["t"]) - entry_bar_t) >= S.TIME_STOP_BARS * 5 * 60 * 1000:
+                px, fee_pct, why = c, S.TAKER + S.SLIP.get(coin, 0.00015), "TIME STOP (24h)"
+            if px is None:
+                continue
+            if pos.get("real") and broker is not None and tgt_id and why == "TAKE PROFIT (7%)":
+                # our own candle says the target was crossed, but the top-of-function check just found Delta's resting order still
+                # open -- trust the resting order, not a redundant market close on top of it; it'll be picked up once it fills
+                continue
+            if pos.get("real") and broker is not None:
+                if tgt_id:                                          # a non-target exit: cancel the resting target order first
+                    try:
+                        broker.cancel_order(coin, tgt_id)
+                    except Exception as e:
+                        _log.warning("Delta demo target-order cancel failed for %s (closing anyway): %s", coin, e)
+                try:
+                    order = broker.close_position(coin)
+                    fill = order.get("average_fill_price") if order else None
+                    if fill:
+                        px = float(fill)                             # the real fill Delta's demo matching engine gave us
+                except Exception as e:
+                    _log.warning("Delta demo close failed for %s, using the simulated exit price instead: %s", coin, e)
         gross_usd = (px - entry_px) / entry_px * pos_usd
         hours = (int(last["t"]) - entry_bar_t) / 3_600_000
         try:
@@ -217,22 +239,30 @@ def process_entries(db: TradingDB, state: dict, candles_map: dict, live_info: di
         risk_pct = S.RISK_PCT * S.current_vol_scale()           # dynamic: size up in a calmer-than-usual market, down in a wilder one
         risk_inr = cap * risk_pct
         pos_usd = min((risk_inr / fx) / S.STOPLOSS, (cap * MAX_LEVERAGE) / fx)
+        intended_pos_usd = pos_usd
         qty = pos_usd / entry_px
 
-        contracts, real = None, False
+        contracts, real, target_order_id = None, False, None
         if broker is not None and coin in DELTA_COINS:
             _, contract_value = DELTA_COINS[coin]
             contracts = round(qty / contract_value)
             if contracts >= 1:
                 try:
-                    order = broker.place_market_order(coin, "buy", contracts)
+                    order = broker.place_market_order_fit_margin(coin, "buy", contracts)
                     fill = order.get("average_fill_price")
+                    filled_contracts = int(order.get("size") or contracts)   # may be smaller than asked -- the demo account's margin may not stretch to the full size
                     if fill:
                         entry_px = float(fill)                      # the real fill from Delta's demo matching engine
                         sl_px = entry_px * (1 - S.STOPLOSS)
-                        qty = contracts * contract_value
+                        qty = filled_contracts * contract_value
                         pos_usd = qty * entry_px
                         real = True
+                        contracts = filled_contracts
+                        try:                                        # resting GTC limit sell at the target -- a real maker fill if
+                            tp_order = broker.place_limit_order(coin, "sell", filled_contracts, entry_px * (1 + S.ROI), reduce_only=True)
+                            target_order_id = tp_order.get("id")     # it's reached, not a market/taker exit (matches the backtest's cost model)
+                        except Exception as e:
+                            _log.warning("Delta demo target limit order failed for %s (stop/exit-signal/time-stop still cover it): %s", coin, e)
                 except Exception as e:
                     _log.warning("Delta demo order failed for %s, falling back to simulated fill: %s", coin, e)
                     contracts = None
@@ -243,12 +273,14 @@ def process_entries(db: TradingDB, state: dict, candles_map: dict, live_info: di
         now_iso = datetime.now(IST).isoformat()
         open_pos[coin] = {"position_id": pos_id, "entry_price": entry_px, "sl_price": sl_px, "tp_price": entry_px * (1 + S.ROI),
                            "pos_usd": pos_usd, "qty": qty, "entry_bar_t": int(last["t"]), "entry_time": now_iso,
-                           "real": real, "contracts": contracts}
+                           "real": real, "contracts": contracts, "target_order_id": target_order_id}
         db.open_position(position_id=pos_id, symbol=coin, direction="long", qty=qty, entry_price=entry_px, current_stop=sl_px,
                           target_price=entry_px * (1 + S.ROI), breakeven_price=entry_px, account_id=ACCOUNT_ID,
                           instrument_key=f"B-{coin}_USDT", strategy=STRATEGY_NAME, state=json.dumps({"risk_pct": risk_pct, "real": real}))
         tag = "Delta demo order" if real else "simulated fill"
-        lines.append(f"ENTERED LONG {coin}: dip-reversal signal ({tag})\nEntry {entry_px:,.4f} | Stop {sl_px:,.4f} | Target {open_pos[coin]['tp_price']:,.4f}\n"
+        clamp_note = (f" -- demo account's margin only covered {_inr(pos_usd * fx)} of the intended {_inr(intended_pos_usd * fx)}"
+                       if real and pos_usd < intended_pos_usd * 0.999 else "")
+        lines.append(f"ENTERED LONG {coin}: dip-reversal signal ({tag}){clamp_note}\nEntry {entry_px:,.4f} | Stop {sl_px:,.4f} | Target {open_pos[coin]['tp_price']:,.4f}\n"
                       f"Size {_inr(pos_usd * fx)} | Risk {_inr(risk_inr)} ({risk_pct:.1%}, market vol scale {S.current_vol_scale():.2f}x)")
 
 
