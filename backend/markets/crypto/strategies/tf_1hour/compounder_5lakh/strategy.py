@@ -1,18 +1,17 @@
-"""crypto / compounder_5lakh -- 1-hour All-Weather Compounder (Target ₹5,00,000 on BTC, ETH, SOL).
+"""crypto / compounder_5lakh -- 1-hour trend/momentum trader on BTC, ETH, SOL perpetual futures (one position at a time).
 
-Rules (1-hour finished candles from Binance USDT-M Futures):
-  * Macro Regime Gate:
-      - BULL: BTC Close > EMA200 AND BTC ADX(14) > 18 -> Longs Only (SOL/ETH/BTC 24h momentum breakout > +3% or RSI < 38)
-      - BEAR: BTC Close < EMA200 AND BTC ADX(14) > 18 -> Shorts Only (SOL/ETH/BTC 24h momentum breakdown < -3% or RSI > 62)
-      - CHOP: BTC ADX(14) <= 18 -> 100% Cash (Capital preserved, zero fee bleed)
-  * Asymmetric Payoff (1 : 2.53 Risk-to-Reward):
-      - Stop Loss: 1.5x ATR(14)
-      - Take Profit: 3.8x ATR(14)
-      - Time Stop: 48 hours maximum hold
-  * Risk & Leverage:
-      - Base Risk: 4.0% of capital per trade
-      - Leverage: Strictly capped at 3.8x (0.0% liquidation risk)
-      - Fee Model: Passive Maker Limit (0.02% fee per side)
+Rules (1-hour finished candles, Binance USDT-M futures prices):
+  * regime gate on BTC: close > EMA200 and ADX(14) > 18 -> longs only; close < EMA200 and ADX > 18 -> shorts only; else cash
+  * pick the coin with the strongest (longs) / weakest (shorts) 24-hour return; enter when that return is beyond +-3% or RSI(14) < 38 /
+    > 62; BTC and ETH also need their own ADX > 22
+  * stop 1.5 x ATR(14), target 3.8 x ATR(14), time exit after 48 hours; entry at the signal candle's close (a market order)
+  * size: RISK_PCT of the account at the stop (2%; 70% of that after 1 loss, 45% after 2+), at most LEVERAGE x the account
+Costs (fixed 2026-10-21, user: "fix all issues"): entry and stop/time exits pay the CoinDCX taker fee 0.05% + 18% GST + slippage; the
+take-profit (a resting limit order) pays the maker fee 0.02% + GST; a stop the candle OPENS beyond fills at that open; real funding
+(Binance daily sums, pro-rated by the hours held; longs pay, shorts receive). Tax views: none / strict (31.2% of each winning trade) /
+business income (31.2% of each April-March year's net, losses carried 4 years).
+Results after these fixes (Rs5L, BTC+ETH+SOL): see markets/README.md. Before them the page showed Rs5L -> Rs63L; that came from maker
+fees on every side with no GST, slippage, funding or tax, at 4% risk. Leverage is NOT risk-free: a 3.8x position loses 3.8x the move.
 """
 from __future__ import annotations
 
@@ -26,6 +25,38 @@ from core.backtester import metrics
 
 DATA_DIR = ARCHIVE_ROOT / "crypto"
 COINS = ("BTC", "ETH", "SOL")
+RISK_PCT = 0.02                                   # was 0.04: with real costs 4% had a -64% worst fall, 2% about -35%
+TAKER = 0.0005 * 1.18                             # CoinDCX futures market order incl. 18% GST
+MAKER = 0.0002 * 1.18                             # limit order (the take-profit) incl. GST
+SLIP = {"BTC": 0.00005, "ETH": 0.00005, "SOL": 0.0001}
+TAX = 0.312
+
+
+def _funding(coin: str) -> pd.Series:
+    f = DATA_DIR / f"{coin}_funding_daily.csv"
+    return pd.read_csv(f, index_col="date", parse_dates=True)["fundingRate"] if f.exists() else pd.Series(dtype=float)
+
+
+def business_tax(curve: pd.Series, capital: float, rate: float = TAX, carry_years: int = 4) -> tuple[pd.Series, float]:
+    """Tax on each April-March year's net profit (losses carried 4 years), paid at 31 March and on the last day. curve = before-tax value."""
+    r = curve / curve.shift(1) - 1; r.iloc[0] = curve.iloc[0] / capital - 1
+    fy = [d.year + (1 if d.month >= 4 else 0) for d in curve.index]
+    A, start, out, carry, paid = capital, capital, [], [], 0.0
+    for k, (d, g) in enumerate(r.items()):
+        A *= 1 + g
+        if k == len(r) - 1 or fy[k + 1] != fy[k]:
+            profit = A - start
+            if profit > 0:
+                use = 0.0
+                for c in carry:
+                    take = min(c[1], profit - use); c[1] -= take; use += take
+                t = rate * (profit - use); A -= t; paid += t
+            elif profit < 0:
+                carry.append([fy[k], -profit])
+            carry = [c for c in carry if c[1] > 0 and fy[k] - c[0] < carry_years]
+            start = A
+        out.append(A)
+    return pd.Series(out, index=curve.index), paid
 
 
 def available() -> list[str]:
@@ -75,7 +106,7 @@ def load_1h_data(coins: list[str]) -> dict:
     return {c: _DATA_CACHE[c] for c in coins}
 
 
-def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None = None, leverage: float = 3.8, **kwargs) -> dict:
+def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None = None, leverage: float = 3.8, tax="business", **kwargs) -> dict:
     """Run full backtest for web dashboard."""
     coins = [s for s in (symbols or available()) if s in available()]
     if "BTC" not in coins:
@@ -95,6 +126,8 @@ def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None
     # Pre-extract numpy arrays for 100x faster execution
     n_bars = len(date_range)
     close_arr = {c: d_map[c].reindex(date_range)["close"].to_numpy() for c in coins}
+    open_arr = {c: d_map[c].reindex(date_range)["open"].to_numpy() for c in coins}
+    fund = {c: _funding(c) for c in coins}
     high_arr = {c: d_map[c].reindex(date_range)["high"].to_numpy() for c in coins}
     low_arr = {c: d_map[c].reindex(date_range)["low"].to_numpy() for c in coins}
     atr_arr = {c: d_map[c].reindex(date_range)["atr"].to_numpy() for c in coins}
@@ -105,7 +138,7 @@ def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None
     trade_candidates = [c for c in coins if c in ("SOL", "ETH", "BTC")]
 
     cur_cap = float(capital)
-    risk_pct = 0.040
+    risk_pct = RISK_PCT
     sl_mult = 1.5
     tp_mult = 3.8
     maker_fee = 0.0002
@@ -119,6 +152,8 @@ def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None
     tp_px = 0.0
     entry_idx = 0
     consec_losses = 0
+    cap_strict = float(capital)                                   # the same trades under the strict tax (each winning trade taxed)
+    strict_equity = {}
 
     all_tr = []
     daily_equity = {}
@@ -126,8 +161,10 @@ def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None
     for idx, dt in enumerate(date_range):
         d_str = dt.strftime("%Y-%m-%d")
         daily_equity[d_str] = cur_cap
+        strict_equity[d_str] = cap_strict
 
         if in_pos:
+            o = open_arr[cur_coin][idx]
             h = high_arr[cur_coin][idx]
             l = low_arr[cur_coin][idx]
             c = close_arr[cur_coin][idx]
@@ -136,18 +173,25 @@ def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None
             why = ""
 
             if pos_side == 1:
-                if l <= sl_px: exit_px = sl_px; why = "Stop Loss (1.5x ATR)"; is_exit = True
+                if l <= sl_px: exit_px = min(o, sl_px); why = "Stop Loss (1.5x ATR)"; is_exit = True
                 elif h >= tp_px: exit_px = tp_px; why = "Take Profit (3.8x ATR)"; is_exit = True
                 elif (idx - entry_idx) >= 48: exit_px = c; why = "Time Stop (48h)"; is_exit = True
             else:
-                if h >= sl_px: exit_px = sl_px; why = "Stop Loss (1.5x ATR)"; is_exit = True
+                if h >= sl_px: exit_px = max(o, sl_px); why = "Stop Loss (1.5x ATR)"; is_exit = True
                 elif l <= tp_px: exit_px = tp_px; why = "Take Profit (3.8x ATR)"; is_exit = True
                 elif (idx - entry_idx) >= 48: exit_px = c; why = "Time Stop (48h)"; is_exit = True
 
             if is_exit:
                 pnl = (pos_side * (exit_px - entry_px) / entry_px) * pos_size_usd
-                fee = pos_size_usd * (maker_fee * 2)
+                slip = SLIP.get(cur_coin, 0.00015)
+                exit_cost = MAKER if why.startswith("Take Profit") else TAKER + slip
+                hours = idx - entry_idx
+                f_rate = float(fund[cur_coin].get(dt.normalize(), 0.0)) if len(fund[cur_coin]) else 0.0
+                funding = pos_side * pos_size_usd * f_rate * hours / 24      # daily sum pro-rated by the hours held
+                fee = pos_size_usd * (TAKER + slip + exit_cost) + funding     # fees + slippage + funding
                 net = pnl - fee
+                r_trade = net / cur_cap
+                cap_strict *= 1 + r_trade - (TAX * r_trade if r_trade > 0 else 0.0)
                 cur_cap += net
                 if net > 0:
                     consec_losses = 0
@@ -220,7 +264,13 @@ def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None
                     tp_px = entry + (sl_dist * tp_mult) if sig == 1 else entry - (sl_dist * tp_mult)
 
     days = pd.date_range(t_start.floor("D"), t_end.floor("D"), freq="D")
-    s_eq = pd.Series(daily_equity).reindex([d.strftime("%Y-%m-%d") for d in days]).ffill().fillna(capital)
+    s_pre = pd.Series(daily_equity).reindex([d.strftime("%Y-%m-%d") for d in days]).ffill().fillna(capital)
+    s_str = pd.Series(strict_equity).reindex([d.strftime("%Y-%m-%d") for d in days]).ffill().fillna(capital)
+    s_pre.index = pd.to_datetime(s_pre.index); s_str.index = s_pre.index
+    s_pre.iloc[-1] = cur_cap; s_str.iloc[-1] = cap_strict
+    s_biz, biz_tax = business_tax(s_pre, capital)
+    mode = {True: "strict", False: "none"}.get(tax, tax)
+    s_eq = {"none": s_pre, "strict": s_str, "business": s_biz}[mode]
 
     # Daily bars for dashboard chart
     bars = {}
@@ -234,9 +284,9 @@ def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None
         for x in all_tr
     ]
 
-    m = metrics(list(s_eq.values), capital, closed_formatted, round(len(days) * 250 / 365.25), 0)
-    m["closed_profit"] = round(cur_cap - capital)
-    m["final_equity"] = round(cur_cap)
+    m = metrics([round(v) for v in s_eq.values], capital, closed_formatted, round(len(days) * 250 / 365.25), 0)
+    tax_effect = (cur_cap - capital) - (m["final_equity"] - capital)            # tax (and the growth it would have earned)
+    m["fees"] = round(m["fees"] + tax_effect); m["closed_profit"] = round(m["final_equity"] - capital); m["open_profit"] = 0
 
     events = [[] for _ in days]
     pos = [[] for _ in days]
@@ -351,7 +401,10 @@ def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None
         "skipped_symbols": [],
         "benchmark": [round(v) for v in bench],
         "metrics": m | {
-            "note": f"1-hour All-Weather Compounder on {', '.join(coins)} (Target ₹5L, 3.8x leverage cap, Maker fees): "
-                    f"{len(all_tr):,} trades, {sum(1 for x in all_tr if x['won']) / max(len(all_tr), 1):.1%} win rate."
+            "tax_mode": mode, "final_pretax": round(cur_cap), "final_strict": round(cap_strict), "final_business": round(float(s_biz.iloc[-1])),
+            "note": f"1-hour compounder on {', '.join(coins)}: {RISK_PCT:.0%} risk per trade, at most {leverage:g}x. Real costs: taker fee + GST + slippage on "
+                    f"entries and stops, maker fee + GST on take-profits, gapped stops at the open, real funding. {len(all_tr):,} trades, "
+                    f"{sum(1 for x in all_tr if x['won']) / max(len(all_tr), 1):.1%} won after costs. Before tax Rs{cur_cap:,.0f}; business income "
+                    f"Rs{s_biz.iloc[-1]:,.0f}; strict tax Rs{cap_strict:,.0f}."
         }
     }

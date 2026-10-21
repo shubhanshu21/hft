@@ -48,13 +48,16 @@ COINS = ("BTC", "ETH", "SOL")
 # Core Strategy Constants
 INITIAL_CAPITAL_INR = 100000.0
 MAX_LEVERAGE = 3.8
-BASE_RISK_PCT = 0.040        # 4.0%
+BASE_RISK_PCT = 0.020        # 2.0% (best profit after real costs; 4% made less and fell -66%)
 SL_ATR_MULT = 1.5            # 1.5x ATR
 TP_ATR_MULT = 3.8            # 3.8x ATR (Sweet spot from matrix grid search)
 ADX_REGIME_THRESH = 18.0     # Trend strength gate on BTC
 MOMENTUM_THRESH = 0.03       # 3.0% 24h momentum breakout
 MAX_HOLD_HOURS = 48          # 48-hour time stop
-MAKER_FEE_PCT = 0.0002       # 0.02% passive limit order fee
+MAKER_FEE_PCT = 0.0002       # 0.02% limit order fee (take-profit)
+TAKER_FEE_PCT = 0.0005       # 0.05% market order fee (entry, stop, time exit)
+GST = 1.18
+SLIP = {"BTC": 0.00005, "ETH": 0.00005, "SOL": 0.0001}
 BAR_MS = 3600 * 1000         # 1 hour in ms
 
 # Milestone Vault Thresholds (in INR)
@@ -244,6 +247,7 @@ def process_exits(db: TradingDB, state: dict, candles_map: dict, live_info: dict
         return
 
     last_bar = df.iloc[-1]
+    last_o = float(last_bar["o"])
     last_h = float(last_bar["h"])
     last_l = float(last_bar["l"])
     last_c = float(last_bar["c"])
@@ -264,7 +268,7 @@ def process_exits(db: TradingDB, state: dict, candles_map: dict, live_info: dict
     # Check 1h price breach
     if side == 1:
         if last_l <= sl_px:
-            exit_px = sl_px
+            exit_px = min(last_o, sl_px)  # gapped past the stop -> fills at the open
             exit_reason = f"STOP LOSS HIT ({SL_ATR_MULT:.1f}x ATR)"
             is_exit = True
         elif last_h >= tp_px:
@@ -277,7 +281,7 @@ def process_exits(db: TradingDB, state: dict, candles_map: dict, live_info: dict
             is_exit = True
     else:
         if last_h >= sl_px:
-            exit_px = sl_px
+            exit_px = max(last_o, sl_px)
             exit_reason = f"STOP LOSS HIT ({SL_ATR_MULT:.1f}x ATR)"
             is_exit = True
         elif last_l <= tp_px:
@@ -291,7 +295,16 @@ def process_exits(db: TradingDB, state: dict, candles_map: dict, live_info: dict
 
     if is_exit:
         raw_pnl_usd = (side * (exit_px - entry_px) / entry_px) * pos_usd
-        fee_usd = pos_usd * (MAKER_FEE_PCT * 2)  # Entry + Exit passive limit fees
+        slip = SLIP.get(pos.get("coin", ""), 0.00015)
+        exit_fee = MAKER_FEE_PCT * GST if exit_reason.startswith("TAKE PROFIT") else TAKER_FEE_PCT * GST + slip
+        fee_usd = pos_usd * (TAKER_FEE_PCT * GST + slip + exit_fee)          # market entry + exit, GST, slippage
+        try:                                                                  # real funding: Binance payments while held
+            import requests
+            fr = requests.get("https://fapi.binance.com/fapi/v1/fundingRate", params={"symbol": f"{pos.get('coin', '')}USDT",
+                              "startTime": entry_bar_t, "endTime": bar_t + BAR_MS, "limit": 100}, timeout=15).json()
+            fee_usd += side * pos_usd * sum(float(x["fundingRate"]) for x in fr)
+        except Exception:
+            pass
         net_pnl_usd = raw_pnl_usd - fee_usd
         net_pnl_inr = net_pnl_usd * fx
 
@@ -321,7 +334,7 @@ def process_exits(db: TradingDB, state: dict, candles_map: dict, live_info: dict
             hold_minutes=hold_hours * 60,
             exit_reason=exit_reason,
             gross_pnl=raw_pnl_inr,
-            fee_breakdown={"brokerage": fee_usd * fx, "slippage": 0.0, "total": fee_usd * fx},
+            costs_dict={"brokerage": fee_usd * fx, "slippage": 0.0, "total": fee_usd * fx},
             net_pnl=net_pnl_inr,
             capital_after=state["trading_capital"] + state["vault_locked"],
             account_id=ACCOUNT_ID,
