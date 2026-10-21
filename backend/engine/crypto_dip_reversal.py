@@ -1,6 +1,15 @@
 """Paper trading engine: crypto / dip_reversal -- 5-minute dip-buy reversal on 12 coins' perpetual futures (one shared capital pool, up
 to markets.crypto.strategies.tf_5min.dip_reversal.strategy.MAX_CONCURRENT positions open together). Rules, costs and the backtest live
-in that module; this file just runs the same rule live every 5 minutes against fresh Binance candles and Delta Exchange India prices.
+in that module; this file just runs the same rule live every 5 minutes against fresh Binance candles.
+
+Fills, hybrid (user: "for delta exchange india we dont need paper account as it has demo account so we can directly use its apis",
+2026-10-21): for the 6 coins Delta's demo/testnet environment actually lists (BTC, ETH, SOL, XRP, DOGE, ADA -- it has only 16
+products total vs 237 on the real exchange, see services/broker/delta_broker.py), entries and exits are REAL orders placed on
+Delta's own demo account via DeltaDemoBroker and filled by their real matching engine -- the fill price this engine records is
+whatever Delta's engine actually gave it, not a simulated one. The other 6 coins (BNB, AVAX, LINK, DOT, LTC, TRX) aren't on Delta's
+demo at all, so they keep the simulated fill logic this engine always used. Either way the money is one shared Rs1L ledger tracked
+here (`state["trading_capital"]`) -- Delta's own demo wallet balance is a separate number (its own seeded demo funds) and is not
+used as this account's capital.
 
 Replaces engine/crypto_compounder_5lakh.py (removed 2026-10-21, user: "if its better and giving more profits then remove previous and
 add this" -- the freqtrade screen found this rule more profitable on the same 2022-26 data; see markets/README.md).
@@ -23,8 +32,19 @@ import requests
 from core.paths import DB_DIR
 from engine.database import TradingDB
 from markets.crypto.strategies.tf_5min.dip_reversal import strategy as S
+from services.broker.delta_broker import DeltaDemoBroker, PRODUCTS as DELTA_COINS
 
 _log = logging.getLogger("crypto_dip_reversal")
+
+
+def _delta() -> DeltaDemoBroker | None:
+    """A broker instance if demo keys are configured, else None -- coins not on Delta's testnet (or any broker error) fall back to
+    this engine's own simulated fill, exactly as before 2026-10-21."""
+    try:
+        return DeltaDemoBroker()
+    except Exception as e:
+        _log.warning("Delta demo broker unavailable (%s); trading all coins in simulation.", e)
+        return None
 
 IST = timezone(timedelta(hours=5, minutes=30))
 ACCOUNT_ID = "CRYPTO_DIP_REVERSAL"
@@ -118,7 +138,7 @@ def fetch_5m_candles(coin: str, limit: int = 100) -> pd.DataFrame:
     return df
 
 
-def process_exits(db: TradingDB, state: dict, candles_map: dict, live_info: dict, lines: list) -> None:
+def process_exits(db: TradingDB, state: dict, candles_map: dict, live_info: dict, lines: list, broker: DeltaDemoBroker | None) -> None:
     fx = live_info["usdtinr"]
     for coin, pos in list(state["open_positions"].items()):
         df = candles_map.get(coin)
@@ -138,6 +158,14 @@ def process_exits(db: TradingDB, state: dict, candles_map: dict, live_info: dict
             px, fee_pct, why = c, S.TAKER + S.SLIP.get(coin, 0.00015), "TIME STOP (24h)"
         if px is None:
             continue
+        if pos.get("real") and broker is not None:
+            try:
+                order = broker.close_position(coin)
+                fill = order.get("average_fill_price") if order else None
+                if fill:
+                    px = float(fill)                                 # the real fill Delta's demo matching engine gave us
+            except Exception as e:
+                _log.warning("Delta demo close failed for %s, using the simulated exit price instead: %s", coin, e)
         gross_usd = (px - entry_px) / entry_px * pos_usd
         hours = (int(last["t"]) - entry_bar_t) / 3_600_000
         try:
@@ -166,7 +194,7 @@ def process_exits(db: TradingDB, state: dict, candles_map: dict, live_info: dict
         del state["open_positions"][coin]
 
 
-def process_entries(db: TradingDB, state: dict, candles_map: dict, live_info: dict, lines: list) -> None:
+def process_entries(db: TradingDB, state: dict, candles_map: dict, live_info: dict, lines: list, broker: DeltaDemoBroker | None) -> None:
     cap = state["trading_capital"]
     if cap < 500.0:
         lines.append("Trading capital below Rs500. Pausing."); return
@@ -190,14 +218,37 @@ def process_entries(db: TradingDB, state: dict, candles_map: dict, live_info: di
         risk_inr = cap * risk_pct
         pos_usd = min((risk_inr / fx) / S.STOPLOSS, (cap * MAX_LEVERAGE) / fx)
         qty = pos_usd / entry_px
+
+        contracts, real = None, False
+        if broker is not None and coin in DELTA_COINS:
+            _, contract_value = DELTA_COINS[coin]
+            contracts = round(qty / contract_value)
+            if contracts >= 1:
+                try:
+                    order = broker.place_market_order(coin, "buy", contracts)
+                    fill = order.get("average_fill_price")
+                    if fill:
+                        entry_px = float(fill)                      # the real fill from Delta's demo matching engine
+                        sl_px = entry_px * (1 - S.STOPLOSS)
+                        qty = contracts * contract_value
+                        pos_usd = qty * entry_px
+                        real = True
+                except Exception as e:
+                    _log.warning("Delta demo order failed for %s, falling back to simulated fill: %s", coin, e)
+                    contracts = None
+            else:
+                contracts = None                                    # too small for even 1 contract -- simulate instead
+
         pos_id = f"POS_DIPREV_{int(last['t'])}_{coin}"
         now_iso = datetime.now(IST).isoformat()
         open_pos[coin] = {"position_id": pos_id, "entry_price": entry_px, "sl_price": sl_px, "tp_price": entry_px * (1 + S.ROI),
-                           "pos_usd": pos_usd, "qty": qty, "entry_bar_t": int(last["t"]), "entry_time": now_iso}
+                           "pos_usd": pos_usd, "qty": qty, "entry_bar_t": int(last["t"]), "entry_time": now_iso,
+                           "real": real, "contracts": contracts}
         db.open_position(position_id=pos_id, symbol=coin, direction="long", qty=qty, entry_price=entry_px, current_stop=sl_px,
                           target_price=entry_px * (1 + S.ROI), breakeven_price=entry_px, account_id=ACCOUNT_ID,
-                          instrument_key=f"B-{coin}_USDT", strategy=STRATEGY_NAME, state=json.dumps({"risk_pct": risk_pct}))
-        lines.append(f"ENTERED LONG {coin}: dip-reversal signal\nEntry {entry_px:,.4f} | Stop {sl_px:,.4f} | Target {open_pos[coin]['tp_price']:,.4f}\n"
+                          instrument_key=f"B-{coin}_USDT", strategy=STRATEGY_NAME, state=json.dumps({"risk_pct": risk_pct, "real": real}))
+        tag = "Delta demo order" if real else "simulated fill"
+        lines.append(f"ENTERED LONG {coin}: dip-reversal signal ({tag})\nEntry {entry_px:,.4f} | Stop {sl_px:,.4f} | Target {open_pos[coin]['tp_price']:,.4f}\n"
                       f"Size {_inr(pos_usd * fx)} | Risk {_inr(risk_inr)} ({risk_pct:.1%}, market vol scale {S.current_vol_scale():.2f}x)")
 
 
@@ -214,8 +265,9 @@ def run_iteration(db: TradingDB, send_fn=None) -> dict:
     if not candles_map:
         lines.append("Binance 5m candle feed unavailable. Skipping iteration.")
         return {"lines": lines, "state": state}
-    process_exits(db, state, candles_map, live_info, lines)
-    process_entries(db, state, candles_map, live_info, lines)
+    broker = _delta()
+    process_exits(db, state, candles_map, live_info, lines, broker)
+    process_entries(db, state, candles_map, live_info, lines, broker)
     save_state(state)
     db.update_capital(ACCOUNT_ID, state["trading_capital"])
     db.record_snapshot(ACCOUNT_ID)
@@ -240,7 +292,8 @@ def print_status(db: TradingDB) -> None:
     print(f"Total fees paid:   {_inr(state['total_fees_paid'])}")
     print(f"Open positions:    {len(state['open_positions'])}/{S.MAX_CONCURRENT}")
     for coin, pos in state["open_positions"].items():
-        print(f"  {coin}: entry {pos['entry_price']:,.4f}  stop {pos['sl_price']:,.4f}  target {pos['tp_price']:,.4f}")
+        tag = "Delta demo order" if pos.get("real") else "simulated"
+        print(f"  {coin} ({tag}): entry {pos['entry_price']:,.4f}  stop {pos['sl_price']:,.4f}  target {pos['tp_price']:,.4f}")
     print("=" * 70)
 
 
