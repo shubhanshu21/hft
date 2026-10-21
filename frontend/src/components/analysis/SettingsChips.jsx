@@ -11,7 +11,7 @@ export default function SettingsChips({ params }) {
     ["Start money", `₹${Number(params.capital).toLocaleString("en-IN")}`],
     ["Perps", `${params.symbols?.length}: ${(params.symbols ?? []).join(", ")}`],
     ["Timeframe", "5-minute candles"],
-    ["Rules", "Bollinger-band dip reversal (BinHV45 + ClucMay2018), up to 3 open together"],
+    ["Rules", "Bollinger-band dip reversal (BinHV45 + ClucMay2018), 15% target / 7% stop, up to 5 open together"],
     ["Risk per trade", "2% (leverage is a safety cap, not a throttle)"],
     ["Costs", "taker+GST+slippage on entries/stops, maker+GST on the target, real funding"],
   ] : params.market === "crypto" ? [

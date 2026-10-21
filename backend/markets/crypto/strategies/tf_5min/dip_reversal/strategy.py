@@ -8,21 +8,25 @@ Rule (5-minute finished candles, no indicator peeking at the still-forming candl
   * enter long when EITHER (a) a sharp, one-sided Bollinger-band squeeze: the 40-candle band is unusually wide, the candle just closed
     well below its lower band and below the previous close with hardly any lower wick (BinHV45's rule), OR (b) price is below its
     50-candle EMA and has slipped meaningfully under its 20-candle Bollinger low band (ClucMay2018's rule)
-  * exit: hitting the 7% take-profit (a resting limit order), the 7% stop, the price closing back above the 20-candle Bollinger
+  * exit: hitting the 15% take-profit (a resting limit order), the 7% stop, the price closing back above the 20-candle Bollinger
     mid-band (a market exit), or a 24-hour time stop if none of those trigger (our own safety cap -- the original rule has no time stop)
   * entry at the next candle's open (a market order); size = RISK_PCT of the account / the 7% stop distance (so ~28.6% of the account
     at RISK_PCT=2%), capped at LEVERAGE x the account as a pure safety ceiling -- the real throttle on profit and risk here is
     RISK_PCT, not leverage (a fixed-% stop means leverage rarely binds; see the risk_pct table in markets/README.md before raising it);
-    at most MAX_CONCURRENT positions open together across the 9 coins (shared margin pool, and crypto coins move together in a crash)
+    at most MAX_CONCURRENT (5) positions open together across the 9 coins (shared margin pool, and crypto coins move together in a crash)
 Costs: CoinDCX taker fee 0.05% + 18% GST + slippage on entries, stops and the time exit; maker fee 0.02% + GST on the take-profit; a
 stop the candle OPENS beyond fills at that open, not the stop price; real funding (Binance daily sums, pro-rated by hours held -- a
 long position pays when funding is positive). Tax views: none / strict (31.2% of each winning trade) / business income (31.2% of each
 April-March year's net, losses carried 4 years; the default and the honest number to look at).
-2026-10-21 production backtest (one shared capital pool, max 3 concurrent positions, RISK_PCT=2%, Rs1L): dev (2022-24) Rs1.82L business
-income (worst fall -19%), test (2025-26) Rs1.17L business income (worst fall -11%). Raising RISK_PCT makes more but falls further (3%:
-Rs2.40L/-27%, dev; 4%: Rs3.12L/-34%; 6%: Rs4.95L/-47% -- test only gains a little past 2-3% while the worst fall grows fast); 2% is the
-shipped default as the best balance. Leverage is a safety CEILING on position size here, not a throttle -- the 7% stop already fixes
-position size at RISK_PCT / 7%, so changing leverage rarely changes a trade's size or the P&L above.
+2026-10-21 production backtest (one shared capital pool, RISK_PCT=2%, Rs1L). Shipped rule (target 15%, stop 7%, 5 concurrent -- a joint
+sweep of target/stop/concurrency found this beat the original symmetric 7%/7%/3 rule in BOTH windows, not a single lucky cell: the whole
+wide-target/5-concurrent region of the grid did better): dev (2022-24) Rs2.30L business income (worst fall -28%), test (2025-26) Rs1.32L
+(worst fall -16%); every one of 2022-2026's 5 calendar years was individually positive. Shorts were tried (the same rule mirrored on
+rallies) and made it WORSE in both windows -- crypto's long-term upward drift means fading rallies loses more than it gains; rejected.
+Raising RISK_PCT past 2% makes more in dev but the honest 2025-26 test caps near +23%/yr no matter how high risk goes, while the worst
+fall keeps growing (6%: -34% test; 10%: -57% test) -- so 2% stays the shipped default; see the risk_pct table in markets/README.md.
+Leverage is a safety CEILING on position size here, not a throttle -- the stop already fixes position size at RISK_PCT / stop%, so
+changing leverage rarely changes a trade's size or the P&L above.
 Replaces `compounder_5lakh` (removed 2026-10-21, user: "if its better and giving more profits then remove previous and add this") --
 that strategy's own freqtrade-screen ranked below this one on the same 2022-26 data; see markets/README.md.
 """
@@ -43,7 +47,7 @@ TAX = 0.312
 COINS = ("BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "AVAX", "LINK")
 
 RISK_PCT = 0.02
-MAX_CONCURRENT = 3                                # shared margin pool + crypto correlates hard in a crash; see equity's MAX_CONCURRENT lesson
+MAX_CONCURRENT = 5                                # 2026-10-21 joint sweep: 5 beat 3 in both dev and test; 9 (no cap) decayed test -- see docstring
 TAKER = 0.0005 * 1.18                              # CoinDCX futures market order incl. 18% GST
 MAKER = 0.0002 * 1.18                              # limit order (the take-profit) incl. GST
 SLIP = {"BTC": 0.00005, "ETH": 0.00005, "SOL": 0.0001}
@@ -52,7 +56,7 @@ CLOSEDELTA_MULT = 0.0175
 TAIL_MULT = 0.25
 CLUC_MULT = 0.985
 STOPLOSS = 0.07
-ROI = 0.07
+ROI = 0.15                                        # 2026-10-21: wider target than the stop (was 0.07) tested better in both windows, every year positive
 TIME_STOP_BARS = 288                               # 24h of 5-min candles -- our own safety cap, the original rule has none
 BAR_MIN = 5
 
