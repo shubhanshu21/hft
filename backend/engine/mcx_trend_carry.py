@@ -5,10 +5,11 @@
 
 Run by hft-mcx-trend-carry.timer at 09:10 IST (after MCX opens: a pending month-end rebalance trades at the live price) and 23:40 IST (after
 the close: a daily mark-to-market line). No real orders: prices come from Upstox quotes, fills are recorded in var/db/paper_trading.db under
-account MCX_TREND_CARRY. Settings (.env): MCX_TREND_CARRY_CAPITAL (default Rs5 lakh), MCX_TREND_CARRY_EXPOSURE (default 1.5 = total contract value
-up to 1.5x the account; Upstox margin is ~9-35% of that, capped at 80% of the account). Why these: 2026-10-15 sweet-spot test on real MCX
-month-ends -- Rs5L at 1.5x with volatility sizing: Rs5L -> Rs14.5L (2023-26), worst fall -18%; smaller accounts skip too many lots, and more
-than ~2x exposure took worst falls to -25..-44% (full Upstox leverage lost ~85% in June 2026). See the strategy module's docstring.
+account MCX_TREND_CARRY. Settings (.env): MCX_TREND_CARRY_CAPITAL (default Rs2.5 lakh, since 2026-10-21 -- user: "make it 2.5 lakh account
+and reset"; below ~Rs2-2.5L whole-lot minimums starve the strategy of trades, but above ~Rs2.5L the % return barely changes with more
+capital, see markets/README.md), MCX_TREND_CARRY_EXPOSURE (default 1.5 = total contract value up to 1.5x the account; Upstox margin is
+~9-35% of that, capped at 80% of the account). More than ~2x exposure took worst falls to -25..-44% (full Upstox leverage lost ~85% in
+June 2026). See the strategy module's docstring.
 """
 from __future__ import annotations
 
@@ -62,7 +63,7 @@ def contract_for(signal: str, today, contracts: pd.DataFrame):
 def run(broker, db, now: datetime, report: bool = True, send=None) -> dict:
     from services.utils import telegram
     send = send or telegram.send
-    capital0 = float(os.environ.get("MCX_TREND_CARRY_CAPITAL", 500_000))
+    capital0 = float(os.environ.get("MCX_TREND_CARRY_CAPITAL", 250_000))
     exposure = float(os.environ.get("MCX_TREND_CARRY_EXPOSURE", 1.5))
     db.init_account(ACCOUNT, name="MCX trend + carry (monthly)", capital=capital0, leverage=exposure, risk_pct=0.0)
     acc = db.get_account(ACCOUNT)

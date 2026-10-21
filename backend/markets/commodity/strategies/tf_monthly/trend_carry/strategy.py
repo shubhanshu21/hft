@@ -110,7 +110,7 @@ def lots_for(capital: float, exposure: float, weight: float, price: float, signa
     return int(max(0, min(by_notional, by_margin)))
 
 
-def backtest(table: pd.DataFrame, capital: float = 500_000, start: str = "2023-01-01", end: str = "2100-01-01", exposure: float = 1.5,
+def backtest(table: pd.DataFrame, capital: float = 250_000, start: str = "2023-01-01", end: str = "2100-01-01", exposure: float = 1.5,
              symbols=None) -> dict:
     """Month-end backtest in the web backtester's replay shape: one row per month end (days, equity, events, pos, bars, benchmark, metrics).
     At each month end the last month's holdings are sold at that day's close of the SAME contract and the new ones bought at the close of the
