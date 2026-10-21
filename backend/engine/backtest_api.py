@@ -402,7 +402,7 @@ def work(run: dict) -> None:
         if run["market"] == "crypto":
             from markets.crypto.strategies.tf_5min.dip_reversal import strategy as dr
             try:
-                run["result"] = dr.web_backtest(p["capital"], p["start"], p["end"], symbols=p.get("symbols"), leverage=p.get("leverage", 3.0), tax=p.get("tax", "business"))
+                run["result"] = dr.web_backtest(p["capital"], p["start"], p["end"], symbols=p.get("symbols"), leverage=p.get("leverage", 3.0), tax=p.get("tax", "business"), progress=progress)
             except ValueError as e:
                 raise BacktestError(str(e))
         elif run["market"] == "commodity":                        # trend_carry: monthly, all 8 commodities ranked together, its own backtest
@@ -577,6 +577,15 @@ def main() -> int:
     ap.add_argument("--port", type=int, default=int(os.environ.get("BACKTEST_PORT", "8000")))
     args = ap.parse_args()
     fail_orphans()
+
+    def _warm_crypto_cache():                   # load_5m_data (12 coins, full history) takes ~20s cold; a backtest's progress stays
+        try:                                     # at 0% the whole time -- load it once here so the first real request is already warm
+            from markets.crypto.strategies.tf_5min.dip_reversal import strategy as dr
+            dr.load_5m_data(list(dr.COINS))
+        except Exception:
+            traceback.print_exc()
+    threading.Thread(target=_warm_crypto_cache, daemon=True).start()
+
     print(f"backtest api on http://{args.host}:{args.port}", flush=True)
     ThreadingHTTPServer((args.host, args.port), Handler).serve_forever()
     return 0

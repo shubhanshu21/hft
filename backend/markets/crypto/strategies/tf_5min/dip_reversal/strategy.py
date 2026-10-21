@@ -170,7 +170,8 @@ def entry_signal(df: pd.DataFrame) -> pd.Series:
     return cond1 | cond2
 
 
-def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None = None, leverage: float = 3.0, tax: str = "business", **kwargs) -> dict:
+def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None = None, leverage: float = 3.0, tax: str = "business",
+                  progress=None, **kwargs) -> dict:
     coins = [c.upper() for c in (symbols or list(COINS)) if c.upper() in COINS]
     if not coins:
         raise ValueError("No usable coins")
@@ -186,7 +187,10 @@ def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None
         arr[c]["mid20"] = d["bb_mid20"].to_numpy()
         arr[c]["fund"] = _funding(c)
     n = len(rng); cap = float(capital); cap_strict = float(capital); open_pos: dict = {}; closed: list = []; daily_equity = {}; strict_equity = {}
+    report_every = max(1, (n - 1) // 100)                      # ~100 updates total, not one call per 5-minute bar
     for i in range(n - 1):
+        if progress is not None and i % report_every == 0:
+            progress(i, n - 1)
         dt = rng[i]; d_str = dt.strftime("%Y-%m-%d")
         for c in list(open_pos.keys()):
             pos = open_pos[c]; o, h, l, cl = arr[c]["open"][i], arr[c]["high"][i], arr[c]["low"][i], arr[c]["close"][i]
@@ -229,6 +233,8 @@ def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None
                     open_pos[c] = {"entry": e, "sl": sl, "tp0": e * (1 + ROI), "size": size, "entry_idx": i + 1, "entry_time": rng[i + 1]}
         daily_equity[d_str] = cap
         strict_equity[d_str] = cap_strict
+    if progress is not None:
+        progress(n - 1, n - 1)
     s_pre = pd.Series(daily_equity); s_str = pd.Series(strict_equity)
     s_pre.index = pd.to_datetime(s_pre.index); s_str.index = s_pre.index
     s_pre = s_pre[~s_pre.index.duplicated(keep="last")]; s_str = s_str[~s_str.index.duplicated(keep="last")]
