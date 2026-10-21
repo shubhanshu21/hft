@@ -96,7 +96,7 @@ export default function PaperPage() {
       <Panel title={`Open trades (${d.positions.length})`}>
         {!d.positions.length
           ? <div className="none">{{
-            CRYPTO_DIP_REVERSAL: "No open trades. dip_reversal checks all 9 coins for a Bollinger-band dip every 5-minute candle close.",
+            CRYPTO_DIP_REVERSAL: "No open trades. dip_reversal checks all 12 coins for a Bollinger-band dip every 5-minute candle close.",
             MCX_TREND_CARRY: "No open trades. trend_carry rebalances at 09:10 on the first MCX trading day of each month.",
             EQUITY_SWING: "No holdings yet. Momentum buys its 15 stocks at the next open; breakout, earnings-drift and trend_ema_cross buys wait for a healthy market (half the stocks above their 50-day average).",
           }[d.account_id] ?? "No open trades. Currency (rsi_range) checks for entries at the 9:00 open."}</div>

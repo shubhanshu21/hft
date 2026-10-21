@@ -86,7 +86,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
             {" "}Daily data starts January 2022, so the first signals are in late 2022.</p>
         )}
         {strategy && crypto && (
-          <p className="hint">5-minute dip-reversal on up to 9 coins' perpetual futures: buys a sharp one-sided dip (Bollinger-band squeeze or a slip under the lower band), exits at a 15% target, a 7% stop, or the price closing back above the middle band. 2% risk per trade, up to 5 positions open together. Real taker/maker fees + GST, slippage and funding included.</p>
+          <p className="hint">5-minute dip-reversal on up to 12 coins' perpetual futures: buys a sharp one-sided dip (Bollinger-band squeeze or a slip under the lower band), exits at a 15% target, a 7% stop, or the price closing back above the middle band. 2% risk per trade, up to 5 positions open together. Real taker/maker fees + GST, slippage and funding included.</p>
         )}
         {strategy && !auto && (
           <div className="field">
