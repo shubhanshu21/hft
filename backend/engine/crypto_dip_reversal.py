@@ -1,6 +1,6 @@
 """Paper trading engine: crypto / dip_reversal -- 5-minute dip-buy reversal on 12 coins' perpetual futures (one shared capital pool, up
 to markets.crypto.strategies.tf_5min.dip_reversal.strategy.MAX_CONCURRENT positions open together). Rules, costs and the backtest live
-in that module; this file just runs the same rule live every 5 minutes against fresh Binance candles and CoinDCX prices.
+in that module; this file just runs the same rule live every 5 minutes against fresh Binance candles and Delta Exchange India prices.
 
 Replaces engine/crypto_compounder_5lakh.py (removed 2026-10-21, user: "if its better and giving more profits then remove previous and
 add this" -- the freqtrade screen found this rule more profitable on the same 2022-26 data; see markets/README.md).
@@ -66,25 +66,28 @@ def init_account(db: TradingDB) -> None:
 
 def fetch_live_prices() -> dict:
     out = {"prices": {}, "usdtinr": 92.5, "timestamp": datetime.now(IST).isoformat()}
-    try:
-        r = requests.get("https://public.coindcx.com/market_data/v3/current_prices/futures/rt", timeout=10)
+    for c in S.COINS:                                 # Delta India quotes/settles in USD, but balances are effectively INR via a fixed rate
+        try:
+            r = requests.get(f"https://api.india.delta.exchange/v2/tickers/{c}USD", timeout=10)
+            if r.status_code == 200:
+                res = (r.json() or {}).get("result") or {}
+                px = res.get("close") or res.get("mark_price")
+                if px:
+                    out["prices"][c] = float(px)
+                    fr = res.get("funding_rate")
+                    if fr is not None:
+                        out.setdefault("funding_now", {})[c] = float(fr)
+        except Exception as e:
+            _log.warning("Delta India ticker fetch error for %s: %s", c, e)
+    try:                                               # USD/INR reference rate -- an independent public source, not tied to any exchange
+        r = requests.get("https://open.er-api.com/v6/latest/USD", timeout=10)
         if r.status_code == 200:
-            prices = (r.json().get("prices") or {})
-            for c in S.COINS:
-                item = prices.get(f"B-{c}_USDT") or {}
-                if item.get("ls"):
-                    out["prices"][c] = float(item["ls"])
+            rate = (r.json() or {}).get("rates", {}).get("INR")
+            if rate:
+                out["usdtinr"] = float(rate)
     except Exception as e:
-        _log.warning("CoinDCX live price fetch error: %s", e)
-    try:
-        r = requests.get("https://api.coindcx.com/exchange/ticker", timeout=10)
-        if r.status_code == 200:
-            for item in r.json():
-                if item.get("market") == "USDTINR":
-                    out["usdtinr"] = float(item["last_price"]); break
-    except Exception as e:
-        _log.warning("CoinDCX USDTINR fetch error: %s", e)
-    for c in S.COINS:
+        _log.warning("USD/INR reference rate fetch error: %s", e)
+    for c in S.COINS:                                 # fallback if Delta's own ticker failed for a coin
         if c not in out["prices"]:
             try:
                 r = requests.get(f"https://fapi.binance.com/fapi/v1/ticker/price?symbol={c}USDT", timeout=5)

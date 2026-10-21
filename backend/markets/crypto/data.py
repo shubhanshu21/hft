@@ -5,7 +5,7 @@
 Daily candles: CoinDCX public candles for the B-<COIN>_USDT pairs (00:00 UTC) -- historical for crypto/calm_coins (removed, kept for any
 future daily use). 5-minute candles: Binance USDT-M futures klines, for crypto/dip_reversal's live paper trading and backtest history (the
 2022 -> 2026-10-16 depth was seeded once from an earlier 1-minute archive; this keeps it current). Funding: Binance USDT-M perpetual funding
-history summed per UTC day (CoinDCX's futures track the same market; their own history has no public endpoint). Only COMPLETED candles/days
+history summed per UTC day (Delta Exchange India's futures track the same market and funding interval -- 8-hourly, verified 2026-10-21 -- and have no simple historical-range public endpoint). Only COMPLETED candles/days
 are kept, so a decision never reads one still forming. Re-fetches a short recent window each run, so a missed night heals itself.
 """
 from __future__ import annotations

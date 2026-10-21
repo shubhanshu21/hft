@@ -14,7 +14,7 @@ Rule (5-minute finished candles, no indicator peeking at the still-forming candl
     at RISK_PCT=2%), capped at LEVERAGE x the account as a pure safety ceiling -- the real throttle on profit and risk here is
     RISK_PCT, not leverage (a fixed-% stop means leverage rarely binds; see the risk_pct table in markets/README.md before raising it);
     at most MAX_CONCURRENT (5) positions open together across the 12 coins (shared margin pool, and crypto coins move together in a crash)
-Costs: CoinDCX taker fee 0.05% + 18% GST + slippage on entries, stops and the time exit; maker fee 0.02% + GST on the take-profit; a
+Costs: Delta Exchange India taker fee 0.05% + 18% GST + slippage on entries, stops and the time exit; maker fee 0.02% + GST on the take-profit; a
 stop the candle OPENS beyond fills at that open, not the stop price; real funding (Binance daily sums, pro-rated by hours held -- a
 long position pays when funding is positive). Tax views: none / strict (31.2% of each winning trade) / business income (31.2% of each
 April-March year's net, losses carried 4 years; the default and the honest number to look at).
@@ -68,7 +68,7 @@ RISK_PCT = 0.08                                   # 2026-10-21: user chose real 
                                                    # Worst case seen in this data at 8%: -67% in 2024 (Rs1L could fall to ~Rs33k before
                                                    # recovering). This is a deliberate, informed choice, not a default -- see markets/README.md.
 MAX_CONCURRENT = 5                                # 2026-10-21 joint sweep: 5 beat 3 in both dev and test; 9 (no cap) decayed test -- see docstring
-TAKER = 0.0005 * 1.18                              # CoinDCX futures market order incl. 18% GST
+TAKER = 0.0005 * 1.18                              # Delta Exchange India futures market order incl. 18% GST (verified live 2026-10-21 -- same rate as CoinDCX)
 MAKER = 0.0002 * 1.18                              # limit order (the take-profit) incl. GST
 SLIP = {"BTC": 0.00005, "ETH": 0.00005, "SOL": 0.0001}
 BBDELTA_MULT = 0.008

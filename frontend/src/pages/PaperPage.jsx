@@ -69,7 +69,7 @@ export default function PaperPage() {
       <div className="page-head">
         <div>
           <h1>Paper trading</h1>
-          <div className="sub">Practice account: real prices, no real money. Open trades use the live {["CRYPTO_CALM", "CRYPTO_DIP_REVERSAL"].includes(d.account_id) ? "CoinDCX futures" : "Upstox"} price{live ? "" : " when it is available (otherwise the last close)"}.
+          <div className="sub">Practice account: real prices, no real money. Open trades use the live {["CRYPTO_CALM", "CRYPTO_DIP_REVERSAL"].includes(d.account_id) ? "Delta Exchange India futures" : "Upstox"} price{live ? "" : " when it is available (otherwise the last close)"}.
             Updated {loadedAt ? loadedAt.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }) : "-"}, refreshes every minute.</div>
         </div>
         <div className="big">

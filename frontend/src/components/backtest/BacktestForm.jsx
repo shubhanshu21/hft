@@ -6,7 +6,7 @@ const THIS_YEAR = new Date().getFullYear();
 const FIRST_YEAR = 2022;                    // the archived daily candles start in September 2022
 const YEARS = Array.from({ length: THIS_YEAR - FIRST_YEAR + 1 }, (_, i) => THIS_YEAR - i);
 const yearRange = (y) => ({ start: `${y}-01-01`, end: y === THIS_YEAR ? today() : `${y}-12-31` });
-const MARKET_LABEL = { commodity: "Commodity (MCX futures)", crypto: "Crypto (CoinDCX futures)" };
+const MARKET_LABEL = { commodity: "Commodity (MCX futures)", crypto: "Crypto (Delta Exchange India futures)" };
 
 export default function BacktestForm({ strategies, onSubmit, busy }) {
   const markets = useMemo(() => [...new Set(strategies.map((s) => s.market))], [strategies]);
@@ -146,7 +146,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
           </>)}
         </div>
         <p className="fees-box">
-          {"Every trade is charged the strategy's full cost model (brokerage, STT, exchange charges, GST, stamp duty, SEBI fees) and slippage on entry and exit (currency: the real bid-ask spread, built into its cost model). Stops that gap are filled at the open, not at the stop price. Fees cannot be switched off. Leverage is set for you: shares are bought with your own money (1x); currency futures use the margin Upstox really charges (about 34-41x), and the strategy caps itself at 20x in total. Commodity (MCX): brokerage, CTT, stamp duty, exchange charges, GST and a half-spread on every trade, real month-end MCX prices including the monthly contract-switch cost. Crypto (CoinDCX perpetual futures): taker fee 0.05% + 18% GST + slippage on market orders, maker fee 0.02% + GST on limit take-profits, real funding."}
+          {"Every trade is charged the strategy's full cost model (brokerage, STT, exchange charges, GST, stamp duty, SEBI fees) and slippage on entry and exit (currency: the real bid-ask spread, built into its cost model). Stops that gap are filled at the open, not at the stop price. Fees cannot be switched off. Leverage is set for you: shares are bought with your own money (1x); currency futures use the margin Upstox really charges (about 34-41x), and the strategy caps itself at 20x in total. Commodity (MCX): brokerage, CTT, stamp duty, exchange charges, GST and a half-spread on every trade, real month-end MCX prices including the monthly contract-switch cost. Crypto (Delta Exchange India perpetual futures): taker fee 0.05% + 18% GST + slippage on market orders, maker fee 0.02% + GST on limit take-profits, real funding."}
         </p>
       </Panel>
 

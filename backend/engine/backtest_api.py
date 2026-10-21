@@ -322,7 +322,7 @@ def _value_mcx(p: dict, live: dict) -> None:
 
 
 def _value_crypto(p: dict, live: dict) -> None:
-    """An open crypto position in USDT, profit in rupees at CoinDCX's USDT/INR, 'if sold now'."""
+    """An open crypto position in USD, profit in rupees at the USD/INR reference rate, 'if sold now'."""
     from engine.crypto_dip_reversal import fetch_live_prices
     st = json.loads(p.get("state") or "{}")
     q = live.get("crypto") or live.setdefault("crypto", fetch_live_prices())
@@ -373,7 +373,7 @@ def paper_summary(account: str = "CRYPTO_DIP_REVERSAL") -> dict:
                                                 "GROUP BY date ORDER BY date", (account,))]
     finally:
         con.close()
-    live = {} if account in ("CRYPTO_CALM", "CRYPTO_DIP_REVERSAL") else _live_prices([p["instrument_key"] for p in pos if p.get("instrument_key")])   # crypto: CoinDCX prices
+    live = {} if account in ("CRYPTO_CALM", "CRYPTO_DIP_REVERSAL") else _live_prices([p["instrument_key"] for p in pos if p.get("instrument_key")])   # crypto: Delta Exchange India prices
     value = {"MCX_TREND_CARRY": _value_mcx, "CRYPTO_CALM": _value_crypto, "CRYPTO_DIP_REVERSAL": _value_crypto}.get(account, _value_position)
     for p in pos:
         value(p, live)
