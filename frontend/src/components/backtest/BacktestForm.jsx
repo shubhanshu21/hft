@@ -6,7 +6,7 @@ const THIS_YEAR = new Date().getFullYear();
 const FIRST_YEAR = 2022;                    // the archived daily candles start in September 2022
 const YEARS = Array.from({ length: THIS_YEAR - FIRST_YEAR + 1 }, (_, i) => THIS_YEAR - i);
 const yearRange = (y) => ({ start: `${y}-01-01`, end: y === THIS_YEAR ? today() : `${y}-12-31` });
-const MARKET_LABEL = { equity: "Equity (NSE stocks)", currency: "Currency (NSE)", commodity: "Commodity (MCX futures)", crypto: "Crypto (CoinDCX futures)" };
+const MARKET_LABEL = { commodity: "Commodity (MCX futures)", crypto: "Crypto (CoinDCX futures)" };
 
 export default function BacktestForm({ strategies, onSubmit, busy }) {
   const markets = useMemo(() => [...new Set(strategies.map((s) => s.market))], [strategies]);

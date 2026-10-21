@@ -1,8 +1,17 @@
 # markets/ -- market -> timeframe -> strategy
 
+NSE equity and currency were removed entirely 2026-10-21 (user: "remove equity and currency because it does not giving any profits"):
+every strategy under `markets/equity/strategies/` and `markets/currency/strategies/`, their paper accounts (EQUITY_SWING,
+DRYRUN_ACCOUNT), `engine/equity_swing.py`, `hft-dryrun.service`, `hft-equity-swing.timer`, and the nightly jobs that only fed them
+(equity daily/ETF/all-NSE/results-dates top-ups, currency data/daily-series top-ups) are gone -- see git history. Two small files
+were kept because unrelated research code still needs them (not live strategies): `markets/equity/universe.py` (the NIFTY50 symbol
+list, used by `engine/research_data.py`'s equity-1m/delivery/events jobs) and `markets/currency/costs.py` (lot-size constants, used
+by `engine/live_dryrun.py`/`engine/live_trading.py`'s generic cost-calculation code, which is otherwise dead with nothing left to
+trade in those markets). What paper trading runs now: commodity (`trend_carry`) and crypto (`dip_reversal`).
+
 ```
 markets/
-  <market>/                          currency | equity   (commodity/: MCX data download only, no strategies)
+  <market>/                          commodity | crypto
     costs.py  data.py  features.py   shared by every strategy of that market (cost model, data top-up, indicators)
     strategies/
       tf_5min/                       strategies whose signal uses 5-minute bars
@@ -15,10 +24,11 @@ markets/
     experiments/                     throwaway research scripts, never run in production
 ```
 
-Add a strategy: `python3 cli.py new-strategy --market currency --timeframe 15min --name my_idea` creates
-`markets/currency/strategies/tf_15min/my_idea/strategy.py` from a template (timeframes: `5min`, `15min`, `1hour`, `daily`). The engine
-discovers it by itself (`core/registry.py`); it only trades once named in `.env`, e.g. `CURRENCY_STRATEGIES=my_idea` (and
-optionally `CURRENCY_MY_IDEA_SYMBOLS=...` to limit it to some symbols). Names must be unique within a market, whatever the timeframe.
+Add a strategy: `python3 cli.py new-strategy --market <market> --timeframe 15min --name my_idea` creates
+`markets/<market>/strategies/tf_15min/my_idea/strategy.py` from a template (timeframes: `5min`, `15min`, `1hour`, `daily`). The engine
+discovers it by itself (`core/registry.py`, `MARKETS = ("currency", "equity")` -- unused now that both are removed, but still the
+mechanism a future daily-bar market strategy would use; commodity/crypto instead wire in their own `web_backtest()`/`backtest()`
+function directly, see `dip_reversal`/`trend_carry`). Names must be unique within a market, whatever the timeframe.
 A test (`tests/test_strategy_framework.py`) fails if a strategy sits in a folder that does not match its timeframe (`timeframe`, or
 `signal_timeframe` when the signal uses other bars than the ones the runner fetches). Guide: `docs/ADDING_A_STRATEGY.md`. Project
 rule: a credible backtest (>= 15 trades) and a held-out test window before it is switched on, then paper trading.
@@ -41,12 +51,7 @@ screened from ~60 public freqtrade strategies on our own coin data with real cos
 | crypto | ~~`crypto/strategies/tf_1hour/compounder_5lakh/`~~ | 1-hour trend/momentum on BTC/ETH/SOL perpetual futures, BTC EMA200+ADX regime gate, asymmetric 1.5x/3.8x ATR stop/target | REMOVED 2026-10-21, replaced by `dip_reversal` above (git history has it) |
 | crypto | ~~`crypto/strategies/tf_4hour/trend_breakout/`~~ and ~~`crypto/strategies/tf_daily/calm_coins/`~~ | 4-hour trend breakout; calm-market long-only rule on 5 coins | REMOVED 2026-10-20, replaced by `compounder_5lakh` then `dip_reversal` (git history has them) |
 | crypto | ~~`crypto/strategies/tf_1min/sr_sweep/`~~ | 1-minute S/R sweep-and-reclaim scalper (68% of trades hit a 0.5R target, -0.14% per trade after fees; even at Delta Exchange's free-close costs with real limit fills -0.04%) | REMOVED 2026-10-17 (git history has it) |
-| equity | `strategies/tf_daily/trend_ema_cross/` | 20/50 EMA cross above the 200 EMA in a healthy market (breadth >= 50%), 2.5-ATR stop then 3.25-ATR trailing stop (3 until 2026-10-14); 20 best stocks + 5 US/Hong Kong ETFs (bought only within 3% of NAV, sold above 15%), max 3; sells a trade still in loss after 20 trading days | paper, 1/4 of the `EQUITY_SWING` account (`engine/equity_swing.py`, its own `entry()`; moved from `hft-dryrun.service` 2026-10-16), 2% risk |
-| equity | `strategies/tf_daily/breakout_pair/` | two swing breakouts on the day's 200 most-traded NSE stocks (no hindsight list), half the money each: nr7 = narrowest range of 7 days above EMA50 > EMA200 -> buy-stop at that high (max 5); d55 = close above the 55-day high above EMA200 -> buy at the open (max 3); breadth >= 50%, 2% risk to a 2.5-ATR stop, 3.25-ATR trail, 20-day dead money | paper, 1/4 of the `EQUITY_SWING` account (Rs4L, `engine/equity_swing.py`, `hft-equity-swing.timer` 09:08-15:31 IST; data `markets/equity/all_daily.py`, nightly) |
-| equity | `strategies/tf_daily/earnings_drift/` | buy after quarterly results beat the market by > 4% over 2 days on 2x volume (NSE results dates, `markets/equity/results_dates.py`), at the open 2 days after; hold 40 trading days, no stop; max 5; breadth >= 50% | paper, 1/4 of the `EQUITY_SWING` account |
-| equity | `strategies/tf_quarterly/momentum_portfolio/` | hold the 10 stocks with the best 6-month return / volatility among the day's 200 most-traded NSE stocks; quarterly rebalance at the next open, a holding stays while in the top 20; no market switch | paper, 1/4 of the `EQUITY_SWING` account |
 | commodity | `strategies/tf_monthly/trend_carry/` | monthly: buy the 3 of 8 MCX commodities with the best rank(12-month trend) + rank(carry = near vs next contract), sized by 1/volatility, mini contracts, whole lots | paper, own account `MCX_TREND_CARRY` (Rs5L, 1.5x exposure; `engine/mcx_trend_carry.py`, `hft-mcx-trend-carry.timer` 09:10 / 23:40 IST); web backtest too |
-| currency | `strategies/tf_daily/rsi_range/` | RSI(14) < 30 buy / > 70 short (only in the outer 25% of the 20-day range), exit at the 20-day average or ~15 days, 2.5-ATR stop | paper, 4% risk (RBI rule: research/paper only) |
 
 Tested and rejected (in the docs, `var/reports/` and git history): intraday and scalping ideas in every market
 (`docs/CURRENCY_RESEARCH.md`), currency daily rules, MCX commodity swing / trend / intraday research.

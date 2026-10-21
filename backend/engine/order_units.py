@@ -9,7 +9,7 @@ Upstox's Place Order V3 documentation: "For commodity - number of LOTS is accept
                                                         the ONE unverified case: LIVE_CURRENCY_QTY_MODE=lots switches it, and it must be confirmed with a
                                                         1-lot order before any live trading is armed.
 
-The margin and brokerage calculators use different units again (margin: lots; brokerage: units) -- see engine/margin_rates.py and engine/cost_drift.py.
+The margin and brokerage calculators use different units again (margin: lots; brokerage: units) -- see engine/margin_rates.py.
 
 Sources, dates and the pre-live checklist (including that a static IP is required): docs/UPSTOX_LIVE_READINESS.md.
 

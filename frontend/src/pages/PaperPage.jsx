@@ -4,15 +4,13 @@ import Panel from "../components/ui/Panel.jsx";
 import Stat from "../components/ui/Stat.jsx";
 import { baseOptions } from "../components/charts/chartOptions.js";
 import { getPaper } from "../api/client.js";
-import StrategyStatus from "../components/paper/StrategyStatus.jsx";
 import OpenTradeCard from "../components/paper/OpenTradeCard.jsx";
 import Pager from "../components/ui/Pager.jsx";
 import { usePaged } from "../hooks/usePaged.js";
 import { useTheme } from "../hooks/useTheme.js";
 import { inr, signed, tone } from "../lib/format.js";
 
-const STRATEGY_LABEL = { nr7_breakout: "Quiet-day breakout", d55_breakout: "55-day breakout", momentum_portfolio: "Momentum (15 stocks)",
-  earnings_drift: "Earnings drift", trend_ema_cross: "trend_ema_cross", rsi_range: "Currency rsi_range", trend_carry: "MCX trend + carry", dip_reversal: "Crypto dip-reversal" };
+const STRATEGY_LABEL = { trend_carry: "MCX trend + carry", dip_reversal: "Crypto dip-reversal" };
 const when = (s) => (s ? String(s).replace("T", " ").slice(0, 16) : "-");
 
 /** The paper-trading account as it is now (read-only, refreshed every minute). No real orders are ever placed. */
@@ -21,7 +19,7 @@ export default function PaperPage() {
   const [d, setD] = useState(null);
   const [error, setError] = useState("");
   const [loadedAt, setLoadedAt] = useState(null);
-  const [account, setAccount] = useState(() => { try { return localStorage.getItem("paperAccount") || "EQUITY_SWING"; } catch { return "EQUITY_SWING"; } });
+  const [account, setAccount] = useState(() => { try { return localStorage.getItem("paperAccount") || "CRYPTO_DIP_REVERSAL"; } catch { return "CRYPTO_DIP_REVERSAL"; } });
   const pick = (id) => { setAccount(id); setD(null); try { localStorage.setItem("paperAccount", id); } catch { /* private window */ } };
   const box = useRef(null);
   const tradePaged = usePaged(d?.trades ?? [], 15);
@@ -98,10 +96,9 @@ export default function PaperPage() {
           ? <div className="none">{{
             CRYPTO_DIP_REVERSAL: "No open trades. dip_reversal checks all 12 coins for a Bollinger-band dip every 5-minute candle close.",
             MCX_TREND_CARRY: "No open trades. trend_carry rebalances at 09:10 on the first MCX trading day of each month.",
-            EQUITY_SWING: "No holdings yet. Momentum buys its 15 stocks at the next open; breakout, earnings-drift and trend_ema_cross buys wait for a healthy market (half the stocks above their 50-day average).",
-          }[d.account_id] ?? "No open trades. Currency (rsi_range) checks for entries at the 9:00 open."}</div>
+          }[d.account_id] ?? "No open trades."}</div>
           : <div className="trade-cards">{d.positions.map((p) => <OpenTradeCard key={p.symbol} p={p} />)}</div>}
-        {d.positions.length > 0 && <p className="note">"Last traded price" changes only when someone trades{d.account_id === "DRYRUN_ACCOUNT" ? "; EURINR and GBPINR futures trade a few hundred lots a day, so it can stay the same for many minutes" : ""}. "Buyers / sellers now" are the best live offers: selling now would get the buyers' price. "Profit now" is the price move only. "If sold now" also takes off brokerage, taxes and the buy–sell price gap, the same way the paper trader books a sale.
+        {d.positions.length > 0 && <p className="note">"Last traded price" changes only when someone trades. "Buyers / sellers now" are the best live offers: selling now would get the buyers' price. "Profit now" is the price move only. "If sold now" also takes off brokerage, taxes and the buy–sell price gap, the same way the paper trader books a sale.
           The account changes only when a trade is sold.</p>}
       </Panel>
 
@@ -126,7 +123,6 @@ export default function PaperPage() {
 
       <Panel title="Account value by day">{d.equity.length ? <div ref={box} className="tv-box" /> : <div className="none">The first point appears after today's close.</div>}</Panel>
 
-      {d.account_id === "EQUITY_SWING" && <StrategyStatus />}
     </div>
   );
 }

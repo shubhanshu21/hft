@@ -6,7 +6,6 @@
     POST /api/backtests          start a run (JSON body; optional label)
     POST /api/backtests/<id>/label   rename a saved run (JSON body with label)
     GET  /api/paper              the paper-trading account (read-only): balance, open positions, trades, daily account value
-    GET  /api/equity-status      what trend_ema_cross is waiting for: market health, and each of its stocks' distance from a signal
     DELETE /api/backtests/<id>   delete one saved run;  DELETE /api/backtests  delete every saved run (the one running now is kept)
 
 It only reads archived candles and runs the strategy code; it never talks to Upstox, touches the paper-trading database or places an order.
@@ -58,15 +57,6 @@ def catalog() -> list[dict]:
     mcx = {"market": "commodity", "name": "trend_carry", "timeframe": "1 months", "supported": True, "symbols": sorted(set(tc.TRADE.values())),
            "summary": (tc.__doc__ or "").strip().split("\n")[0], "intraday": False, "default_risk_pct": None, "monthly_rank": True,
            "exposure": float(os.environ.get("MCX_TREND_CARRY_EXPOSURE", 1.5)), "exposure_min": tc.EXPOSURE_MIN, "exposure_max": tc.EXPOSURE_MAX}
-    from markets.equity.strategies.tf_daily.breakout_pair import strategy as bps
-    bp = {"market": "equity", "name": "breakout_pair", "timeframe": "1 days", "supported": True, "symbols": [], "auto_universe": True,
-          "summary": (bps.__doc__ or "").strip().split("\n")[0], "intraday": False, "default_risk_pct": bps.RISK_PCT}
-    from markets.equity.strategies.tf_daily.earnings_drift import strategy as eds
-    earn = {"market": "equity", "name": "earnings_drift", "timeframe": "1 days", "supported": True, "symbols": [], "auto_universe": True,
-            "summary": (eds.__doc__ or "").strip().split("\n")[0], "intraday": False, "default_risk_pct": None}
-    from markets.equity.strategies.tf_quarterly.momentum_portfolio import strategy as mps
-    mom = {"market": "equity", "name": "momentum_portfolio", "timeframe": "1 days", "supported": True, "symbols": [], "auto_universe": True,
-           "summary": (mps.__doc__ or "").strip().split("\n")[0], "intraday": False, "default_risk_pct": None}
     from markets.crypto.strategies.tf_5min.dip_reversal import strategy as dr
     dip_reversal = {"market": "crypto", "name": "dip_reversal", "timeframe": "5 minutes", "supported": True, "symbols": dr.available(), "crypto": True, "scalp": True,
                      "default_symbols": list(dr.COINS), "summary": (dr.__doc__ or "").strip().split("\n")[0], "intraday": True, "default_risk_pct": dr.RISK_PCT * 100,
@@ -75,7 +65,7 @@ def catalog() -> list[dict]:
              "summary": (s.__doc__ or "").strip().split("\n")[0], "intraday": s.intraday,
              "default_risk_pct": getattr(s, "default_risk_pct", None),
              "default_symbols": [x for x in (getattr(s, "universe", None) or universe(m)) if s.trades(x)]}     # what its paper trading uses
-            for (m, n), s in sorted(registry.discover().items())] + [bp, mom, earn, mcx, dip_reversal]
+            for (m, n), s in sorted(registry.discover().items())] + [mcx, dip_reversal]
 
 
 def prune() -> None:
@@ -284,12 +274,11 @@ def _value_position(p: dict, live: dict) -> None:
         p["net_if_sold"] = p["fees_if_sold"] = None
 
 
-PAPER_ACCOUNTS = [("EQUITY_SWING", "Equity swing"), ("DRYRUN_ACCOUNT", "Currency"), ("MCX_TREND_CARRY", "MCX trend + carry"), ("CRYPTO_DIP_REVERSAL", "Crypto dip-reversal")]
-ACCOUNT_STRATEGIES = {"EQUITY_SWING": "breakout · momentum · earnings drift · trend_ema_cross", "DRYRUN_ACCOUNT": "rsi_range",
-                      "MCX_TREND_CARRY": "trend_carry", "CRYPTO_DIP_REVERSAL": "dip_reversal"}
+PAPER_ACCOUNTS = [("MCX_TREND_CARRY", "MCX trend + carry"), ("CRYPTO_DIP_REVERSAL", "Crypto dip-reversal")]
+ACCOUNT_STRATEGIES = {"MCX_TREND_CARRY": "trend_carry", "CRYPTO_DIP_REVERSAL": "dip_reversal"}
 
 
-MARKET_HOURS = {"EQUITY_SWING": ("09:15", "15:30", "NSE"), "DRYRUN_ACCOUNT": ("09:00", "17:00", "NSE currency"), "MCX_TREND_CARRY": ("09:00", None, "MCX")}
+MARKET_HOURS = {"MCX_TREND_CARRY": ("09:00", None, "MCX")}
 
 
 def market_status(account: str) -> tuple[bool, str]:
@@ -313,26 +302,6 @@ def market_status(account: str) -> tuple[bool, str]:
         pass
     is_open = start <= now.strftime("%H:%M") < end
     return is_open, f"{hours}: {'open now' if is_open else 'closed now'}"
-
-
-def _value_breakout(p: dict, live: dict) -> None:
-    """An open equity swing holding (engine/equity_swing.py; delivery shares; only breakout trades have a stop): priced at the live quote."""
-    from markets.equity.strategies.tf_daily.breakout_pair import strategy as BP
-    p.pop("state", None)
-    q = live.get(p.get("instrument_key")) or {}
-    price, source, as_of = q.get("ltp"), "live", q.get("trade_time")
-    if price is None:
-        price, as_of = _last_close(p["symbol"], "equity")
-        source = "last close"
-    p.update(market="equity", lot_size=1, units=p["qty"], price_now=price, price_source=source if price is not None else None, price_time=as_of,
-             bid=q.get("bid"), ask=q.get("ask"), checked_at=datetime.now(IST).isoformat(timespec="seconds") if q else None,
-             margin_used=round(p["qty"] * p["entry_price"], 2), risk_to_stop=round((p["entry_price"] - p["current_stop"]) * p["qty"], 2))
-    p.pop("instrument_key", None)
-    if price is None:
-        p.update(profit_now=None, fees_if_sold=None, net_if_sold=None, move_pct=None)
-        return
-    c = BP.costs(p["entry_price"], price, p["qty"], p["symbol"])
-    p.update(profit_now=round(c["gross"], 2), net_if_sold=round(c["net"], 2), fees_if_sold=round(c["total"], 2), move_pct=round((price / p["entry_price"] - 1) * 100, 3))
 
 
 def _value_mcx(p: dict, live: dict) -> None:
@@ -375,7 +344,7 @@ def _value_crypto(p: dict, live: dict) -> None:
              pretax_if_sold=round(net, 2))
 
 
-def paper_summary(account: str = "DRYRUN_ACCOUNT") -> dict:
+def paper_summary(account: str = "CRYPTO_DIP_REVERSAL") -> dict:
     """A paper-trading account, read-only (SQLite opened mode=ro). Open positions are valued at the live Upstox price (else the last close)."""
     import sqlite3
     from core.paths import DB_DIR
@@ -386,7 +355,7 @@ def paper_summary(account: str = "DRYRUN_ACCOUNT") -> dict:
     con.row_factory = sqlite3.Row
     try:
         if account not in dict(PAPER_ACCOUNTS):
-            account = "DRYRUN_ACCOUNT"
+            account = "CRYPTO_DIP_REVERSAL"
         tabs = []
         for aid, label in PAPER_ACCOUNTS:
             r = con.execute("SELECT initial_capital, current_capital FROM accounts WHERE account_id = ?", (aid,)).fetchone()
@@ -405,7 +374,7 @@ def paper_summary(account: str = "DRYRUN_ACCOUNT") -> dict:
     finally:
         con.close()
     live = {} if account in ("CRYPTO_CALM", "CRYPTO_DIP_REVERSAL") else _live_prices([p["instrument_key"] for p in pos if p.get("instrument_key")])   # crypto: CoinDCX prices
-    value = {"MCX_TREND_CARRY": _value_mcx, "EQUITY_SWING": _value_breakout, "CRYPTO_CALM": _value_crypto, "CRYPTO_DIP_REVERSAL": _value_crypto}.get(account, _value_position)
+    value = {"MCX_TREND_CARRY": _value_mcx, "CRYPTO_CALM": _value_crypto, "CRYPTO_DIP_REVERSAL": _value_crypto}.get(account, _value_position)
     for p in pos:
         value(p, live)
     if acc:
@@ -434,24 +403,6 @@ def work(run: dict) -> None:
             from markets.crypto.strategies.tf_5min.dip_reversal import strategy as dr
             try:
                 run["result"] = dr.web_backtest(p["capital"], p["start"], p["end"], symbols=p.get("symbols"), leverage=p.get("leverage", 3.0), tax=p.get("tax", "business"))
-            except ValueError as e:
-                raise BacktestError(str(e))
-        elif run["strategy"] == "earnings_drift":                   # results dates + reaction across ~200 stocks: its own backtest
-            from markets.equity.strategies.tf_daily.earnings_drift import strategy as eds
-            try:
-                run["result"] = eds.web_backtest(p["capital"], p["start"], p["end"], slippage_bp=p["slippage_bp"])
-            except ValueError as e:
-                raise BacktestError(str(e))
-        elif run["strategy"] == "momentum_portfolio":               # ranks ~200 stocks each quarter: its own backtest
-            from markets.equity.strategies.tf_quarterly.momentum_portfolio import strategy as mps
-            try:
-                run["result"] = mps.web_backtest(p["capital"], p["start"], p["end"], slippage_bp=p["slippage_bp"])
-            except ValueError as e:
-                raise BacktestError(str(e))
-        elif run["strategy"] == "breakout_pair":                    # ranks ~200 stocks together every day: its own backtest
-            from markets.equity.strategies.tf_daily.breakout_pair import strategy as bps
-            try:
-                run["result"] = bps.web_backtest(p["capital"], p["start"], p["end"], risk_pct=p["risk_pct"], slippage_bp=p["slippage_bp"])
             except ValueError as e:
                 raise BacktestError(str(e))
         elif run["market"] == "commodity":                        # trend_carry: monthly, all 8 commodities ranked together, its own backtest
@@ -531,16 +482,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, catalog())
         if path == "/api/backtests":
             return self._send(200, summaries())
-        if path == "/api/equity-status":
-            try:
-                from engine.strategy_status import equity_status
-                return self._send(200, equity_status())
-            except Exception as e:                                       # a missing archive file must not break the page
-                return self._send(HTTPStatus.SERVICE_UNAVAILABLE, {"error": f"status unavailable: {type(e).__name__}"})
         if path == "/api/paper":
             try:
                 from urllib.parse import parse_qs
-                acct = (parse_qs(urlparse(self.path).query).get("account") or ["DRYRUN_ACCOUNT"])[0]
+                acct = (parse_qs(urlparse(self.path).query).get("account") or ["CRYPTO_DIP_REVERSAL"])[0]
                 return self._send(200, paper_summary(acct))
             except Exception as e:                                       # a locked or half-written DB must not break the page
                 return self._send(HTTPStatus.SERVICE_UNAVAILABLE, {"error": f"paper account unavailable: {type(e).__name__}"})

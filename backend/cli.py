@@ -1,20 +1,17 @@
 #!/usr/bin/env python3
 """
-cli.py — Master CLI for the paper-trading framework (NSE currency and equity).
+cli.py — Master CLI for the paper-trading framework.
 
-Strategies live in markets/<market>/strategies/<timeframe>/<name>/ (markets/README.md lists them). The 5-minute scalpers
-(commodity, currency, equity) were deleted on 2026-10-10 after losing money once costs and real fills were counted, and MCX commodity
-trading was removed entirely on 2026-10-12, crypto and the gold_crude MCX strategy on 2026-10-14 (MCX data is still downloaded:
-markets/commodity/data.py, engine/depth_recorder.py) -- see git history.
+Strategies live in markets/<market>/strategies/<timeframe>/<name>/ (markets/README.md lists them). NSE equity and currency were
+removed entirely on 2026-10-21 (user: "remove equity and currency because it does not giving any profits" -- strategies, paper
+accounts EQUITY_SWING/DRYRUN_ACCOUNT, engine/equity_swing.py, hft-dryrun.service, hft-equity-swing.timer all removed; see git
+history). The 5-minute scalpers (commodity, currency, equity) were deleted on 2026-10-10 after losing money once costs and real
+fills were counted, and MCX commodity trading was removed entirely on 2026-10-12, crypto and the gold_crude MCX strategy on
+2026-10-14 (MCX data is still downloaded: markets/commodity/data.py, engine/depth_recorder.py) -- see git history. What paper
+trading runs now: crypto (`dip_reversal`, own account CRYPTO_DIP_REVERSAL) and commodity (`trend_carry`, own account MCX_TREND_CARRY).
 
 Usage Examples:
-    # 1. Swing research across markets (documented rules, train/test, costs)
-    python3 -m markets.swing_research
-
-    # 2. Live paper-trading daemon (systemd: hft-dryrun.service; disabled since 2026-10-12, nothing to trade)
-    python3 cli.py dryrun --interval 30
-
-    # 3. Report / reset the paper-trading database
+    # 1. Report / reset the paper-trading database
     python3 cli.py report
     python3 cli.py reset-db --capital 100000
 
@@ -126,7 +123,7 @@ def main():
     # Dryrun Subcommand -- defaults come from backend/.env (DRYRUN_* / TRADING_*
     # vars) so `python3 cli.py dryrun` needs no flags at all; passing a flag
     # still overrides the .env value for that one run.
-    p_dr = subparsers.add_parser("dryrun", help="Run live paper-trading dryrun (NSE currency + NSE equity)")
+    p_dr = subparsers.add_parser("dryrun", help="Run live paper-trading dryrun (NSE currency + equity removed 2026-10-21; nothing left to trade)")
     p_dr.add_argument("--symbols", nargs="+", default=_env("DRYRUN_SYMBOLS", "").split() or None,
                        help="Symbols to watch")
     p_dr.add_argument("--capital", type=float, default=float(_env("TRADING_CAPITAL", "100000.0")),

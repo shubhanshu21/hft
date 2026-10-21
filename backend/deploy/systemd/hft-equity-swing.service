@@ -1,8 +1,0 @@
-[Unit]
-Description=Equity swing paper trading session 09:08-15:31 IST (breakout + momentum + earnings drift in one account; paper only, no real orders)
-
-[Service]
-Type=oneshot
-WorkingDirectory=/var/www/html/hft/backend
-ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m engine.equity_swing
-TimeoutStartSec=7h

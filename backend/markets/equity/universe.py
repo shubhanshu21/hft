@@ -1,6 +1,11 @@
 """
 markets/equity/universe.py -- fixed NIFTY50 constituent list.
 
+All NSE equity trading (strategies, EQUITY_SWING paper account, engine/equity_swing.py) was removed 2026-10-21 (user: "remove equity
+and currency because it does not giving any profits"). This one file is kept because engine/research_data.py's equity-1m/delivery/
+events jobs (board meetings, 1-minute history, delivery %) use this symbol list for ongoing research unrelated to live trading --
+"Nothing here trades" per that module's own docstring. Don't resurrect a live strategy on this list without the same discipline below.
+
 Rebuilt 2026-09-19 after the original equity scalper was removed
 (a3e33785, "equityremoved") once it failed to show a real OOS edge on the
 full NIFTY50 with a genuine train/test split. That prior removal is the only

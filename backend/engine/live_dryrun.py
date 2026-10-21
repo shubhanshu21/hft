@@ -1216,23 +1216,6 @@ def refresh_market_hours(broker, day=None) -> None:
         log.warning("Exchange-hours refresh failed: %s", exc)
 
 
-def check_cost_drift(broker, runner) -> None:
-    """At start: compare our cost model with Upstox's brokerage calculator for the symbols being traded (engine/cost_drift.py)."""
-    try:
-        from engine import cost_drift
-        keys = {s: SYMBOL_MAP[s] for s in runner.symbols if SYMBOL_MAP.get(s)}
-        sample = {}
-        for market in registry.MARKETS:                                           # one representative symbol per market keeps this to a few calls
-            pick = next((s for s in keys if _get_market(s) == market), None)
-            if pick:
-                sample[pick] = keys[pick]
-        rows = cost_drift.check(broker, sample, _get_market)
-        log.info("Cost model vs Upstox calculator: %s", {r["symbol"]: r.get("ratio", r["status"]) for r in rows})
-        bad = [r for r in rows if r["status"] in ("UNDERSTATES", "overstates")]
-        if bad:
-            telegram.send("💸 <b>COST MODEL DRIFT</b> — our charges differ from Upstox's calculator:\n" + cost_drift.format_rows(bad))
-    except Exception as exc:
-        log.warning("Cost-drift check failed: %s", exc)
 
 
 def refresh_margin_rates(broker, runner) -> None:
@@ -1408,7 +1391,6 @@ def main():
                        account_id=args.account, direction_filter=direction_mode)
     refresh_market_hours(broker)
     refresh_margin_rates(broker, runner)
-    check_cost_drift(broker, runner)
 
 
     print(f"\n{BOLD}{CY}{'='*75}{R}")

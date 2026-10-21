@@ -25,27 +25,16 @@ STEP_TIMEOUT_S = 45 * 60
 STEPS = [                            # (name, argv, exit codes that count as success)
     ("mcx data", [PY, "-m", "markets.commodity.data", "--topup"], {0}),          # nearest-contract MCX candles (research, depth studies)
     ("mcx futures eod", [PY, "-m", "markets.commodity.futures_eod"], {0}),      # every expiry, daily: commodity trend_carry signals and backtests
-    ("currency data", [PY, "-m", "markets.currency.data", "--topup"], {0}),
-    ("equity data", [PY, "-m", "markets.equity.data", "--topup"], {0}),
-    ("equity daily candles", [PY, "-m", "markets.equity.download_daily_weekly", "--topup", "--tf", "day"], {0}),   # trend_ema_cross reads these for its market check
-    ("etf daily candles", [PY, "-m", "markets.equity.download_daily_weekly", "--topup", "--tf", "day", "--symbols", "MON100", "MAFANG",
-                           "MASPTOP50", "HNGSNGBEES", "MAHKTECH"], {0}),                 # trend_ema_cross (US / Hong Kong ETFs)
-    ("etf premium", [PY, "-m", "markets.equity.etf_premium"], {0}),                     # price vs NAV: trend_ema_cross buys ETFs only at a small premium
-    ("all nse daily", [PY, "-m", "markets.equity.all_daily", "--max-minutes", "25"], {0}),   # equity swing: liquid pool + holdings, then the rest oldest-first
-    ("results dates", [PY, "-m", "markets.equity.results_dates"], {0}),          # equity/earnings_drift: NSE results board meetings, all equities
     ("research data", [PY, "-m", "engine.research_data", "all", "--max-minutes", "40"], {0}),     # 1-minute stocks/indexes, futures/options OI, NSE participant OI;
                                                                                                 # stops inside STEP_TIMEOUT_S and resumes next night (a 2026-10-09 first backfill was killed at 45 min)
-    ("currency daily series", [PY, "-m", "markets.currency.daily_series"], {0}),     # back-adjusted daily futures for currency backtests (from research data)
     ("commodity daily series", [PY, "-m", "markets.commodity.daily_series"], {0}),     # daily gold / crude series for research (runs after "mcx data")
     ("db backup", [PY, "-m", "engine.backup_db"], {0}),
     ("db backup verify", [PY, "-m", "engine.backup_db", "--verify"], {0}),      # open the newest backup: a backup nobody has opened is a hope
-    ("cost drift", [PY, "-m", "engine.cost_drift"], {0, 1}),                    # our charges vs Upstox's calculator; 1 = alerted itself
     ("trade audit", [PY, "-m", "engine.trade_audit"], {0, 1}),          # 1 = flagged trades: alerted by the audit itself
-    ("paper vs backtest", [PY, "-m", "engine.paper_vs_backtest"], {0, 1}),   # did paper take the backtest's trades? 1 = differences, alerted itself
 ]
 # representative archive files whose newest candle date must not lag (market, file)
+# NSE equity and currency removed 2026-10-21 (user: "remove equity and currency because it does not giving any profits")
 FRESHNESS = [("commodity", "CRUDEOILM_1minute.csv"), ("commodity", "GOLD_1minute.csv"), ("commodity", "SILVER_1minute.csv"),
-             ("currency", "USDINR_1minute.csv"), ("equity", "RELIANCE_5minute.csv"), ("equity", "TATASTEEL_5minute.csv"), ("equity", "RELIANCE_daily.csv"), ("equity", "MON100_daily.csv"), ("equity_all", "RELIANCE_daily.csv.gz"),
              ("commodity", "mcx_futures_daily.csv")]
 IST = ZoneInfo("Asia/Kolkata")
 
