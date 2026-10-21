@@ -23,8 +23,11 @@ sweep of target/stop/concurrency found this beat the original symmetric 7%/7%/3 
 wide-target/5-concurrent region of the grid did better): dev (2022-24) Rs2.30L business income (worst fall -28%), test (2025-26) Rs1.32L
 (worst fall -16%); every one of 2022-2026's 5 calendar years was individually positive. Shorts were tried (the same rule mirrored on
 rallies) and made it WORSE in both windows -- crypto's long-term upward drift means fading rallies loses more than it gains; rejected.
-Raising RISK_PCT past 2% makes more in dev but the honest 2025-26 test caps near +23%/yr no matter how high risk goes, while the worst
-fall keeps growing (6%: -34% test; 10%: -57% test) -- so 2% stays the BASE risk; see the risk_pct table in markets/README.md.
+RISK_PCT=2% was the safe choice (worst fall -19% in this data); the user explicitly chose real risk for bigger profit instead, so this
+ships at 8% -- the genuine ceiling: at 10% some years make LESS than at 8% because the drawdown is deep enough to eat the recovery
+(2024: Rs1.22L at 10% vs Rs1.50L at 8%, on the full 12-coin/dynamic-sizing model). At 8% every year 2022-2026 still made money, but the
+worst fall seen was -67% (2024) -- Rs1L could fall to roughly Rs33k before recovering. This is a deliberate, informed risk choice, not
+a default; see the risk_pct table in markets/README.md for the 2%/4%/6%/8%/10% comparison before raising it further.
 Leverage is a safety CEILING on position size here, not a throttle -- the stop already fixes position size at RISK_PCT / stop%, so
 changing leverage rarely changes a trade's size or the P&L above.
 2026-10-21 dynamic risk (user: "should be dynamic and adjusted according to situations"): position size now scales with how calm or
@@ -60,7 +63,10 @@ DATA_DIR = ARCHIVE_ROOT / "crypto"
 TAX = 0.312
 COINS = ("BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "AVAX", "LINK", "DOT", "LTC", "TRX")  # DOT/LTC/TRX added 2026-10-21 (data already on disk)
 
-RISK_PCT = 0.02
+RISK_PCT = 0.08                                   # 2026-10-21: user chose real risk over 2%'s safety; 8% is the ceiling -- 10% starts
+                                                   # losing to its own drawdowns in some years (2024: Rs1.22L at 10% vs Rs1.50L at 8%).
+                                                   # Worst case seen in this data at 8%: -67% in 2024 (Rs1L could fall to ~Rs33k before
+                                                   # recovering). This is a deliberate, informed choice, not a default -- see markets/README.md.
 MAX_CONCURRENT = 5                                # 2026-10-21 joint sweep: 5 beat 3 in both dev and test; 9 (no cap) decayed test -- see docstring
 TAKER = 0.0005 * 1.18                              # CoinDCX futures market order incl. 18% GST
 MAKER = 0.0002 * 1.18                              # limit order (the take-profit) incl. GST
