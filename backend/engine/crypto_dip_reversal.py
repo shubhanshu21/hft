@@ -1,4 +1,4 @@
-"""Paper trading engine: crypto / dip_reversal -- 5-minute dip-buy reversal on 9 coins' perpetual futures (one shared capital pool, up
+"""Paper trading engine: crypto / dip_reversal -- 5-minute dip-buy reversal on 12 coins' perpetual futures (one shared capital pool, up
 to markets.crypto.strategies.tf_5min.dip_reversal.strategy.MAX_CONCURRENT positions open together). Rules, costs and the backtest live
 in that module; this file just runs the same rule live every 5 minutes against fresh Binance candles and CoinDCX prices.
 
@@ -60,7 +60,7 @@ def save_state(state: dict) -> None:
 
 
 def init_account(db: TradingDB) -> None:
-    db.init_account(account_id=ACCOUNT_ID, name="Crypto Dip-Reversal (9-coin 5m Perps)", capital=INITIAL_CAPITAL_INR,
+    db.init_account(account_id=ACCOUNT_ID, name="Crypto Dip-Reversal (12-coin 5m Perps)", capital=INITIAL_CAPITAL_INR,
                     leverage=MAX_LEVERAGE, risk_pct=S.RISK_PCT * 100)
 
 
@@ -230,7 +230,7 @@ def print_status(db: TradingDB) -> None:
     state = load_state()
     wr = state["winning_trades_count"] / max(1, state["completed_trades_count"]) * 100
     print("=" * 70)
-    print("CRYPTO DIP-REVERSAL STATUS (9-coin 5m perps)")
+    print("CRYPTO DIP-REVERSAL STATUS (12-coin 5m perps)")
     print("=" * 70)
     print(f"Trading capital:   {_inr(state['trading_capital'])}")
     print(f"Completed trades:  {state['completed_trades_count']} (win rate {wr:.1f}%)")
@@ -245,7 +245,7 @@ def main(argv=None) -> int:
     import engine.config  # noqa: F401 -- loads .env
     from services.utils import telegram
 
-    parser = argparse.ArgumentParser(description="Crypto dip-reversal (5-min, 9-coin perps) paper trader")
+    parser = argparse.ArgumentParser(description="Crypto dip-reversal (5-min, 12-coin perps) paper trader")
     parser.add_argument("--status", action="store_true")
     parser.add_argument("--no-telegram", action="store_true")
     args = parser.parse_args(argv)
