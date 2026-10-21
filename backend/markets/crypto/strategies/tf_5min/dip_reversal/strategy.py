@@ -213,9 +213,9 @@ def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None
                 r_trade = net / cap
                 cap_strict *= 1 + r_trade - (TAX * r_trade if r_trade > 0 else 0.0)   # strict: tax each winning trade, no loss offset
                 cap += net
-                closed.append({"symbol": c, "side": "LONG", "entry_time": str(pos["entry_time"]), "exit_time": str(dt), "entry_price": round(pos["entry"], 6),
-                                "exit_price": round(px, 6), "qty": round(pos["size"] / pos["entry"], 6), "pnl": round(net), "gross_pnl": round(gross),
-                                "fees": round(fee), "exit_reason": why, "won": net > 0})
+                closed.append({"symbol": c, "side": "LONG", "entry_time": str(pos["entry_time"]), "exit_time": str(dt), "entry_price": round(float(pos["entry"]), 6),
+                                "exit_price": round(float(px), 6), "qty": round(float(pos["size"] / pos["entry"]), 6), "pnl": round(float(net)), "gross_pnl": round(float(gross)),
+                                "fees": round(float(fee)), "exit_reason": why, "won": bool(net > 0)})
                 del open_pos[c]
         if len(open_pos) < MAX_CONCURRENT and cap > 50:
             for c in coins:
@@ -249,5 +249,44 @@ def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None
     m["note"] = (f"5-min dip-reversal on {', '.join(coins)}: {RISK_PCT:.0%} risk per trade, at most {leverage:g}x, up to {MAX_CONCURRENT} open "
                  f"together. Real costs incl. funding. {len(closed):,} trades, {win_rate:.1%} won after costs. Before tax Rs{cap:,.0f}; "
                  f"business income Rs{s_biz.iloc[-1]:,.0f}; strict tax Rs{s_str.iloc[-1]:,.0f}.")
+
+    # Replay data for the results page: daily candles + buy/sell events + open-position tracking, one entry per day in `days`
+    # (same shape core.backtester.run_backtest and commodity/trend_carry use -- see components/replay/*.jsx).
+    day_idx = {d: i for i, d in enumerate(days)}
+    events = [[] for _ in days]
+    pos_by_day = [[] for _ in days]
+    bars = {}
+    for c in coins:
+        dd = data[c].set_index("date").loc[days[0] if days else start: days[-1] if days else end, ["open", "high", "low", "close"]]
+        daily = dd.resample("1D").agg({"open": "first", "high": "max", "low": "min", "close": "last"})
+        daily.index = daily.index.strftime("%Y-%m-%d")
+        row = daily.reindex(days)
+        last_bar = None
+        out_bars = []
+        for d in days:
+            r = row.loc[d] if d in row.index else None
+            if r is not None and not r.isna().any():
+                last_bar = [round(float(r["open"]), 6), round(float(r["high"]), 6), round(float(r["low"]), 6), round(float(r["close"]), 6)]
+            out_bars.append(list(last_bar) if last_bar is not None else None)
+        bars[c] = out_bars
+    for x in closed:
+        d0, d1 = str(x["entry_time"])[:10], str(x["exit_time"])[:10]
+        i0, i1 = day_idx.get(d0), day_idx.get(d1)
+        if i0 is not None:
+            events[i0].append({"t": "buy", "side": "long", "sym": x["symbol"], "q": x["qty"], "px": x["entry_price"],
+                                "entry": x["entry_price"], "note": f"BUY {x['symbol']} at {x['entry_price']}"})
+        if i1 is not None:
+            events[i1].append({"t": "sell", "side": "long", "sym": x["symbol"], "q": x["qty"], "px": x["exit_price"],
+                                "entry": x["entry_price"], "pnl": x["pnl"], "fees": x["fees"], "slip": 0.0, "why": x["exit_reason"]})
+        if i0 is not None:
+            for di in range(i0, (i1 if i1 is not None else len(days) - 1) + 1):
+                pos_by_day[di].append({"sym": x["symbol"], "q": x["qty"], "e": x["entry_price"], "px": x["exit_price"], "start": i0})
+    for c, p in open_pos.items():
+        i0 = day_idx.get(str(p["entry_time"])[:10])
+        if i0 is not None:
+            q, e, stop = round(float(p["size"] / p["entry"]), 6), round(float(p["entry"]), 6), round(float(p["sl"]), 6)
+            events[i0].append({"t": "buy", "side": "long", "sym": c, "q": q, "px": e, "entry": e, "note": f"BUY {c} at {e}"})
+            for di in range(i0, len(days)):
+                pos_by_day[di].append({"sym": c, "q": q, "e": e, "px": e, "start": i0, "stop": stop})
     return {"metrics": m, "equity": [round(v) for v in s_eq.values], "days": days, "trades": closed,
-            "pos": [{"symbol": c, "side": "LONG", "qty": round(p["size"] / p["entry"], 6), "entry_price": round(p["entry"], 6)} for c, p in open_pos.items()]}
+            "events": events, "pos": pos_by_day, "bars": bars, "overlays": {}}
