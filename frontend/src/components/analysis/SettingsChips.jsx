@@ -7,13 +7,13 @@ export default function SettingsChips({ params }) {
     ["Commodities", `${params.symbols?.length}: ${(params.symbols ?? []).join(", ")}`],
     ["Rebalance", "monthly"],
     ["Costs", "MCX fees + half-spread"],
-  ] : params.market === "crypto" && params.strategy === "compounder_5lakh" ? [
+  ] : params.market === "crypto" && params.strategy === "dip_reversal" ? [
     ["Start money", `₹${Number(params.capital).toLocaleString("en-IN")}`],
     ["Perps", `${params.symbols?.length}: ${(params.symbols ?? []).join(", ")}`],
-    ["Timeframe", "1-hour candles"],
-    ["Rules", "Macro EMA200 + ADX regime gate, 1:2.53 R:R, Milestone Vault"],
-    ["Leverage", `${params.leverage ?? 3.8}x`],
-    ["Costs", "0.02% maker fee + slippage"],
+    ["Timeframe", "5-minute candles"],
+    ["Rules", "Bollinger-band dip reversal (BinHV45 + ClucMay2018), up to 3 open together"],
+    ["Risk per trade", "2% (leverage is a safety cap, not a throttle)"],
+    ["Costs", "taker+GST+slippage on entries/stops, maker+GST on the target, real funding"],
   ] : params.market === "crypto" ? [
     ["Start money", `₹${Number(params.capital).toLocaleString("en-IN")}`],
     ["Coins", `${params.symbols?.length}: ${(params.symbols ?? []).join(", ")}`],

@@ -12,7 +12,7 @@ import { useTheme } from "../hooks/useTheme.js";
 import { inr, signed, tone } from "../lib/format.js";
 
 const STRATEGY_LABEL = { nr7_breakout: "Quiet-day breakout", d55_breakout: "55-day breakout", momentum_portfolio: "Momentum (15 stocks)",
-  earnings_drift: "Earnings drift", trend_ema_cross: "trend_ema_cross", rsi_range: "Currency rsi_range", trend_carry: "MCX trend + carry", compounder_5lakh: "Crypto 5L Compounder", asymmetric_5lakh_compounder: "Crypto 5L Compounder" };
+  earnings_drift: "Earnings drift", trend_ema_cross: "trend_ema_cross", rsi_range: "Currency rsi_range", trend_carry: "MCX trend + carry", dip_reversal: "Crypto dip-reversal" };
 const when = (s) => (s ? String(s).replace("T", " ").slice(0, 16) : "-");
 
 /** The paper-trading account as it is now (read-only, refreshed every minute). No real orders are ever placed. */
@@ -71,7 +71,7 @@ export default function PaperPage() {
       <div className="page-head">
         <div>
           <h1>Paper trading</h1>
-          <div className="sub">Practice account: real prices, no real money. Open trades use the live {["CRYPTO_CALM", "CRYPTO_COMPOUNDER_5LAKH"].includes(d.account_id) ? "CoinDCX futures" : "Upstox"} price{live ? "" : " when it is available (otherwise the last close)"}.
+          <div className="sub">Practice account: real prices, no real money. Open trades use the live {["CRYPTO_CALM", "CRYPTO_DIP_REVERSAL"].includes(d.account_id) ? "CoinDCX futures" : "Upstox"} price{live ? "" : " when it is available (otherwise the last close)"}.
             Updated {loadedAt ? loadedAt.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }) : "-"}, refreshes every minute.</div>
         </div>
         <div className="big">
@@ -96,7 +96,7 @@ export default function PaperPage() {
       <Panel title={`Open trades (${d.positions.length})`}>
         {!d.positions.length
           ? <div className="none">{{
-            CRYPTO_COMPOUNDER_5LAKH: "No open trades. The 1h All-Weather Compounder scans BTC, ETH, and SOL for breakout momentum at every hourly candle close.",
+            CRYPTO_DIP_REVERSAL: "No open trades. dip_reversal checks all 9 coins for a Bollinger-band dip every 5-minute candle close.",
             MCX_TREND_CARRY: "No open trades. trend_carry rebalances at 09:10 on the first MCX trading day of each month.",
             EQUITY_SWING: "No holdings yet. Momentum buys its 15 stocks at the next open; breakout, earnings-drift and trend_ema_cross buys wait for a healthy market (half the stocks above their 50-day average).",
           }[d.account_id] ?? "No open trades. Currency (rsi_range) checks for entries at the 9:00 open."}</div>

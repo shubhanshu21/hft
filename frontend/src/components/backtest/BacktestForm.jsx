@@ -23,7 +23,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
   const safeRisk = Math.max(3, strategy?.default_risk_pct ?? 0);
   const monthly = !!strategy?.monthly_rank;          // commodity/trend_carry: ranks the chosen contracts together each month; exposure is editable
   const crypto = !!strategy?.crypto;
-  const scalp = !!strategy?.scalp;                   // a crypto scalper (none listed now): coins chosen, no leverage box
+  const scalp = !!strategy?.scalp;                   // a crypto scalper (dip_reversal): coins chosen, no leverage box (risk-based sizing, leverage barely matters)
   const auto = !!strategy?.auto_universe;            // equity/breakout_pair: picks from the day's 200 most-traded NSE stocks itself, fixed 5 + 3 holdings
   const [all, setAll] = useState(true);
   const [chosen, setChosen] = useState([]);
@@ -86,7 +86,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
             {" "}Daily data starts January 2022, so the first signals are in late 2022.</p>
         )}
         {strategy && crypto && (
-          <p className="hint">1-hour All-Weather Compounder on Crypto Perpetual Futures (BTC, ETH, SOL): Macro regime gate (BTC EMA200 + ADX chop filter), asymmetric 1:2.53 R:R (1.5x ATR stop, 3.8x ATR target), and 3-tier milestone vault profit sweep targeting ₹5,00,000. Real exchange maker fees (0.02%) and slippage included.</p>
+          <p className="hint">5-minute dip-reversal on up to 9 coins' perpetual futures: buys a sharp one-sided dip (Bollinger-band squeeze or a slip under the lower band), exits at a 7% target, a 7% stop, or the price closing back above the middle band. 2% risk per trade, up to 3 positions open together. Real taker/maker fees + GST, slippage and funding included.</p>
         )}
         {strategy && !auto && (
           <div className="field">
@@ -146,7 +146,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
           </>)}
         </div>
         <p className="fees-box">
-          {"Every trade is charged the strategy's full cost model (brokerage, STT, exchange charges, GST, stamp duty, SEBI fees) and slippage on entry and exit (currency: the real bid-ask spread, built into its cost model). Stops that gap are filled at the open, not at the stop price. Fees cannot be switched off. Leverage is set for you: shares are bought with your own money (1x); currency futures use the margin Upstox really charges (about 34-41x), and the strategy caps itself at 20x in total. Commodity (MCX): brokerage, CTT, stamp duty, exchange charges, GST and a half-spread on every trade, real month-end MCX prices including the monthly contract-switch cost. Crypto (CoinDCX / Binance perpetual futures): 0.02% maker fee per side + slippage."}
+          {"Every trade is charged the strategy's full cost model (brokerage, STT, exchange charges, GST, stamp duty, SEBI fees) and slippage on entry and exit (currency: the real bid-ask spread, built into its cost model). Stops that gap are filled at the open, not at the stop price. Fees cannot be switched off. Leverage is set for you: shares are bought with your own money (1x); currency futures use the margin Upstox really charges (about 34-41x), and the strategy caps itself at 20x in total. Commodity (MCX): brokerage, CTT, stamp duty, exchange charges, GST and a half-spread on every trade, real month-end MCX prices including the monthly contract-switch cost. Crypto (CoinDCX perpetual futures): taker fee 0.05% + 18% GST + slippage on market orders, maker fee 0.02% + GST on limit take-profits, real funding."}
         </p>
       </Panel>
 

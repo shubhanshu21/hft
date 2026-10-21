@@ -1,0 +1,11 @@
+[Unit]
+Description=Crypto dip-reversal (5-minute Bollinger-band reversal, 9 coins' perpetual futures)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/var/www/html/hft/backend
+ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m engine.crypto_dip_reversal
+TimeoutStartSec=5min
+
+[Install]
+WantedBy=multi-user.target
