@@ -183,7 +183,8 @@ def process_entries(db: TradingDB, state: dict, candles_map: dict, live_info: di
         last = df.iloc[-1]
         entry_px = live_info["prices"].get(coin, float(last["close"]))     # live price for a fresher fill than the closed candle
         sl_px = entry_px * (1 - S.STOPLOSS)
-        risk_inr = cap * S.RISK_PCT
+        risk_pct = S.RISK_PCT * S.current_vol_scale()           # dynamic: size up in a calmer-than-usual market, down in a wilder one
+        risk_inr = cap * risk_pct
         pos_usd = min((risk_inr / fx) / S.STOPLOSS, (cap * MAX_LEVERAGE) / fx)
         qty = pos_usd / entry_px
         pos_id = f"POS_DIPREV_{int(last['t'])}_{coin}"
@@ -192,9 +193,9 @@ def process_entries(db: TradingDB, state: dict, candles_map: dict, live_info: di
                            "pos_usd": pos_usd, "qty": qty, "entry_bar_t": int(last["t"]), "entry_time": now_iso}
         db.open_position(position_id=pos_id, symbol=coin, direction="long", qty=qty, entry_price=entry_px, current_stop=sl_px,
                           target_price=entry_px * (1 + S.ROI), breakeven_price=entry_px, account_id=ACCOUNT_ID,
-                          instrument_key=f"B-{coin}_USDT", strategy=STRATEGY_NAME, state=json.dumps({"risk_pct": S.RISK_PCT}))
+                          instrument_key=f"B-{coin}_USDT", strategy=STRATEGY_NAME, state=json.dumps({"risk_pct": risk_pct}))
         lines.append(f"ENTERED LONG {coin}: dip-reversal signal\nEntry {entry_px:,.4f} | Stop {sl_px:,.4f} | Target {open_pos[coin]['tp_price']:,.4f}\n"
-                      f"Size {_inr(pos_usd * fx)} | Risk {_inr(risk_inr)} ({S.RISK_PCT:.0%})")
+                      f"Size {_inr(pos_usd * fx)} | Risk {_inr(risk_inr)} ({risk_pct:.1%}, market vol scale {S.current_vol_scale():.2f}x)")
 
 
 def run_iteration(db: TradingDB, send_fn=None) -> dict:

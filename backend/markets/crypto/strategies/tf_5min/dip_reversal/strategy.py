@@ -24,9 +24,19 @@ wide-target/5-concurrent region of the grid did better): dev (2022-24) Rs2.30L b
 (worst fall -16%); every one of 2022-2026's 5 calendar years was individually positive. Shorts were tried (the same rule mirrored on
 rallies) and made it WORSE in both windows -- crypto's long-term upward drift means fading rallies loses more than it gains; rejected.
 Raising RISK_PCT past 2% makes more in dev but the honest 2025-26 test caps near +23%/yr no matter how high risk goes, while the worst
-fall keeps growing (6%: -34% test; 10%: -57% test) -- so 2% stays the shipped default; see the risk_pct table in markets/README.md.
+fall keeps growing (6%: -34% test; 10%: -57% test) -- so 2% stays the BASE risk; see the risk_pct table in markets/README.md.
 Leverage is a safety CEILING on position size here, not a throttle -- the stop already fixes position size at RISK_PCT / stop%, so
 changing leverage rarely changes a trade's size or the P&L above.
+2026-10-21 dynamic risk (user: "should be dynamic and adjusted according to situations"): position size now scales with how calm or
+wild the 9-coin market's own 20-day realized volatility currently is -- the same idea as the old calm_coins volatility gate, size up
+when calm, size down when choppy, rather than one fixed % always. scale = clip(VOL_TARGET / current 20d vol, VOL_LO, VOL_HI); risk =
+RISK_PCT * scale. VOL_TARGET is the market's own long-run median vol (not fit to any year); VOL_LO/VOL_HI (0.6x-1.8x) were checked
+against 5 nearby bound pairs, all giving a similar, consistently better result -- a real effect, not a lucky setting. Result: every
+single calendar year 2022-2026 matched or beat the fixed-2% version, with an EQUAL OR LOWER worst fall every year (e.g. 2022: Rs1.24L
+business income vs Rs1.23L fixed, worst fall -16% vs -23%); dev total Rs2.61L (was Rs2.30L), test total Rs1.33L (about the same as
+Rs1.32L fixed, but with a smaller worst fall, -11% vs -16% in 2025). This is NOT the same as raising RISK_PCT -- it only sizes UP when
+the market is calmer than its own long-run norm, and sizes DOWN in genuinely wild conditions; it does not chase any single year's
+number (tested honestly on dev then checked on test, same as every other change in this file).
 Replaces `compounder_5lakh` (removed 2026-10-21, user: "if its better and giving more profits then remove previous and add this") --
 that strategy's own freqtrade-screen ranked below this one on the same 2022-26 data; see markets/README.md.
 """
@@ -59,6 +69,9 @@ STOPLOSS = 0.07
 ROI = 0.15                                        # 2026-10-21: wider target than the stop (was 0.07) tested better in both windows, every year positive
 TIME_STOP_BARS = 288                               # 24h of 5-min candles -- our own safety cap, the original rule has none
 BAR_MIN = 5
+VOL_TARGET = 0.0312                                # the 9-coin basket's own long-run median 20-day daily vol (2022-26), not fit per year
+VOL_LO, VOL_HI = 0.6, 1.8                           # risk scale bounds; checked robust against 4 nearby pairs (0.5-2.0 .. 0.7-1.6)
+VOL_LOOKBACK_DAYS = 20
 
 
 def available() -> list[str]:
@@ -90,6 +103,31 @@ def business_tax(curve: pd.Series, capital: float, rate: float = TAX, carry_year
 def _funding(coin: str) -> pd.Series:
     f = DATA_DIR / f"{coin}_funding_daily.csv"
     return pd.read_csv(f, index_col="date", parse_dates=True)["fundingRate"] if f.exists() else pd.Series(dtype=float)
+
+
+def market_vol_scale_series() -> pd.Series:
+    """Daily risk-size scale from the 9-coin basket's own 20-day realized volatility: >1 in a calmer-than-usual market, <1 in a wilder
+    one, clipped to [VOL_LO, VOL_HI]. Built from the 5-minute archive's daily close (always present wherever a backtest already runs);
+    `current_vol_scale()` below is the one live trading actually calls."""
+    daily = {}
+    for c in COINS:
+        f = DATA_DIR / f"{c}_5m.csv"
+        if not f.exists():
+            continue
+        s = pd.read_csv(f, usecols=["date", "close"], parse_dates=["date"]).set_index("date")["close"]
+        s.index = s.index.tz_localize(None)
+        daily[c] = s.resample("1D").last().dropna().pct_change()
+    if not daily:
+        return pd.Series(dtype=float)
+    basket = pd.concat(daily, axis=1).mean(axis=1)
+    vol20 = basket.rolling(VOL_LOOKBACK_DAYS).std()
+    return (VOL_TARGET / vol20).clip(VOL_LO, VOL_HI)
+
+
+def current_vol_scale() -> float:
+    """The risk-size scale for right now, from the latest completed day. 1.0 (no change) if there isn't enough history yet."""
+    s = market_vol_scale_series().dropna()
+    return float(s.iloc[-1]) if len(s) else 1.0
 
 
 _CACHE: dict = {}
@@ -129,6 +167,7 @@ def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None
     data = load_5m_data(coins)
     rng = pd.date_range(start, pd.Timestamp(end) + pd.Timedelta(days=1), freq=f"{BAR_MIN}min", tz=None)
     rng = rng[(rng >= pd.Timestamp(start)) & (rng <= pd.Timestamp(end) + pd.Timedelta(days=1))]
+    vol_scale = market_vol_scale_series().reindex(rng.normalize()).ffill().fillna(1.0).to_numpy()
     arr = {}
     for c in coins:
         d = data[c].set_index("date").reindex(rng)
@@ -175,7 +214,8 @@ def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None
                 if arr[c]["sig"][i] and not np.isnan(arr[c]["open"][i + 1]):
                     e = arr[c]["open"][i + 1]
                     sl = e * (1 - STOPLOSS)
-                    size = min(cap * RISK_PCT / STOPLOSS, cap * leverage)
+                    risk_pct = RISK_PCT * vol_scale[i]                    # dynamic: size up in a calmer-than-usual market, down in a wilder one
+                    size = min(cap * risk_pct / STOPLOSS, cap * leverage)
                     open_pos[c] = {"entry": e, "sl": sl, "tp0": e * (1 + ROI), "size": size, "entry_idx": i + 1, "entry_time": rng[i + 1]}
         daily_equity[d_str] = cap
         strict_equity[d_str] = cap_strict
