@@ -19,7 +19,7 @@ export default function MetricsGrid({ metrics: m }) {
     ]],
     ["Costs", [
       ["Before fees and slippage", m.gross_profit != null ? <span className={tone(m.gross_profit)}>{signed(m.gross_profit)}</span> : "-"],
-      ["Fees and taxes", m.fees != null ? inr(m.fees) : "-"],
+      [m.final_business != null ? "Fees, funding & tax" : "Fees and taxes", m.fees != null ? inr(m.fees) : "-"],
       ["Slippage", m.slippage != null ? inr(m.slippage) : "-"],
       ["After costs (sold trades)", m.closed_profit != null ? <span className={tone(m.closed_profit)}>{signed(m.closed_profit)}</span> : "-"],
       ...(m.open_at_end ? [[`Not sold yet (${m.open_at_end} open)`, <span className={tone(m.open_profit)}>{signed(m.open_profit)}</span>]] : []),

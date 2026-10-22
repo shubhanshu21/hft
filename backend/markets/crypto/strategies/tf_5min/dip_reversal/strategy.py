@@ -249,6 +249,9 @@ def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None
     tax_effect = (cap - capital) - (float(s_eq.iloc[-1]) - capital)
     m["fees"] = round(m["fees"] + tax_effect)
     m["closed_profit"] = round(float(s_eq.iloc[-1]) - capital)
+    m["open_profit"] = 0   # metrics() computed this from the pretax "closed" list vs the tax-adjusted equity curve, so it was
+                            # actually holding the tax effect again, not real unrealized P&L (which this path doesn't track per
+                            # open position) -- any position still open at the window's end is reported separately via "pos"
     m["final_pretax"], m["final_business"], m["final_strict"] = round(cap), round(float(s_biz.iloc[-1])), round(float(s_str.iloc[-1]))
     m["tax_mode"] = mode
     win_rate = sum(1 for t in closed if t["won"]) / max(len(closed), 1)
