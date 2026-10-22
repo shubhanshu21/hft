@@ -112,6 +112,12 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
               <span className="hint">5 bp = 0.05%, charged when buying and again when selling.</span></div>
           )}
           {crypto ? (<>
+            <div className="field"><label htmlFor="crisk">Risk per trade (% of account)</label>
+              <input id="crisk" type="number" min="0.1" max="10" step="0.1" value={f.risk_pct} onChange={set("risk_pct")} />
+              <span className="hint">Bigger risk makes more on average but falls further in a bad stretch -- tested 2% (worst fall -19% to -29%) up to
+                8% (worst fall -45% to -76%, the current default). Position size scales directly with this; leverage below is just a safety ceiling,
+                it rarely changes the size a fixed-% stop already sets.</span>
+            </div>
             {!scalp && <div className="field"><label htmlFor="exposure">Leverage (x the account)</label>
               <input id="exposure" type="number" min={strategy.exposure_min ?? 1} max={strategy.exposure_max ?? 3.8} step="0.1" value={f.exposure} onChange={set("exposure")} />
               <span className="hint">Leverage multiple (capped at 3.8x max per trade to protect against gap liquidation; tested at 3.8x).</span>

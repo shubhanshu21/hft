@@ -174,7 +174,8 @@ def entry_signal(df: pd.DataFrame) -> pd.Series:
 
 
 def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None = None, leverage: float = 3.0, tax: str = "business",
-                  progress=None, **kwargs) -> dict:
+                  risk_pct: float | None = None, progress=None, **kwargs) -> dict:
+    base_risk = RISK_PCT if risk_pct is None else risk_pct   # the module default (8%, the user's choice), or a one-off for this run
     coins = [c.upper() for c in (symbols or list(COINS)) if c.upper() in COINS]
     if not coins:
         raise ValueError("No usable coins")
@@ -231,7 +232,7 @@ def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None
                 if arr[c]["sig"][i] and not np.isnan(arr[c]["open"][i + 1]):
                     e = arr[c]["open"][i + 1]
                     sl = e * (1 - STOPLOSS)
-                    risk_pct = RISK_PCT * vol_scale[i]                    # dynamic: size up in a calmer-than-usual market, down in a wilder one
+                    risk_pct = base_risk * vol_scale[i]                   # dynamic: size up in a calmer-than-usual market, down in a wilder one
                     size = min(cap * risk_pct / STOPLOSS, cap * leverage)
                     open_pos[c] = {"entry": e, "sl": sl, "tp0": e * (1 + ROI), "size": size, "entry_idx": i + 1, "entry_time": rng[i + 1]}
         daily_equity[d_str] = cap
@@ -258,7 +259,7 @@ def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None
     m["final_pretax"], m["final_business"], m["final_strict"] = round(cap), round(float(s_biz.iloc[-1])), round(float(s_str.iloc[-1]))
     m["tax_mode"] = mode
     win_rate = sum(1 for t in closed if t["won"]) / max(len(closed), 1)
-    m["note"] = (f"5-min dip-reversal on {', '.join(coins)}: {RISK_PCT:.0%} risk per trade, at most {leverage:g}x, up to {MAX_CONCURRENT} open "
+    m["note"] = (f"5-min dip-reversal on {', '.join(coins)}: {base_risk:.0%} risk per trade, at most {leverage:g}x, up to {MAX_CONCURRENT} open "
                  f"together. Real costs incl. funding. {len(closed):,} trades, {win_rate:.1%} won after costs. Before tax Rs{cap:,.0f}; "
                  f"business income Rs{s_biz.iloc[-1]:,.0f}; strict tax Rs{s_str.iloc[-1]:,.0f}.")
 

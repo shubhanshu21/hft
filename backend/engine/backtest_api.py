@@ -123,6 +123,11 @@ def validate(body: dict) -> dict:
         p["leverage"] = float(body.get("exposure", 1.0))
         if not row["exposure_min"] <= p["leverage"] <= row["exposure_max"]:
             raise ValueError(f"Leverage must be between {row['exposure_min']:g}x and {row['exposure_max']:g}x")
+        if row.get("default_risk_pct") is not None:                 # dip_reversal: its own risk-per-trade knob, as a % (e.g. 8 = 8%)
+            lo, hi = LIMITS["risk_pct"]
+            p["risk_pct"] = float(body.get("risk_pct", row["default_risk_pct"]))
+            if not lo <= p["risk_pct"] <= hi:
+                raise ValueError(f"Risk per trade must be between {lo}% and {hi}%")
         for key in ("start", "end"):
             if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(body.get(key, ""))):
                 raise ValueError("Dates must look like 2024-01-31")
@@ -402,7 +407,8 @@ def work(run: dict) -> None:
         if run["market"] == "crypto":
             from markets.crypto.strategies.tf_5min.dip_reversal import strategy as dr
             try:
-                run["result"] = dr.web_backtest(p["capital"], p["start"], p["end"], symbols=p.get("symbols"), leverage=p.get("leverage", 3.0), tax=p.get("tax", "business"), progress=progress)
+                run["result"] = dr.web_backtest(p["capital"], p["start"], p["end"], symbols=p.get("symbols"), leverage=p.get("leverage", 3.0), tax=p.get("tax", "business"),
+                                                risk_pct=(p["risk_pct"] / 100 if "risk_pct" in p else None), progress=progress)
             except ValueError as e:
                 raise BacktestError(str(e))
         elif run["market"] == "commodity":                        # trend_carry: monthly, all 8 commodities ranked together, its own backtest
