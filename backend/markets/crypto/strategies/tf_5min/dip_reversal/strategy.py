@@ -1,4 +1,4 @@
-"""crypto / dip_reversal -- 5-minute dip-buy reversal on 12 coins' perpetual futures (BTC, ETH, SOL, BNB, XRP, DOGE, ADA, AVAX, LINK, DOT, LTC, TRX).
+"""crypto / dip_reversal -- 5-minute dip-buy reversal on 11 coins' perpetual futures (BTC, ETH, SOL, BNB, XRP, DOGE, ADA, AVAX, DOT, LTC, TRX).
 
 Found by screening ~60 public strategies from github.com/freqtrade/freqtrade-strategies (`CombinedBinHAndCluc`) on our own coin data
 with real costs, then re-optimised: the only one of the ~60 that stayed profitable in both a 2022-24 dev window and a 2025-26 held-out
@@ -13,7 +13,7 @@ Rule (5-minute finished candles, no indicator peeking at the still-forming candl
   * entry at the next candle's open (a market order); size = RISK_PCT of the account / the 7% stop distance (so ~28.6% of the account
     at RISK_PCT=2%), capped at LEVERAGE x the account as a pure safety ceiling -- the real throttle on profit and risk here is
     RISK_PCT, not leverage (a fixed-% stop means leverage rarely binds; see the risk_pct table in markets/README.md before raising it);
-    at most MAX_CONCURRENT (5) positions open together across the 12 coins (shared margin pool, and crypto coins move together in a crash)
+    at most MAX_CONCURRENT (5) positions open together across the 11 coins (shared margin pool, and crypto coins move together in a crash)
 Costs: Delta Exchange India taker fee 0.05% + 18% GST + slippage on entries, stops and the time exit; maker fee 0.02% + GST on the take-profit; a
 stop the candle OPENS beyond fills at that open, not the stop price; real funding (Binance daily sums, pro-rated by hours held -- a
 long position pays when funding is positive). Tax views: none / strict (31.2% of each winning trade) / business income (31.2% of each
@@ -31,7 +31,7 @@ a default; see the risk_pct table in markets/README.md for the 2%/4%/6%/8%/10% c
 Leverage is a safety CEILING on position size here, not a throttle -- the stop already fixes position size at RISK_PCT / stop%, so
 changing leverage rarely changes a trade's size or the P&L above.
 2026-10-21 dynamic risk (user: "should be dynamic and adjusted according to situations"): position size now scales with how calm or
-wild the 12-coin market's own 20-day realized volatility currently is -- the same idea as the old calm_coins volatility gate, size up
+wild the 11-coin market's own 20-day realized volatility currently is -- the same idea as the old calm_coins volatility gate, size up
 when calm, size down when choppy, rather than one fixed % always. scale = clip(VOL_TARGET / current 20d vol, VOL_LO, VOL_HI); risk =
 RISK_PCT * scale. VOL_TARGET is the market's own long-run median vol (not fit to any year); VOL_LO/VOL_HI (0.6x-1.8x) were checked
 against 5 nearby bound pairs, all giving a similar, consistently better result -- a real effect, not a lucky setting. Result: every
@@ -61,7 +61,10 @@ from core.backtester import metrics
 
 DATA_DIR = ARCHIVE_ROOT / "crypto"
 TAX = 0.312
-COINS = ("BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "AVAX", "LINK", "DOT", "LTC", "TRX")  # DOT/LTC/TRX added 2026-10-21 (data already on disk)
+COINS = ("BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "AVAX", "DOT", "LTC", "TRX")  # DOT/LTC/TRX added 2026-10-21 (data already
+# on disk); LINK removed 2026-10-22 -- lost money in BOTH the dev window (Rs-2.66L) and the held-out test window (Rs-0.29L), a
+# genuine non-edge (not a hindsight pick: it failed before it was ever removed, on data not used to tune anything). Removing it
+# improved both windows: dev Rs17.45L -> Rs19.79L, test Rs2.44L -> Rs2.92L, worst fall -76%/-47% -> -75%/-45%.
 
 RISK_PCT = 0.08                                   # 2026-10-21: user chose real risk over 2%'s safety; 8% is the ceiling -- 10% starts
                                                    # losing to its own drawdowns in some years (2024: Rs1.22L at 10% vs Rs1.50L at 8%).
@@ -116,7 +119,7 @@ def _funding(coin: str) -> pd.Series:
 
 
 def market_vol_scale_series() -> pd.Series:
-    """Daily risk-size scale from the 12-coin basket's own 20-day realized volatility: >1 in a calmer-than-usual market, <1 in a wilder
+    """Daily risk-size scale from the 11-coin basket's own 20-day realized volatility: >1 in a calmer-than-usual market, <1 in a wilder
     one, clipped to [VOL_LO, VOL_HI]. Built from the 5-minute archive's daily close (always present wherever a backtest already runs);
     `current_vol_scale()` below is the one live trading actually calls."""
     daily = {}

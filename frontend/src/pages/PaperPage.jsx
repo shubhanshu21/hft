@@ -94,7 +94,7 @@ export default function PaperPage() {
       <Panel title={`Open trades (${d.positions.length})`}>
         {!d.positions.length
           ? <div className="none">{{
-            CRYPTO_DIP_REVERSAL: "No open trades. dip_reversal checks all 12 coins for a Bollinger-band dip every 5-minute candle close.",
+            CRYPTO_DIP_REVERSAL: "No open trades. dip_reversal checks all 11 coins for a Bollinger-band dip every 5-minute candle close.",
             MCX_TREND_CARRY: "No open trades. trend_carry rebalances at 09:10 on the first MCX trading day of each month.",
           }[d.account_id] ?? "No open trades."}</div>
           : <div className="trade-cards">{d.positions.map((p) => <OpenTradeCard key={p.symbol} p={p} />)}</div>}
