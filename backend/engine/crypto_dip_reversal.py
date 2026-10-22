@@ -295,7 +295,9 @@ def process_entries(db: TradingDB, state: dict, candles_map: dict, live_info: di
         clamp_note = (f" -- demo account's margin only covered {_inr(pos_usd * fx)} of the intended {_inr(intended_pos_usd * fx)}"
                        if real and pos_usd < intended_pos_usd * 0.999 else "")
         lines.append(f"ENTERED LONG {coin}: dip-reversal signal ({tag}){clamp_note}\nEntry {entry_px:,.4f} | Stop {sl_px:,.4f} | Target {open_pos[coin]['tp_price']:,.4f}\n"
-                      f"Size {_inr(pos_usd * fx)} | Risk {_inr(risk_inr)} ({risk_pct:.1%}, market vol scale {S.current_vol_scale():.2f}x)")
+                      f"Size {_inr(pos_usd * fx)} | Risk {_inr(risk_inr)} ({risk_pct:.1%}, market vol scale {S.current_vol_scale():.2f}x)"
+                      + (f"\nCRASH-AWARE: {sum(signals.values())} coins dipping at once (market-wide) -- trade shrunk to {crowd:.0%} of normal size"
+                         if crowd < 1 else ""))
 
 
 def run_iteration(db: TradingDB, send_fn=None) -> dict:
