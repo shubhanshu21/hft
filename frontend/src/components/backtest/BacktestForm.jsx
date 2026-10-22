@@ -86,7 +86,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
             {" "}Daily data starts January 2022, so the first signals are in late 2022.</p>
         )}
         {strategy && crypto && (
-          <p className="hint">5-minute dip-reversal on up to 11 coins' perpetual futures: buys a sharp one-sided dip (Bollinger-band squeeze or a slip under the lower band), exits at a 15% target, a 7% stop, or the price closing back above the middle band. 13% risk per trade, shrunk to 3/n when more than 3 coins dip at the same moment (a market-wide crash) -- worst drawdown seen was -64% on a continuously-compounding account; up to 5 positions open together. Real taker/maker fees + GST, slippage and funding included.</p>
+          <p className="hint">5-minute dip-reversal on up to 11 coins' perpetual futures: buys a sharp one-sided dip (Bollinger-band squeeze or a slip under the lower band), exits at a 15% target, a 7% stop, or the price closing back above the middle band. 8% risk per trade -- worst drawdown seen was -75% on a continuously-compounding account; up to 5 positions open together. Real taker/maker fees + GST, slippage and funding included.</p>
         )}
         {strategy && !auto && (
           <div className="field">
@@ -114,8 +114,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
           {crypto ? (<>
             <div className="field"><label htmlFor="crisk">Risk per trade (% of account)</label>
               <input id="crisk" type="number" min="0.1" max="20" step="0.1" value={f.risk_pct} onChange={set("risk_pct")} />
-              <span className="hint">Default 13%, together with the crash-aware rule (when more than 3 coins dip at once, each trade is shrunk to 3/n).
-                Tested 2022-26: worst fall -64%, worst day -42%. Higher risk makes more on average but falls further in a bad stretch;
+              <span className="hint">Default 8%. Tested 2022-26: worst fall -75%, worst day -55%. Higher risk makes more on average but falls further in a bad stretch;
                 position size scales directly with this, leverage below is just a safety ceiling.</span>
             </div>
             {!scalp && <div className="field"><label htmlFor="exposure">Leverage (x the account)</label>

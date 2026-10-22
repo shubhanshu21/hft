@@ -66,10 +66,11 @@ COINS = ("BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "AVAX", "DOT", "LTC",
 # genuine non-edge (not a hindsight pick: it failed before it was ever removed, on data not used to tune anything). Removing it
 # improved both windows: dev Rs17.45L -> Rs19.79L, test Rs2.44L -> Rs2.92L, worst fall -76%/-47% -> -75%/-45%.
 
-RISK_PCT = 0.13                                   # 2026-10-22: 13% together with CROWD_K=3 (below). Was 8% with no crowd rule (user's
-                                                   # choice 2026-10-21). With the crowd rule, 13% beat 8% in BOTH windows on profit AND
-                                                   # every crash measure, incl. the 2026-08-22 day. Do NOT use 13% without CROWD_K --
-                                                   # see markets/README.md for the full table.
+RISK_PCT = 0.08                                   # 2026-10-22, user's final choice: back to 8% with the crowd rule OFF (CROWD_K=None).
+                                                   # Business tax, Rs1L: from 2022 Rs65.2L, from 2023 Rs34.6L; worst fall -75%, 2026-08-22
+                                                   # -11.9%. Alternatives tested the same day: K=4/12% (Rs104.5L / Rs37.3L, worst -72%)
+                                                   # and K=3/13% (Rs83.7L / Rs27.5L, worst -64%). 8% WITH the crowd rule is worse than
+                                                   # both (Rs99L pretax 2022-26 vs Rs198L) -- the rule only pays when risk is raised.
 MAX_CONCURRENT = 5                                # 2026-10-21 joint sweep: 5 beat 3 in both dev and test; 9 (no cap) decayed test -- see docstring
 TAKER = 0.0005 * 1.18                              # Delta Exchange India futures market order incl. 18% GST (verified live 2026-10-21 -- same rate as CoinDCX)
 MAKER = 0.0002 * 1.18                              # limit order (the take-profit) incl. GST
@@ -85,7 +86,7 @@ BAR_MIN = 5
 VOL_TARGET = 0.0312                                # the 9-coin basket's own long-run median 20-day daily vol (2022-26), not fit per year
 VOL_LO, VOL_HI = 0.6, 1.8                           # risk scale bounds; checked robust against 4 nearby pairs (0.5-2.0 .. 0.7-1.6)
 VOL_LOOKBACK_DAYS = 20
-CROWD_K = 3                                        # crowd-shrink rule (2026-10-22; None = off): when n coins signal on the same bar and
+CROWD_K = None                                     # crowd-shrink rule (2026-10-22; None = off): when n coins signal on the same bar and
                                                    # n > CROWD_K, each new trade is sized CROWD_K/n. Every one of the 8 worst days 2022-26
                                                    # (2024-04-12, 2025-02-03, 2026-08-22...) was a market-wide crash where 5-10 coins
                                                    # signalled at once and all positions then fell together. Robust: every k in 3-5 x risk
@@ -93,7 +94,8 @@ CROWD_K = 3                                        # crowd-shrink rule (2026-10-
                                                    # pause after stop-outs, BTC-drop filters, total-exposure caps, skipping crowded signals,
                                                    # wider crash-aware stops, waiting for a green candle after a crash candle (all cut the
                                                    # crash-candle entries, which are the BEST trades: +3.5%/trade vs ~+0.5% normally).
-                                                   # K=4 (pushed first) did nothing on 2026-08-22 (exactly 4 coins signalled) -> K=3.
+                                                   # K=4 does nothing on 2026-08-22 (exactly 4 coins signalled); K=3 does, but costs profit
+                                                   # in calm years (2023) -- the user chose K=4/12% for profit.
 
 
 def crowd_scale(n_signals: int, k: int | None = CROWD_K) -> float:
