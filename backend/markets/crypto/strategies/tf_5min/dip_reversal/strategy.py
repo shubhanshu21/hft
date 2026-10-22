@@ -66,10 +66,10 @@ COINS = ("BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "AVAX", "DOT", "LTC",
 # genuine non-edge (not a hindsight pick: it failed before it was ever removed, on data not used to tune anything). Removing it
 # improved both windows: dev Rs17.45L -> Rs19.79L, test Rs2.44L -> Rs2.92L, worst fall -76%/-47% -> -75%/-45%.
 
-RISK_PCT = 0.08                                   # 2026-10-21: user chose real risk over 2%'s safety; 8% is the ceiling -- 10% starts
-                                                   # losing to its own drawdowns in some years (2024: Rs1.22L at 10% vs Rs1.50L at 8%).
-                                                   # Worst case seen in this data at 8%: -67% in 2024 (Rs1L could fall to ~Rs33k before
-                                                   # recovering). This is a deliberate, informed choice, not a default -- see markets/README.md.
+RISK_PCT = 0.12                                   # 2026-10-22: 12% together with CROWD_K=4 (below). Was 8% with no crowd rule (user's
+                                                   # choice 2026-10-21). With the crowd rule, 12% beat 8% in BOTH windows on profit AND
+                                                   # crash size: dev Rs43.4L -> Rs56.4L, test Rs4.6L -> Rs6.3L, worst drop -75%/-46% ->
+                                                   # -72%/-37%, worst day -55% -> -51%. Do NOT use 12% without CROWD_K -- see markets/README.md.
 MAX_CONCURRENT = 5                                # 2026-10-21 joint sweep: 5 beat 3 in both dev and test; 9 (no cap) decayed test -- see docstring
 TAKER = 0.0005 * 1.18                              # Delta Exchange India futures market order incl. 18% GST (verified live 2026-10-21 -- same rate as CoinDCX)
 MAKER = 0.0002 * 1.18                              # limit order (the take-profit) incl. GST
@@ -85,6 +85,17 @@ BAR_MIN = 5
 VOL_TARGET = 0.0312                                # the 9-coin basket's own long-run median 20-day daily vol (2022-26), not fit per year
 VOL_LO, VOL_HI = 0.6, 1.8                           # risk scale bounds; checked robust against 4 nearby pairs (0.5-2.0 .. 0.7-1.6)
 VOL_LOOKBACK_DAYS = 20
+CROWD_K = 4                                        # crowd-shrink rule (2026-10-22; None = off): when n coins signal on the same bar and
+                                                   # n > CROWD_K, each new trade is sized CROWD_K/n. Every one of the 8 worst days 2022-26
+                                                   # (2024-04-12, 2025-02-03, 2026-08-22...) was a market-wide crash where 5-10 coins
+                                                   # signalled at once and all positions then fell together. Robust: every k in 3-5 x risk
+                                                   # 10-14% beat the old 8%/no-rule on profit per unit of drawdown. Rejected on the way:
+                                                   # pause after stop-outs, BTC-drop filters, total-exposure caps, skipping crowded signals.
+
+
+def crowd_scale(n_signals: int, k: int | None = CROWD_K) -> float:
+    """Size multiplier for a new entry when n_signals coins signal on the same bar (1.0 when the rule is off or n <= k)."""
+    return 1.0 if not k or n_signals <= k else k / n_signals
 
 
 def available() -> list[str]:
@@ -174,7 +185,7 @@ def entry_signal(df: pd.DataFrame) -> pd.Series:
 
 
 def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None = None, leverage: float = 3.0, tax: str = "business",
-                  risk_pct: float | None = None, progress=None, **kwargs) -> dict:
+                  risk_pct: float | None = None, progress=None, crowd_k: int | None = CROWD_K, **kwargs) -> dict:
     base_risk = RISK_PCT if risk_pct is None else risk_pct   # the module default (8%, the user's choice), or a one-off for this run
     coins = [c.upper() for c in (symbols or list(COINS)) if c.upper() in COINS]
     if not coins:
@@ -226,6 +237,7 @@ def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None
                                 "fees": round(float(fee)), "exit_reason": why, "won": bool(net > 0)})
                 del open_pos[c]
         if len(open_pos) < MAX_CONCURRENT and cap > 50:
+            crowd = crowd_scale(sum(bool(arr[x]["sig"][i]) for x in coins), crowd_k)
             for c in coins:
                 if c in open_pos or len(open_pos) >= MAX_CONCURRENT:
                     continue
@@ -233,7 +245,7 @@ def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None
                     e = arr[c]["open"][i + 1]
                     sl = e * (1 - STOPLOSS)
                     risk_pct = base_risk * vol_scale[i]                   # dynamic: size up in a calmer-than-usual market, down in a wilder one
-                    size = min(cap * risk_pct / STOPLOSS, cap * leverage)
+                    size = min(cap * risk_pct / STOPLOSS, cap * leverage) * crowd
                     open_pos[c] = {"entry": e, "sl": sl, "tp0": e * (1 + ROI), "size": size, "entry_idx": i + 1, "entry_time": rng[i + 1]}
         daily_equity[d_str] = cap
         strict_equity[d_str] = cap_strict

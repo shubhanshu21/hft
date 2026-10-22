@@ -235,21 +235,24 @@ def process_entries(db: TradingDB, state: dict, candles_map: dict, live_info: di
     if len(open_pos) >= S.MAX_CONCURRENT:
         return
     fx = live_info["usdtinr"]
+    signals = {}                                                  # every coin's signal on the latest bar, open or not (as the backtest counts)
+    for coin in S.COINS:
+        df = candles_map.get(coin)
+        signals[coin] = df is not None and len(df) >= 41 and bool(S.entry_signal(df).iloc[-1])
+    crowd = S.crowd_scale(sum(signals.values()))                  # many coins dipping at once = market-wide crash: shrink each new trade
     for coin in S.COINS:
         if len(open_pos) >= S.MAX_CONCURRENT or coin in open_pos:
             continue
         df = candles_map.get(coin)
-        if df is None or len(df) < 41:
-            continue
-        sig = S.entry_signal(df)
-        if not bool(sig.iloc[-1]):
+        if not signals[coin]:
             continue
         last = df.iloc[-1]
         entry_px = live_info["prices"].get(coin, float(last["close"]))     # live price for a fresher fill than the closed candle
         sl_px = entry_px * (1 - S.STOPLOSS)
         risk_pct = S.RISK_PCT * S.current_vol_scale()           # dynamic: size up in a calmer-than-usual market, down in a wilder one
         risk_inr = cap * risk_pct
-        pos_usd = min((risk_inr / fx) / S.STOPLOSS, (cap * MAX_LEVERAGE) / fx)
+        pos_usd = min((risk_inr / fx) / S.STOPLOSS, (cap * MAX_LEVERAGE) / fx) * crowd
+        risk_inr *= crowd
         intended_pos_usd = pos_usd
         qty = pos_usd / entry_px
 
