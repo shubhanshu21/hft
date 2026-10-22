@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 from datetime import datetime, timedelta, timezone
 
@@ -38,8 +39,18 @@ _log = logging.getLogger("crypto_dip_reversal")
 
 
 def _delta() -> DeltaDemoBroker | None:
-    """A broker instance if demo keys are configured, else None -- coins not on Delta's testnet (or any broker error) fall back to
-    this engine's own simulated fill, exactly as before 2026-10-21."""
+    """A broker instance if real demo orders are switched on (DELTA_PLACE_REAL_ORDERS=true in .env) and keys are configured, else
+    None and every coin runs this engine's own simulated fill, fully sized by our own Rs1L ledger.
+
+    Off by default since 2026-10-22 (user: "try to place order in demo and get whatever we want and just create same paper trading
+    system in our project") -- the demo account's seeded funds (~$138 margin) are far smaller than a RISK_PCT-sized position, so real
+    orders were routinely clamped well below the size we actually mean to simulate (services/broker/delta_broker.py's
+    place_market_order_fit_margin scales them down). A real fill on a WRONG size is less representative than a simulated fill at the
+    RIGHT size, given Delta's own prices already track the real market closely (confirmed 2026-10-21). The order-placement code is
+    kept, tested and working (see git history, commits 9e18f31/9cab62e) -- flip DELTA_PLACE_REAL_ORDERS=true to use it again, e.g.
+    once the demo account has more margin or this moves to a real account."""
+    if str(os.environ.get("DELTA_PLACE_REAL_ORDERS", "false")).lower() not in ("1", "true", "yes"):
+        return None
     try:
         return DeltaDemoBroker()
     except Exception as e:
