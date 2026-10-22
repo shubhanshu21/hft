@@ -124,7 +124,7 @@ def validate(body: dict) -> dict:
         if not row["exposure_min"] <= p["leverage"] <= row["exposure_max"]:
             raise ValueError(f"Leverage must be between {row['exposure_min']:g}x and {row['exposure_max']:g}x")
         if row.get("default_risk_pct") is not None:                 # dip_reversal: its own risk-per-trade knob, as a % (e.g. 8 = 8%)
-            lo, hi = LIMITS["risk_pct"]
+            lo, hi = 0.1, 20                                         # wider than the stock knob: the shipped default is 13%
             p["risk_pct"] = float(body.get("risk_pct", row["default_risk_pct"]))
             if not lo <= p["risk_pct"] <= hi:
                 raise ValueError(f"Risk per trade must be between {lo}% and {hi}%")
