@@ -9,7 +9,7 @@ const COLS = [["sym", "Stock"], ["trades", "Trades"], ["wins", "Winners"], ["pro
 
 /** Profit per stock over the whole run, sortable. Clicking a stock shows it on the chart. */
 export default function StockTable({ result, onPick }) {
-  const [sort, setSort] = useState(["profit", -1]);
+  const [sort, setSort] = useState(["trades", -1]);
   const rows = profitByStock(result).sort((a, b) => (a[sort[0]] < b[sort[0]] ? -1 : a[sort[0]] > b[sort[0]] ? 1 : 0) * sort[1]);
   const paged = usePaged(rows, 10);
   return (
