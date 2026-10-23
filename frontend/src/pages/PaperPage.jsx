@@ -10,7 +10,7 @@ import { usePaged } from "../hooks/usePaged.js";
 import { useTheme } from "../hooks/useTheme.js";
 import { inr, signed, tone } from "../lib/format.js";
 
-const STRATEGY_LABEL = { trend_carry: "MCX trend + carry + skew", dip_reversal: "Crypto dip-reversal" };
+const STRATEGY_LABEL = { trend_carry: "MCX trend + carry", dip_reversal: "Crypto dip-reversal" };
 const when = (s) => (s ? String(s).replace("T", " ").slice(0, 16) : "-");
 const qtyFmt = (q) => (q == null ? "-" : Number(q).toLocaleString("en-IN", { maximumFractionDigits: 4 }));
 const pxFmt = (p) => (p == null ? "-" : Number(p).toFixed(Math.abs(p) < 10 ? 4 : 2));   // small coin prices (DOGE 0.09) need more decimals
