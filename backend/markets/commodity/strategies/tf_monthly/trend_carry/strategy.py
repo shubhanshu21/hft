@@ -1,5 +1,6 @@
-"""commodity / trend_carry -- monthly MCX trend + carry + skewness: hold the 3 commodities that have risen most, whose next contract is
-cheapest, and that jump up least suddenly.
+"""commodity / trend_carry -- monthly MCX trend + carry + skewness: holds the best 3 of 8 commodities, rebalanced each month end.
+
+It picks the commodities that have risen most, whose next contract is cheapest, and that jump up least suddenly.
 
 Research: Fuertes, Miffre & Rallis (2010), "Tactical allocation in commodity futures markets: combining momentum and term structure signals"
 (momentum alone ~9%/yr, the combination best). Tested 2026-10-15 on real MCX month-end bhavcopies (the user downloaded them in a browser,

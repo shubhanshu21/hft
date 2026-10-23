@@ -56,11 +56,12 @@ def catalog() -> list[dict]:
     from markets.commodity.strategies.tf_monthly.trend_carry import strategy as tc
     mcx = {"market": "commodity", "name": "trend_carry", "timeframe": "1 months", "supported": True, "symbols": sorted(set(tc.TRADE.values())),
            "summary": (tc.__doc__ or "").strip().split("\n")[0], "intraday": False, "default_risk_pct": None, "monthly_rank": True,
-           "exposure": float(os.environ.get("MCX_TREND_CARRY_EXPOSURE", 1.5)), "exposure_min": tc.EXPOSURE_MIN, "exposure_max": tc.EXPOSURE_MAX}
+           "exposure": float(os.environ.get("MCX_TREND_CARRY_EXPOSURE", 1.5)), "exposure_min": tc.EXPOSURE_MIN, "exposure_max": tc.EXPOSURE_MAX,
+           "default_capital": float(os.environ.get("MCX_TREND_CARRY_CAPITAL", 250_000))}      # the paper account's real size
     from markets.crypto.strategies.tf_5min.dip_reversal import strategy as dr
     dip_reversal = {"market": "crypto", "name": "dip_reversal", "timeframe": "5 minutes", "supported": True, "symbols": dr.available(), "crypto": True, "scalp": True,
                      "default_symbols": list(dr.COINS), "summary": (dr.__doc__ or "").strip().split("\n")[0], "intraday": True, "default_risk_pct": dr.RISK_PCT * 100,
-                     "exposure": 3.0, "exposure_min": 1.0, "exposure_max": 5.0}
+                     "exposure": 3.0, "exposure_min": 1.0, "exposure_max": 5.0, "default_capital": 100_000}
     return [{"market": m, "name": n, "timeframe": f"{s.timeframe[1]} {s.timeframe[0]}", "supported": tuple(s.timeframe) == ("days", 1), "symbols": list(getattr(s, "universe", None) or universe(m)),
              "summary": (s.__doc__ or "").strip().split("\n")[0], "intraday": s.intraday,
              "default_risk_pct": getattr(s, "default_risk_pct", None),

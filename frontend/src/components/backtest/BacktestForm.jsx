@@ -14,7 +14,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
   const options = strategies.filter((s) => s.market === market);
   const [name, setName] = useState(options[0]?.name ?? "");
   const strategy = options.find((s) => s.name === name) ?? options[0];
-  useEffect(() => { if (strategy) setF((x) => ({ ...x, risk_pct: strategy.default_risk_pct ?? 2, exposure: strategy.exposure ?? 1 })); }, [strategy?.market, strategy?.name]);
+  useEffect(() => { if (strategy) setF((x) => ({ ...x, risk_pct: strategy.default_risk_pct ?? 2, exposure: strategy.exposure ?? 1, capital: strategy.default_capital ?? x.capital })); }, [strategy?.market, strategy?.name]);
   useEffect(() => {                                   // pre-tick the strategy's own list (what its paper trading uses) when it is narrower than the market
     const own = strategy?.default_symbols ?? [];
     const narrower = own.length > 0 && own.length < (strategy?.symbols?.length ?? 0);
@@ -151,7 +151,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
           </>)}
         </div>
         <p className="fees-box">
-          {"Every trade is charged the strategy's full cost model (brokerage, STT, exchange charges, GST, stamp duty, SEBI fees) and slippage on entry and exit (currency: the real bid-ask spread, built into its cost model). Stops that gap are filled at the open, not at the stop price. Fees cannot be switched off. Leverage is set for you: shares are bought with your own money (1x); currency futures use the margin Upstox really charges (about 34-41x), and the strategy caps itself at 20x in total. Commodity (MCX): brokerage, CTT, stamp duty, exchange charges, GST and a half-spread on every trade, real month-end MCX prices including the monthly contract-switch cost. Crypto (Delta Exchange India perpetual futures): taker fee 0.05% + 18% GST + slippage on market orders, maker fee 0.02% + GST on limit take-profits, real funding."}
+          {"Every trade is charged the full real costs, and fees cannot be switched off. Commodity (MCX): brokerage, CTT, stamp duty, exchange charges, GST and a half-spread on every trade, real month-end MCX prices including the monthly contract-switch cost; whole lots only. Crypto (Delta Exchange India perpetual futures): taker fee 0.05% + 18% GST + slippage on market orders, maker fee 0.02% + GST on limit take-profits, real funding; stops that gap are filled at the next price, not at the stop."}
         </p>
       </Panel>
 
