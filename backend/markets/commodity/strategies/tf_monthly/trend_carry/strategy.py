@@ -102,12 +102,25 @@ def targets(R: pd.DataFrame, C: pd.DataFrame, t: pd.Timestamp) -> dict[str, floa
     return {s: v / tot for s, v in inv.items()} if tot else {s: 1 / len(picks) for s in picks}
 
 
+MAX_LOT_X = 2.0                # a rounded-up holding may be at most 2x the account in contract value
+
+
 def lots_for(capital: float, exposure: float, weight: float, price: float, signal: str) -> int:
-    """Whole lots of the mini contract: the notional share (capital x exposure x weight), never more than the margin share allows."""
+    """Whole lots of the mini contract: the notional share (capital x exposure x weight) ROUNDED to the nearest lot (was: rounded down).
+
+    2026-10-22: rounding down left a Rs2.5L account (the user's real size) in cash whenever a pick's share was under one lot -- e.g.
+    Oct 2026: zinc's share Rs2.33L vs one ZINCMINI lot Rs4.15L -> 0 lots, account idle. Rounding to the nearest lot (a share of >= half a
+    lot buys one), capped at MAX_LOT_X x the account per holding and at the margin limit, tested at Rs2.5L: 2023 +3% / 2024 +10% (same as
+    before), 2025 +23% -> +70%, 2026 +26% -> +51%; 2023-26 +94% -> +184%; worst fall -15% -> -26% (2026 -21%). Profit spread across zinc,
+    crude, silver and gold, not one trade. Never fewer lots than the old round-down rule."""
     lot_val = price * lot_units(TRADE[signal])
     by_notional = capital * exposure * weight // lot_val
     by_margin = capital * MAX_MARGIN_USE * weight // (lot_val * MARGIN_PCT[signal])
-    return int(max(0, min(by_notional, by_margin)))
+    floor_lots = int(max(0, min(by_notional, by_margin)))
+    lots = int(capital * exposure * weight / lot_val + 0.5)
+    while lots > 0 and (lots * lot_val > MAX_LOT_X * capital or lots * lot_val * MARGIN_PCT[signal] > MAX_MARGIN_USE * capital):
+        lots -= 1
+    return max(lots, floor_lots)
 
 
 def backtest(table: pd.DataFrame, capital: float = 250_000, start: str = "2023-01-01", end: str = "2100-01-01", exposure: float = 1.5,
