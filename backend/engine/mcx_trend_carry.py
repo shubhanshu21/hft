@@ -114,7 +114,7 @@ def run(broker, db, now: datetime, report: bool = True, send=None) -> dict:
     did = None
     if st.get("rebalanced_for") != str(month_end.date()):
         R, C = S.panel(table, ends)
-        w = S.targets(R, C, month_end)
+        w = S.targets(R, C, month_end, S.skew_panel(table, ends))
         if not w:
             lines.append("not enough history for a signal")
         else:

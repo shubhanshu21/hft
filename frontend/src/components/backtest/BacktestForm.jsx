@@ -73,7 +73,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
           <div className="field"><label htmlFor="end">To</label><input id="end" type="date" value={f.end} onChange={setDate("end")} required /></div>
         </div>
         {strategy && monthly && (
-          <p className="hint">Monthly strategy: every month end it ranks the chosen MCX commodities against each other and holds the best 3 (with fewer than 6 chosen,
+          <p className="hint">Monthly strategy: every month end it ranks the chosen MCX commodities against each other on 12-month trend, carry (next contract cheaper) and low skewness (fewer sudden up-jumps over the last year), and holds the best 3 (with fewer than 6 chosen,
             the best half). Pick at least 2. History starts December 2021; the first trade is in January 2023 (it needs 12 months of trend).</p>
         )}
         {strategy && auto && (

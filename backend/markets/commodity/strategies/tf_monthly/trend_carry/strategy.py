@@ -1,4 +1,5 @@
-"""commodity / trend_carry -- monthly MCX trend + carry: hold the 3 commodities that have risen most AND whose next contract is cheapest.
+"""commodity / trend_carry -- monthly MCX trend + carry + skewness: hold the 3 commodities that have risen most, whose next contract is
+cheapest, and that jump up least suddenly.
 
 Research: Fuertes, Miffre & Rallis (2010), "Tactical allocation in commodity futures markets: combining momentum and term structure signals"
 (momentum alone ~9%/yr, the combination best). Tested 2026-10-15 on real MCX month-end bhavcopies (the user downloaded them in a browser,
@@ -7,7 +8,8 @@ Dec 2021 -> Oct 2026, every expiry) -- see markets/commodity/futures_eod.py for 
 Rules (fixed before the test; 8 liquid commodities; decided at each month end, held one month):
   * trend = return over the last 12 months of holding the nearest contract that is still alive at the next month end, rolled monthly;
   * carry = log(near / next contract price) per year (positive = the next month is cheaper = backwardation = buyers earn the roll);
-  * score = rank(trend) + rank(carry); buy the top 3, buy-only (selling short tested worse);
+  * score = rank(trend) + rank(carry) + rank(-skewness of daily returns over the last year) (skewness added 2026-10-23, see targets());
+    buy the top 3, buy-only (selling short tested worse);
   * size each holding by 1 / its 12-month volatility (the research standard; 2026-10-15 test: +6-11%/yr at the same worst fall);
   * trade the MINI contracts (GOLDTEN, SILVERMIC, CRUDEOILM, NATGASMINI, ZINCMINI, ALUMINI, LEADMINI; COPPER has no mini), whole lots only;
     a holding whose one lot is larger than its share stays in cash.
@@ -30,6 +32,7 @@ SIGNALS = ("GOLDM", "SILVERM", "CRUDEOIL", "NATURALGAS", "COPPER", "ZINC", "ALUM
 TRADE = {"GOLDM": "GOLDTEN", "SILVERM": "SILVERMIC", "CRUDEOIL": "CRUDEOILM", "NATURALGAS": "NATGASMINI", "COPPER": "COPPER",
          "ZINC": "ZINCMINI", "ALUMINIUM": "ALUMINI", "LEAD": "LEADMINI"}
 TOP_N, LOOKBACK, VOL_WINDOW = 3, 12, 12
+SKEW_DAYS = 365                # 2026-10-23: skewness of daily returns over the last year joins the score (user's choice, see targets())
 MARGIN_PCT = {"GOLDM": 0.093, "SILVERM": 0.126, "CRUDEOIL": 0.35, "NATURALGAS": 0.30, "COPPER": 0.10, "ZINC": 0.092, "ALUMINIUM": 0.093, "LEAD": 0.10}
 MAX_MARGIN_USE = 0.8           # never block more than 80% of the account as margin
 EXPOSURE_MIN = 0.25
@@ -86,12 +89,34 @@ def panel(table: pd.DataFrame, ends: list[pd.Timestamp], signals=SIGNALS) -> tup
     return pd.DataFrame(R).sort_index(), pd.DataFrame(C).sort_index()
 
 
-def targets(R: pd.DataFrame, C: pd.DataFrame, t: pd.Timestamp) -> dict[str, float]:
-    """{signal symbol: weight} decided at month end t (weights sum to 1; empty when there is not yet 12 months of history)."""
+def skew_panel(table: pd.DataFrame, ends: list[pd.Timestamp], signals=SIGNALS) -> pd.DataFrame:
+    """K: at each month end, the skewness of each commodity's daily returns over the last SKEW_DAYS (nearest contract, day-to-day returns
+    only within the same contract, so a roll is never counted as a move). Low (negative) skew = fewer sudden up-jumps = scores higher."""
+    K = {}
+    for s in signals:
+        d = table[(table["symbol"] == s) & (table["close"] > 0)].sort_values(["date", "expiry"])
+        front = d.groupby("date").first()
+        ret = front["close"].pct_change().where(front["expiry"].eq(front["expiry"].shift()))
+        K[s] = pd.Series({t: ret[(ret.index <= t) & (ret.index > t - pd.Timedelta(days=SKEW_DAYS))].skew() for t in ends}, dtype=float)
+    return pd.DataFrame(K).sort_index()
+
+
+def targets(R: pd.DataFrame, C: pd.DataFrame, t: pd.Timestamp, K: pd.DataFrame) -> dict[str, float]:
+    """{signal symbol: weight} decided at month end t (weights sum to 1; empty when there is not yet 12 months of history).
+
+    score = rank(12m trend) + rank(carry) + rank(-skewness)  [skewness: Fernandez-Perez, Frijns, Fuertes & Miffre (2018), "The skewness of
+    commodity futures returns" -- low-skew commodities earn more]. Added 2026-10-23 at the user's request. Rs2.5L, real costs, nearest-lot
+    rounding: 2023-24 +15% -> +9% (WORSE), 2025-26 +190% -> +217%, 2023-26 +184% -> +222%, worst fall -26% -> -6%. It did not beat
+    trend+carry in both windows (the project's usual bar); the user chose it for the higher total and the much smaller worst fall and
+    asked to REMOVE the old trend+carry-only scoring (no fallback). Skew window: 270 days similar (+219%, -11%), 180 days much weaker
+    (+111%, -30%) -- the result holds near one year, not everywhere.
+    Basis-momentum (Boons & Prado 2019) was tested in the same round and rejected (2025-26 -16% alone, +106% combined)."""
     mom = (1 + R).rolling(LOOKBACK).apply(np.prod, raw=True) - 1
     if t not in mom.index or t not in C.index:
         return {}
-    score = (mom.loc[t].rank() + C.loc[t].rank()).dropna()
+    if t not in K.index:
+        return {}
+    score = (mom.loc[t].rank() + C.loc[t].rank() + (-K.loc[t]).rank()).dropna()
     n = top_n(len(R.columns))
     if len(score) < 2 * n:
         return {}
@@ -133,6 +158,7 @@ def backtest(table: pd.DataFrame, capital: float = 250_000, start: str = "2023-0
     signals = tuple(SIGNAL_OF.get(x, x) for x in symbols) if symbols else SIGNALS     # the mini contracts chosen on the page -> their signal contracts
     ends = month_ends(table)
     R, C = panel(table, ends, signals)
+    K = skew_panel(table, ends, signals)
     t0, t1 = pd.Timestamp(start), pd.Timestamp(end)
     ends = [t for t in ends if t1 >= t >= t0 - pd.offsets.MonthEnd(1)]
     cap, book, closed, skipped = capital, {}, [], []
@@ -156,7 +182,7 @@ def backtest(table: pd.DataFrame, capital: float = 250_000, start: str = "2023-0
             bench_v *= 1 + float(R.loc[t].mean())
         nxt = ends[k + 1] if k + 1 < len(ends) else None
         if nxt is not None:                                              # 2. buy this month's picks
-            for s, wt in targets(R, C, t).items():
+            for s, wt in targets(R, C, t, K).items():
                 alive = _rows(table, s, t)
                 alive = alive[alive["expiry"] > nxt]
                 if alive.empty:

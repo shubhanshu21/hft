@@ -279,7 +279,7 @@ def _value_position(p: dict, live: dict) -> None:
         p["net_if_sold"] = p["fees_if_sold"] = None
 
 
-PAPER_ACCOUNTS = [("MCX_TREND_CARRY", "MCX trend + carry"), ("CRYPTO_DIP_REVERSAL", "Crypto dip-reversal")]
+PAPER_ACCOUNTS = [("MCX_TREND_CARRY", "MCX trend + carry + skew"), ("CRYPTO_DIP_REVERSAL", "Crypto dip-reversal")]
 ACCOUNT_STRATEGIES = {"MCX_TREND_CARRY": "trend_carry", "CRYPTO_DIP_REVERSAL": "dip_reversal"}
 
 

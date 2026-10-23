@@ -5,6 +5,7 @@ export default function SettingsChips({ params }) {
     ["Start money", `₹${Number(params.capital).toLocaleString("en-IN")}`],
     ["Exposure", `${params.leverage}x the account`],
     ["Commodities", `${params.symbols?.length}: ${(params.symbols ?? []).join(", ")}`],
+    ["Rules", "rank(12-month trend) + rank(carry) + rank(low skewness), best 3, whole lots rounded to nearest"],
     ["Rebalance", "monthly"],
     ["Costs", "MCX fees + half-spread"],
   ] : params.market === "crypto" && params.strategy === "dip_reversal" ? [
