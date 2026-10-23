@@ -12,6 +12,8 @@ import { inr, signed, tone } from "../lib/format.js";
 
 const STRATEGY_LABEL = { trend_carry: "MCX trend + carry", dip_reversal: "Crypto dip-reversal" };
 const when = (s) => (s ? String(s).replace("T", " ").slice(0, 16) : "-");
+const qtyFmt = (q) => (q == null ? "-" : Number(q).toLocaleString("en-IN", { maximumFractionDigits: 4 }));
+const pxFmt = (p) => (p == null ? "-" : Number(p).toFixed(Math.abs(p) < 10 ? 4 : 2));   // small coin prices (DOGE 0.09) need more decimals
 
 /** The paper-trading account as it is now (read-only, refreshed every minute). No real orders are ever placed. */
 export default function PaperPage() {
@@ -116,8 +118,8 @@ export default function PaperPage() {
         {!d.trades.length ? <div className="none">No closed trades yet.</div> : (
           <div className="table-wrap"><table className="trades-table">
             <thead><tr><th>Stock</th><th>Bought</th><th>Sold</th><th>Qty</th><th>Buy</th><th>Sell</th><th>Fees</th><th>Profit after fees</th><th>Why it ended</th></tr></thead>
-            <tbody>{tradePaged.rows.map((t, i) => <tr key={i}><td>{t.symbol}</td><td>{when(t.entry_dt)}</td><td>{when(t.exit_dt)}</td><td>{t.qty}</td><td>{t.entry_price?.toFixed(2)}</td>
-              <td>{t.exit_price?.toFixed(2)}</td><td>{inr(t.total_friction ?? 0)}</td><td className={tone(t.net_pnl ?? 0)}>{signed(t.net_pnl ?? 0)}</td><td>{(t.exit_reason ?? "").replace(/_/g, " ")}</td></tr>)}</tbody>
+            <tbody>{tradePaged.rows.map((t, i) => <tr key={i}><td>{t.symbol}</td><td>{when(t.entry_dt)}</td><td>{when(t.exit_dt)}</td><td>{qtyFmt(t.qty)}</td><td>{pxFmt(t.entry_price)}</td>
+              <td>{pxFmt(t.exit_price)}</td><td>{inr(t.total_friction ?? 0)}</td><td className={tone(t.net_pnl ?? 0)}>{signed(t.net_pnl ?? 0)}</td><td>{(t.exit_reason ?? "").replace(/_/g, " ")}</td></tr>)}</tbody>
           </table><Pager paged={tradePaged} /></div>)}
       </Panel>
 

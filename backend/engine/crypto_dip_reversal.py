@@ -35,6 +35,10 @@ from engine.database import TradingDB
 from markets.crypto.strategies.tf_5min.dip_reversal import strategy as S
 from services.broker.delta_broker import DeltaDemoBroker, PRODUCTS as DELTA_COINS
 
+# Delta Exchange India live perpetuals trade in WHOLE contracts of this many coins each (api.india.delta.exchange/v2/products,
+# checked 2026-10-23). The simulated fill buys a whole number of contracts, like a real order, instead of a fractional coin amount.
+CONTRACT_VALUE = {"BTC": 0.001, "ETH": 0.01, "SOL": 1, "BNB": 0.1, "XRP": 1, "DOGE": 100, "ADA": 1, "AVAX": 1, "DOT": 1, "LTC": 0.1, "TRX": 1}
+
 _log = logging.getLogger("crypto_dip_reversal")
 
 
@@ -253,8 +257,13 @@ def process_entries(db: TradingDB, state: dict, candles_map: dict, live_info: di
         risk_inr = cap * risk_pct
         pos_usd = min((risk_inr / fx) / S.STOPLOSS, (cap * MAX_LEVERAGE) / fx) * crowd
         risk_inr *= crowd
+        cv = CONTRACT_VALUE.get(coin, 1)
+        n_contracts = int(pos_usd / entry_px / cv)                 # whole contracts only, rounded down, as a real order would be
+        if n_contracts < 1:
+            lines.append(f"{coin}: signal, but one Delta contract ({cv} {coin}) is bigger than the position size -- skipped"); continue
+        pos_usd = n_contracts * cv * entry_px
         intended_pos_usd = pos_usd
-        qty = pos_usd / entry_px
+        qty = n_contracts * cv
 
         contracts, real, target_order_id = None, False, None
         if broker is not None and coin in DELTA_COINS:
