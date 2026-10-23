@@ -1,8 +1,12 @@
 [Unit]
-Description=Crypto dip-reversal schedule (2 minutes after every 5-minute candle closes; crypto trades 24/7)
+Description=Crypto dip-reversal schedule (5 seconds after every 5-minute candle closes; crypto trades 24/7)
 
 [Timer]
-OnCalendar=*-*-* *:02,07,12,17,22,27,32,37,42,47,52,57:00 UTC
+# 2026-10-23: was 2 minutes after the close (+ systemd's default up-to-1-minute AccuracySec). Measured on 382 backtest trades with
+# 1-minute prices: entering/exiting 2-3 minutes late costs 0.23-0.32% per trade vs the backtest's 0.68% average edge (the dip
+# bounces fast). 5 seconds after the close keeps the live fill next to the backtest's next-candle open.
+OnCalendar=*-*-* *:00/5:05 UTC
+AccuracySec=1s
 Persistent=true
 
 [Install]

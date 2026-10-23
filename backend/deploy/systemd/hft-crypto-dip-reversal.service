@@ -1,5 +1,5 @@
 [Unit]
-Description=Crypto dip-reversal (5-minute Bollinger-band reversal, 9 coins' perpetual futures)
+Description=Crypto dip-reversal (5-minute Bollinger-band reversal, 11 coins' perpetual futures)
 
 [Service]
 Type=oneshot
