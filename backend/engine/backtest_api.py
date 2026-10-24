@@ -507,6 +507,16 @@ class Handler(BaseHTTPRequestHandler):
         self._send(HTTPStatus.NOT_FOUND, {"error": "not found"})
 
     def do_POST(self) -> None:                                     # noqa: N802
+        if urlparse(self.path).path.rstrip("/") == "/api/paper/reset":   # reset ONE paper account (backup first; must type its name)
+            try:
+                body = json.loads(self.rfile.read(min(int(self.headers.get("Content-Length") or 0), 2000)) or b"{}")
+            except ValueError:
+                return self._send(HTTPStatus.BAD_REQUEST, {"error": "bad JSON"})
+            from engine.account_reset import ResetError, reset_account
+            try:
+                return self._send(200, reset_account(str(body.get("account") or ""), str(body.get("confirm") or "")))
+            except ResetError as e:
+                return self._send(HTTPStatus.BAD_REQUEST, {"error": str(e)})
         m = re.fullmatch(r"/api/backtests/([0-9a-f]{12})/label", urlparse(self.path).path.rstrip("/"))
         if m:
             run = load(m.group(1))

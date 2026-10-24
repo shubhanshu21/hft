@@ -396,7 +396,9 @@ def main(argv=None) -> int:
         print_status(db); return 0
 
     send_fn = print if args.no_telegram else telegram.send
-    out = run_iteration(db, send_fn=send_fn)
+    from engine.account_reset import account_lock
+    with account_lock(ACCOUNT_ID):                     # a reset from the paper page waits for this run (and vice versa)
+        out = run_iteration(db, send_fn=send_fn)
     print("\n".join(out["lines"]) if out["lines"] else "Cycle completed: no trade triggers or state changes.")
     return 0
 

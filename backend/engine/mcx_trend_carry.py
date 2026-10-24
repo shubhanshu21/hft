@@ -210,7 +210,9 @@ def main(argv=None) -> int:
             return 0
     except Exception:
         pass
-    out = run(_get_broker(), db, now, report=True, send=(print if a.no_telegram else None))
+    from engine.account_reset import account_lock
+    with account_lock(ACCOUNT):                        # a reset from the paper page waits for this run (and vice versa)
+        out = run(_get_broker(), db, now, report=True, send=(print if a.no_telegram else None))
     print(out["message"])
     return 0
 

@@ -3,7 +3,8 @@ import { createChart } from "lightweight-charts";
 import Panel from "../components/ui/Panel.jsx";
 import Stat from "../components/ui/Stat.jsx";
 import { baseOptions } from "../components/charts/chartOptions.js";
-import { getPaper } from "../api/client.js";
+import { getPaper, resetPaper } from "../api/client.js";
+import ResetAccount from "../components/paper/ResetAccount.jsx";
 import OpenTradeCard from "../components/paper/OpenTradeCard.jsx";
 import Pager from "../components/ui/Pager.jsx";
 import { usePaged } from "../hooks/usePaged.js";
@@ -26,12 +27,13 @@ export default function PaperPage() {
   const box = useRef(null);
   const tradePaged = usePaged(d?.trades ?? [], 15);
 
+  const [reloadKey, setReloadKey] = useState(0);
   useEffect(() => {
     const load = () => getPaper(account).then((x) => { setD(x); setError(""); setLoadedAt(new Date()); }).catch((e) => setError(e.message));
     load();
     const id = setInterval(load, 60000);
     return () => clearInterval(id);
-  }, [account]);
+  }, [account, reloadKey]);
 
   useEffect(() => {
     if (!box.current || !d?.equity?.length) return undefined;
@@ -77,6 +79,7 @@ export default function PaperPage() {
         <div className="big">
           <div className="eq">{inr(value)}</div>
           <div className="chg"><span className={tone(value - acc.initial_capital)}>{signed(value - acc.initial_capital)}</span> since start ({inr(acc.initial_capital)})</div>
+          <ResetAccount accountId={d.account_id} startMoney={acc.initial_capital} onReset={(acct, typed) => resetPaper(acct, typed).then((r) => { setReloadKey((k) => k + 1); return r; })} />
           {acc.business_value != null && (
             <div className="note">If all sold now: {inr(acc.pretax_value)} before tax · {inr(acc.business_value)} after tax as business income (main view) · {inr(acc.strict_value)} under the strict crypto rule (worst case)</div>
           )}

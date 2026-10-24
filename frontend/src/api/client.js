@@ -11,6 +11,7 @@ export const listRuns = () => request("/api/backtests");
 export const getRun = (id) => request(`/api/backtests/${id}`);
 export const renameRun = (id, label) => request(`/api/backtests/${id}/label`, { method: "POST", body: JSON.stringify({ label }) });
 export const getPaper = (account) => request(`/api/paper${account ? `?account=${encodeURIComponent(account)}` : ""}`);
+export const resetPaper = (account, confirm) => request("/api/paper/reset", { method: "POST", body: JSON.stringify({ account, confirm }) });
 export const deleteRun = (id) => request(`/api/backtests/${id}`, { method: "DELETE" });
 export const clearRuns = () => request("/api/backtests", { method: "DELETE" });
 export const startRun = (params) => request("/api/backtests", { method: "POST", body: JSON.stringify(params) });
