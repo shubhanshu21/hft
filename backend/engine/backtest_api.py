@@ -58,6 +58,10 @@ def catalog() -> list[dict]:
            "summary": (tc.__doc__ or "").strip().split("\n")[0], "intraday": False, "default_risk_pct": None, "monthly_rank": True,
            "exposure": float(os.environ.get("MCX_TREND_CARRY_EXPOSURE", 1.5)), "exposure_min": tc.EXPOSURE_MIN, "exposure_max": tc.EXPOSURE_MAX,
            "default_capital": float(os.environ.get("MCX_TREND_CARRY_CAPITAL", 250_000))}      # the paper account's real size
+    from markets.equity.strategies.tf_intraday.results_gap import strategy as rg
+    results_gap = {"market": "equity", "name": "results_gap", "timeframe": "5 minutes", "supported": True, "symbols": [], "auto_universe": True,
+                   "summary": "equity / results_gap -- intraday: buy results-day gap-ups (7%+ above the market, still rising at 09:30), sell at 15:20.",
+                   "intraday": True, "default_risk_pct": None, "exposure": rg.LEVERAGE, "exposure_min": 1.0, "exposure_max": 5.0, "default_capital": 100_000}
     from markets.crypto.strategies.tf_5min.dip_reversal import strategy as dr
     dip_reversal = {"market": "crypto", "name": "dip_reversal", "timeframe": "5 minutes", "supported": True, "symbols": dr.available(), "crypto": True, "scalp": True,
                      "default_symbols": list(dr.COINS), "summary": (dr.__doc__ or "").strip().split("\n")[0], "intraday": True, "default_risk_pct": dr.RISK_PCT * 100,
@@ -66,7 +70,7 @@ def catalog() -> list[dict]:
              "summary": (s.__doc__ or "").strip().split("\n")[0], "intraday": s.intraday,
              "default_risk_pct": getattr(s, "default_risk_pct", None),
              "default_symbols": [x for x in (getattr(s, "universe", None) or universe(m)) if s.trades(x)]}     # what its paper trading uses
-            for (m, n), s in sorted(registry.discover().items())] + [mcx, dip_reversal]
+            for (m, n), s in sorted(registry.discover().items())] + [mcx, dip_reversal, results_gap]
 
 
 def prune() -> None:
@@ -129,6 +133,20 @@ def validate(body: dict) -> dict:
             p["risk_pct"] = float(body.get("risk_pct", row["default_risk_pct"]))
             if not lo <= p["risk_pct"] <= hi:
                 raise ValueError(f"Risk per trade must be between {lo}% and {hi}%")
+        for key in ("start", "end"):
+            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(body.get(key, ""))):
+                raise ValueError("Dates must look like 2024-01-31")
+            p[key] = body[key]
+        return {"market": market, "strategy": name, "params": p}
+    if (market, name) == ("equity", "results_gap"):              # its own fixed 414-stock list; the choices are money, size and dates
+        row = known[(market, name)]
+        p = {"symbols": [], "slippage_bp": 10.0, "pyramid_pct": None}
+        lo, hi = LIMITS["capital"]; p["capital"] = float(body.get("capital", 100_000))
+        if not lo <= p["capital"] <= hi:
+            raise ValueError(f"capital must be between {lo} and {hi}")
+        p["leverage"] = float(body.get("exposure", row["exposure"]))
+        if not row["exposure_min"] <= p["leverage"] <= row["exposure_max"]:
+            raise ValueError(f"Size must be between {row['exposure_min']:g}x and {row['exposure_max']:g}x the account (Upstox intraday allows 5x)")
         for key in ("start", "end"):
             if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(body.get(key, ""))):
                 raise ValueError("Dates must look like 2024-01-31")
@@ -280,8 +298,8 @@ def _value_position(p: dict, live: dict) -> None:
         p["net_if_sold"] = p["fees_if_sold"] = None
 
 
-PAPER_ACCOUNTS = [("MCX_TREND_CARRY", "MCX trend + carry"), ("CRYPTO_DIP_REVERSAL", "Crypto dip-reversal")]
-ACCOUNT_STRATEGIES = {"MCX_TREND_CARRY": "trend_carry", "CRYPTO_DIP_REVERSAL": "dip_reversal"}
+PAPER_ACCOUNTS = [("MCX_TREND_CARRY", "MCX trend + carry"), ("CRYPTO_DIP_REVERSAL", "Crypto dip-reversal"), ("RESULTS_GAP", "Results-day gap-up")]
+ACCOUNT_STRATEGIES = {"MCX_TREND_CARRY": "trend_carry", "CRYPTO_DIP_REVERSAL": "dip_reversal", "RESULTS_GAP": "results_gap"}
 
 
 MARKET_HOURS = {"MCX_TREND_CARRY": ("09:00", None, "MCX")}
@@ -325,6 +343,23 @@ def _value_mcx(p: dict, live: dict) -> None:
         p.update(profit_now=None, fees_if_sold=None, net_if_sold=None, move_pct=None); return
     c = compute_mcx_costs(fam, "long", p["entry_price"], price, p["qty"])
     p.update(profit_now=round(c["gross"], 2), net_if_sold=round(c["net"], 2), fees_if_sold=round(c["total"], 2), move_pct=round((price / p["entry_price"] - 1) * 100, 3))
+
+
+def _value_results_gap(p: dict, live: dict) -> None:
+    """An open results_gap position: NSE shares bought intraday (MIS, 5x margin), 'if sold now' with the strategy's own Upstox cost model."""
+    from markets.equity.strategies.tf_intraday.results_gap import strategy as RG
+    p.pop("state", None)
+    q = live.get(p.get("instrument_key")) or {}
+    price = q.get("ltp")
+    p.update(market="equity", lot_size=1, units=p["qty"], size_text=f"{int(p['qty'])} shares · sold at 15:20 today", price_now=price,
+             price_source="live" if price else None, price_time=q.get("trade_time"), bid=q.get("bid"), ask=q.get("ask"),
+             checked_at=datetime.now(IST).isoformat(timespec="seconds") if q else None, margin_used=round(p["entry_price"] * p["qty"] / 5, 2), risk_to_stop=None)
+    p.pop("instrument_key", None)
+    if price is None:
+        p.update(profit_now=None, fees_if_sold=None, net_if_sold=None, move_pct=None); return
+    c = RG.costs(p["entry_price"], price, int(p["qty"]))
+    gross = (price - p["entry_price"]) * p["qty"]
+    p.update(profit_now=round(gross, 2), net_if_sold=round(gross - c["total"], 2), fees_if_sold=c["total"], move_pct=round((price / p["entry_price"] - 1) * 100, 3))
 
 
 def _value_crypto(p: dict, live: dict) -> None:
@@ -380,7 +415,7 @@ def paper_summary(account: str = "CRYPTO_DIP_REVERSAL") -> dict:
     finally:
         con.close()
     live = {} if account in ("CRYPTO_CALM", "CRYPTO_DIP_REVERSAL") else _live_prices([p["instrument_key"] for p in pos if p.get("instrument_key")])   # crypto: Delta Exchange India prices
-    value = {"MCX_TREND_CARRY": _value_mcx, "CRYPTO_CALM": _value_crypto, "CRYPTO_DIP_REVERSAL": _value_crypto}.get(account, _value_position)
+    value = {"MCX_TREND_CARRY": _value_mcx, "RESULTS_GAP": _value_results_gap, "CRYPTO_CALM": _value_crypto, "CRYPTO_DIP_REVERSAL": _value_crypto}.get(account, _value_position)
     for p in pos:
         value(p, live)
     if acc:
@@ -415,6 +450,12 @@ def work(run: dict) -> None:
             try:
                 run["result"] = dr.web_backtest(p["capital"], p["start"], p["end"], symbols=p.get("symbols"), leverage=p.get("leverage", 3.0), tax=p.get("tax", "business"),
                                                 risk_pct=(p["risk_pct"] / 100 if "risk_pct" in p else None), progress=progress)
+            except ValueError as e:
+                raise BacktestError(str(e))
+        elif run["strategy"] == "results_gap":                    # equity intraday: its own backtest over the cached 5-minute summary
+            from markets.equity.strategies.tf_intraday.results_gap import strategy as rg
+            try:
+                run["result"] = rg.backtest(p["capital"], p["start"], p["end"], leverage=p["leverage"], progress=progress)
             except ValueError as e:
                 raise BacktestError(str(e))
         elif run["market"] == "commodity":                        # trend_carry: monthly, all 8 commodities ranked together, its own backtest

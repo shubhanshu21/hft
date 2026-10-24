@@ -13,11 +13,15 @@ FRI_2340 = datetime(2026, 10, 23, 23, 40, 5, tzinfo=IST)
 MON_0910 = datetime(2026, 10, 26, 9, 10, 4, tzinfo=IST)
 
 
-def fake_sh(active=("hft-crypto-dip-reversal.timer", "hft-mcx-trend-carry.timer"), crypto=("success", None), mcx=("success", MON_0910)):
+MON_0930 = datetime(2026, 10, 26, 9, 30, 9, tzinfo=IST)
+ALL_TIMERS = ("hft-crypto-dip-reversal.timer", "hft-mcx-trend-carry.timer", "hft-results-gap.timer")
+
+
+def fake_sh(active=ALL_TIMERS, crypto=("success", None), mcx=("success", MON_0910), rg=("success", MON_0930)):
     def sh(*args):
         if args[0] == "is-active":
             return "active" if args[1] in active else "inactive"
-        result, when = crypto if "crypto" in args[1] else mcx
+        result, when = crypto if "crypto" in args[1] else rg if "results-gap" in args[1] else mcx
         return f"Result={result}\nExecMainExitTimestamp=@{int(when.timestamp()) if when else 0}"
     return sh
 
@@ -56,7 +60,7 @@ class TestProblems(Base):
 
     def test_crypto_timer_off_and_failed_run(self):
         self.crypto_saved(MON_10)
-        p = self.check(MON_10, sh=fake_sh(active=("hft-mcx-trend-carry.timer",), crypto=("exit-code", MON_10)))["problems"]
+        p = self.check(MON_10, sh=fake_sh(active=("hft-mcx-trend-carry.timer", "hft-results-gap.timer"), crypto=("exit-code", MON_10)))["problems"]
         self.assertIn("crypto_timer", p)
         self.assertIn("crypto_failed", p)
 
@@ -92,18 +96,19 @@ class TestProblems(Base):
 
 class TestAlerts(Base):
     def test_alert_once_remind_after_6h_then_fixed(self):
+        self.late = fake_sh(rg=("success", datetime(2026, 10, 26, 15, 20, 9, tzinfo=IST)))   # results-gap ran its 15:20 slot too
         self.crypto_saved(MON_10 - timedelta(hours=2))
-        self.check(MON_10)
+        self.check(MON_10, sh=self.late)
         self.assertEqual(len(self.sent), 1)
         self.assertIn("Crypto engine has not run", self.sent[0])
-        self.check(MON_10 + timedelta(minutes=15))
+        self.check(MON_10 + timedelta(minutes=15), sh=self.late)
         self.assertEqual(len(self.sent), 1)                  # no repeat 15 minutes later
-        self.check(MON_10 + timedelta(hours=6, minutes=1))
+        self.check(MON_10 + timedelta(hours=6, minutes=1), sh=self.late)
         self.assertEqual(len(self.sent), 2)
         self.assertIn("still not fixed", self.sent[1])
         later = MON_10 + timedelta(hours=7)
         self.crypto_saved(later)
-        self.check(later)
+        self.check(later, sh=self.late)
         self.assertIn("fixed", self.sent[2])
         self.assertEqual(json.loads(self.state.read_text()), {})
 
@@ -131,7 +136,7 @@ class TestEngineStatus(Base):
     def test_crypto_stale_and_off(self):
         self.crypto_saved(MON_10 - timedelta(hours=1))
         self.assertFalse(M.engine_status("CRYPTO_DIP_REVERSAL", MON_10, sh=fake_sh(), crypto_state=self.crypto)["ok"])
-        off = M.engine_status("CRYPTO_DIP_REVERSAL", MON_10, sh=fake_sh(active=("hft-mcx-trend-carry.timer",)), crypto_state=self.crypto)
+        off = M.engine_status("CRYPTO_DIP_REVERSAL", MON_10, sh=fake_sh(active=("hft-mcx-trend-carry.timer", "hft-results-gap.timer")), crypto_state=self.crypto)
         self.assertFalse(off["ok"])
         self.assertIn("OFF", off["text"])
 
@@ -144,3 +149,24 @@ class TestEngineStatus(Base):
         st = M.engine_status("MCX_TREND_CARRY", MON_10, sh=fake_sh(mcx=("success", FRI_2340)))
         self.assertFalse(st["ok"])
         self.assertIn("missed", st["text"])
+
+
+class TestResultsGapMonitor(Base):
+    def test_rg_running_and_missed(self):
+        self.crypto_saved(MON_10)
+        self.assertEqual(self.check(MON_10)["problems"], {})
+        p = self.check(MON_10, sh=fake_sh(rg=("success", FRI_2340)))["problems"]
+        self.assertIn("rg_missed", p)
+        self.assertIn("09:30", p["rg_missed"])
+
+    def test_rg_status_text(self):
+        st = M.engine_status("RESULTS_GAP", MON_10, sh=fake_sh())
+        self.assertTrue(st["ok"])
+        self.assertIn("next at Mon 15:20", st["text"])
+
+    def test_rg_never_run_is_not_a_miss(self):
+        self.crypto_saved(MON_10)
+        self.assertNotIn("rg_missed", self.check(MON_10, sh=fake_sh(rg=("success", None)))["problems"])
+        st = M.engine_status("RESULTS_GAP", MON_10, sh=fake_sh(rg=("success", None)))
+        self.assertTrue(st["ok"])
+        self.assertIn("Waiting for the first run", st["text"])

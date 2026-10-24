@@ -28,6 +28,7 @@ CRYPTO_STATE = DB_DIR / "crypto_dip_reversal_state.json"
 CRYPTO_STALE_MIN = 15
 MCX_SLOTS = (dtime(9, 10), dtime(23, 40))          # hft-mcx-trend-carry.timer, IST, Mon-Fri
 MCX_GRACE_MIN = 20
+RG_SLOTS = (dtime(9, 30), dtime(15, 20))            # hft-results-gap.timer trading runs, IST, Mon-Fri
 TOKEN_WINDOW_MIN = 30                               # check the Upstox login this long before each MCX slot
 REMIND_H = 6
 
@@ -60,6 +61,31 @@ def last_mcx_slot(now: datetime) -> datetime:
                     return slot
         d -= timedelta(days=1)
     raise RuntimeError("no MCX slot in the last week")
+
+
+def last_slot(now: datetime, slots) -> datetime:
+    """The most recent weekday run time in `slots` at or before now."""
+    d = now.date()
+    for _ in range(8):
+        if d.weekday() < 5:
+            for t in sorted(slots, reverse=True):
+                s = datetime.combine(d, t, IST)
+                if s <= now:
+                    return s
+        d -= timedelta(days=1)
+    raise RuntimeError("no slot in the last week")
+
+
+def next_slot(now: datetime, slots) -> datetime:
+    d = now.date()
+    for _ in range(8):
+        if d.weekday() < 5:
+            for t in sorted(slots):
+                s = datetime.combine(d, t, IST)
+                if s > now:
+                    return s
+        d += timedelta(days=1)
+    raise RuntimeError("no slot in the next week")
 
 
 def next_mcx_slot(now: datetime) -> datetime:
@@ -100,6 +126,16 @@ def problems(now: datetime, sh=_systemctl, crypto_state: Path = CRYPTO_STATE, to
             out["mcx_missed"] = f"MCX engine missed its {slot:%a %d %b %H:%M} IST run."
         elif result and result != "success":
             out["mcx_failed"] = f"MCX engine's {when:%a %H:%M} IST run FAILED ({result}). Check: journalctl --user -u hft-mcx-trend-carry.service -n 50"
+    # results_gap (equity intraday): its 09:30 buy and 15:20 sell runs
+    if not unit_active("hft-results-gap.timer", sh):
+        out["rg_timer"] = "Results-gap engine timer is OFF -- no results-day trades will be taken."
+    slot = last_slot(now, RG_SLOTS)
+    if now - slot > timedelta(minutes=MCX_GRACE_MIN):
+        when, result = last_run("hft-results-gap.service", sh)
+        if when is not None and when < slot:                       # never run yet (just installed) is not a miss
+            out["rg_missed"] = f"Results-gap engine missed its {slot:%a %d %b %H:%M} IST run."
+        elif result and result != "success":
+            out["rg_failed"] = f"Results-gap engine's {when:%a %H:%M} IST run FAILED ({result}). Check: journalctl --user -u hft-results-gap.service -n 50"
     # Upstox login, shortly before an MCX run
     if next_mcx_slot(now) - now <= timedelta(minutes=TOKEN_WINDOW_MIN):
         ok = token_ok() if token_ok else _upstox_token_ok()
@@ -194,5 +230,21 @@ def engine_status(account: str, now: datetime | None = None, sh=_systemctl, cryp
             text = f"Last run {'was missed' if missed else 'FAILED'} · next at {nxt:%a %H:%M} IST"
         else:
             text = f"Running · last check {when:%a %H:%M} IST · next at {nxt:%a %H:%M} IST" if when else f"Running · next at {nxt:%a %H:%M} IST"
+        return {"ok": ok, "last": when.isoformat() if when else None, "next": nxt.isoformat() if nxt else None, "text": text}
+    if account == "RESULTS_GAP":
+        on = unit_active("hft-results-gap.timer", sh)
+        when, result = last_run("hft-results-gap.service", sh)
+        slot = last_slot(now, RG_SLOTS)
+        missed = now - slot > timedelta(minutes=MCX_GRACE_MIN) and when is not None and when < slot
+        ok = on and not missed and result in ("", "success")
+        nxt = next_slot(now, RG_SLOTS) if on else None
+        if not on:
+            text = "Engine is OFF -- no results-day trades will be taken"
+        elif when is None:
+            text = f"Waiting for the first run · next at {nxt:%a %H:%M} IST"
+        elif not ok:
+            text = f"Last run {'was missed' if missed else 'FAILED'} · next at {nxt:%a %H:%M} IST"
+        else:
+            text = (f"Running · last check {when:%a %H:%M} IST · next at {nxt:%a %H:%M} IST" if when else f"Running · next at {nxt:%a %H:%M} IST")
         return {"ok": ok, "last": when.isoformat() if when else None, "next": nxt.isoformat() if nxt else None, "text": text}
     return {"ok": None, "last": None, "next": None, "text": ""}

@@ -13,7 +13,7 @@ import { usePaged } from "../hooks/usePaged.js";
 import { useTheme } from "../hooks/useTheme.js";
 import { inr, signed, tone, whyText } from "../lib/format.js";
 
-const STRATEGY_LABEL = { trend_carry: "MCX trend + carry", dip_reversal: "Crypto dip-reversal" };
+const STRATEGY_LABEL = { trend_carry: "MCX trend + carry", dip_reversal: "Crypto dip-reversal", results_gap: "Results-day gap-up" };
 const when = (s) => (s ? String(s).replace("T", " ").slice(0, 16) : "-");
 const qtyFmt = (q) => (q == null ? "-" : Number(q).toLocaleString("en-IN", { maximumFractionDigits: 4 }));
 const pxFmt = (p) => (p == null ? "-" : Number(p).toFixed(Math.abs(p) < 10 ? 4 : 2));   // small coin prices (DOGE 0.09) need more decimals
@@ -65,7 +65,7 @@ export default function PaperPage() {
         <div className="acct-tabs" role="tablist">
           {d.accounts.map((a) => (
             <button key={a.id} type="button" role="tab" aria-selected={a.id === d.account_id} className={a.id === d.account_id ? "on" : ""} onClick={() => pick(a.id)}>
-              <span className="wallet-ico"><Icon name={a.id.startsWith("CRYPTO") ? "coins" : "flame"} size={20} /></span>
+              <span className="wallet-ico"><Icon name={a.id.startsWith("CRYPTO") ? "coins" : a.id === "RESULTS_GAP" ? "up" : "flame"} size={20} /></span>
               <span className="wallet-txt">
                 <span className="t"><span className={`mkt-dot ${a.market_open ? "open" : "closed"}`} title={a.market_text} aria-label={a.market_text} />{a.label}</span>
                 <span className="s">{a.strategies}{a.market_text ? ` · ${a.market_text}` : ""}</span>
@@ -110,6 +110,7 @@ export default function PaperPage() {
           ? <div className="empty"><span className="empty-ico"><Icon name="sparkle" size={20} /></span><div><b>Nothing open right now</b>{{
             CRYPTO_DIP_REVERSAL: "dip_reversal checks all 11 coins for a sharp dip 5 seconds after every 5-minute candle closes.",
             MCX_TREND_CARRY: "trend_carry buys its picks at each month-end rebalance (09:10 or 23:40 IST, weekdays).",
+            RESULTS_GAP: "Every weekday at 09:30 it checks stocks that just reported results: it buys any that opened 7%+ above the market and kept rising, and sells them at 15:20.",
           }[d.account_id] ?? "Waiting for the next signal."}</div></div>
           : <div className="trade-cards">{d.positions.map((p) => <OpenTradeCard key={p.symbol} p={p} />)}</div>}
         {d.positions.length > 0 && <p className="note">"Last traded price" changes only when someone trades. "Buyers / sellers now" are the best live offers: selling now would get the buyers' price. "Profit now" is the price move only. "If sold now" also takes off brokerage, taxes and the buy–sell price gap, the same way the paper trader books a sale.
@@ -129,7 +130,7 @@ export default function PaperPage() {
       <Panel title="Closed trades">
         {!d.trades.length ? <div className="empty"><span className="empty-ico"><Icon name="inbox" size={20} /></span><div><b>No closed trades yet</b>Finished trades and their profit after fees will appear here.</div></div> : (
           <div className="table-wrap"><table className="trades-table">
-            <thead><tr><th>{d.account_id.startsWith("CRYPTO") ? "Coin" : "Contract"}</th><th>Bought</th><th>Sold</th><th>Qty</th><th>Buy</th><th>Sell</th><th>Fees</th><th>Profit after fees</th><th>Why it ended</th></tr></thead>
+            <thead><tr><th>{d.account_id.startsWith("CRYPTO") ? "Coin" : d.account_id === "RESULTS_GAP" ? "Stock" : "Contract"}</th><th>Bought</th><th>Sold</th><th>Qty</th><th>Buy</th><th>Sell</th><th>Fees</th><th>Profit after fees</th><th>Why it ended</th></tr></thead>
             <tbody>{tradePaged.rows.map((t, i) => <tr key={i}><td>{t.symbol}</td><td>{when(t.entry_dt)}</td><td>{when(t.exit_dt)}</td><td>{qtyFmt(t.qty)}</td><td>{pxFmt(t.entry_price)}</td>
               <td>{pxFmt(t.exit_price)}</td><td>{inr(t.total_friction ?? 0)}</td><td className={tone(t.net_pnl ?? 0)}>{signed(t.net_pnl ?? 0)}</td><td>{whyText(t.exit_reason)}</td></tr>)}</tbody>
           </table><Pager paged={tradePaged} /></div>)}

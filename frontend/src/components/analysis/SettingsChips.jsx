@@ -15,6 +15,12 @@ export default function SettingsChips({ params }) {
     ["Rules", "Bollinger-band dip reversal (BinHV45 + ClucMay2018), 15% target / 7% stop, up to 5 open together"],
     ["Risk per trade", params.risk_pct != null ? `${params.risk_pct}%` : "strategy default"],
     ["Costs", "taker+GST+slippage on entries/stops, maker+GST on the target, real funding"],
+  ] : params.strategy === "results_gap" ? [
+    ["Start money", `₹${Number(params.capital).toLocaleString("en-IN")}`],
+    ["Size", `${params.leverage}x the account each morning`],
+    ["Rules", "results-day gap 7%+ vs market, still rising at 09:30 -> buy; sell 15:20"],
+    ["Stocks", "own list of 414 liquid NSE stocks"],
+    ["Costs", "Upstox intraday fees + 0.1% slippage each way"],
   ] : params.market === "crypto" ? [
     ["Start money", `₹${Number(params.capital).toLocaleString("en-IN")}`],
     ["Coins", `${params.symbols?.length}: ${(params.symbols ?? []).join(", ")}`],

@@ -11,7 +11,7 @@ const SAVED_KEY = "lastBacktest";
 const loadSaved = () => { try { return JSON.parse(localStorage.getItem(SAVED_KEY) || "null"); } catch { return null; } };
 const isoDaysAgo = (n) => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
 const yearRange = (y) => ({ start: `${y}-01-01`, end: y === THIS_YEAR ? today() : `${y}-12-31` });
-const MARKET_LABEL = { commodity: "Commodity (MCX futures)", crypto: "Crypto (Delta Exchange India futures)" };
+const MARKET_LABEL = { commodity: "Commodity (MCX futures)", crypto: "Crypto (Delta Exchange India futures)", equity: "Equity (NSE intraday)" };
 
 export default function BacktestForm({ strategies, onSubmit, busy }) {
   const markets = useMemo(() => [...new Set(strategies.map((s) => s.market))], [strategies]);
@@ -29,6 +29,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
   const safeRisk = Math.max(3, strategy?.default_risk_pct ?? 0);
   const monthly = !!strategy?.monthly_rank;          // commodity/trend_carry: ranks the chosen contracts together each month; exposure is editable
   const crypto = !!strategy?.crypto;
+  const gap = strategy?.name === "results_gap";      // equity intraday: its own 414-stock list, size 1-5x
   const scalp = !!strategy?.scalp;                   // a crypto scalper (dip_reversal): coins chosen, no leverage box (risk-based sizing, leverage barely matters)
   const auto = !!strategy?.auto_universe;            // equity/breakout_pair: picks from the day's 200 most-traded NSE stocks itself, fixed 5 + 3 holdings
   const [all, setAll] = useState(true);
@@ -89,7 +90,13 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
           <p className="hint">Monthly strategy: every month end it ranks the chosen MCX commodities against each other on 12-month trend and carry (next contract cheaper), and holds the best 3 (with fewer than 6 chosen,
             the best half). Pick at least 2. History starts December 2021; the first trade is in January 2023 (it needs 12 months of trend).</p>
         )}
-        {strategy && auto && (
+        {strategy && gap && (
+          <p className="hint">Intraday, buys only: the morning after a company's quarterly results, it buys at 09:30 if the stock opened 7% or more above the
+            market and is still above its 09:15 opening price, and sells everything at 15:20. It skips stocks that were frozen at 09:30 or had under Rs50 lakh
+            traded then. Its own list of 414 liquid NSE stocks; 5-minute data from September 2022 to mid-October 2026. Real Upstox intraday costs + 0.1% slippage
+            each way are always charged.</p>
+        )}
+        {strategy && auto && !gap && (
           <p className="hint">This strategy chooses its own stocks: each day, the 200 most-traded NSE stocks of that day (about 4,250 checked, no fixed list).
             {strategy.name === "earnings_drift"
               ? " It buys a stock two days after quarterly results that beat the market by more than 4% on double volume, up to 5 at a time, and sells after 40 trading days. It buys only while half of those 200 stocks are above their 50-day average. Risk per trade does not apply."
@@ -120,7 +127,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
       <Panel title="Money, fees and slippage">
         <div className="form-grid">
           <div className="field"><label htmlFor="capital">Starting money (INR)</label><input id="capital" type="number" min="10000" max="1000000000" step="1" value={f.capital} onChange={set("capital")} /></div>
-          {market === "equity" && (
+          {market === "equity" && !gap && (
             <div className="field"><label htmlFor="slip">Slippage per side (basis points)</label><input id="slip" type="number" min="0" max="100" step="0.5" value={f.slippage_bp} onChange={set("slippage_bp")} />
               <span className="hint">5 bp = 0.05%, charged when buying and again when selling.</span></div>
           )}
@@ -141,7 +148,13 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
                 <option value="strict">Strict crypto rule: 31.2% flat VDA tax (worst case)</option>
               </select>
               <span className="hint">Crypto perpetual futures treated as business income under Sec 43(5) allows continuous compounding.</span></div>
-          </>) : monthly ? (
+          </>) : gap ? (
+            <div className="field"><label htmlFor="exposure">Size (x the account)</label>
+              <input id="exposure" type="number" min={strategy.exposure_min} max={strategy.exposure_max} step="0.5" value={f.exposure} onChange={set("exposure")} />
+              <span className="hint">How much stock each morning buys, as a multiple of your money (Upstox intraday allows up to 5x), split across that
+                morning's buys. The paper account uses {strategy.exposure}x. Tested 2022-26: 1x worst fall -8%, 2x -15%, 3x -22%, 5x -35%.</span>
+              {+f.exposure > 3 && <span className="warn" role="alert">Above 3x a bad results day hurts a lot: at 5x the worst fall was -35%.</span>}</div>
+          ) : monthly ? (
             <div className="field"><label htmlFor="exposure">Exposure (x the account)</label>
               <input id="exposure" type="number" min={strategy.exposure_min} max={strategy.exposure_max} step="0.25" value={f.exposure} onChange={set("exposure")} />
               <span className="hint">Total value of contracts held, as a multiple of your money: {strategy.exposure_min}x to {strategy.exposure_max}x (the most Upstox margin allows;
@@ -164,7 +177,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
           </>)}
         </div>
         <p className="fees-box">
-          {"Every trade is charged the full real costs, and fees cannot be switched off. Commodity (MCX): brokerage, CTT, stamp duty, exchange charges, GST and a half-spread on every trade, real month-end MCX prices including the monthly contract-switch cost; whole lots only. Crypto (Delta Exchange India perpetual futures): taker fee 0.05% + 18% GST + slippage on market orders, maker fee 0.02% + GST on limit take-profits, real funding; stops that gap are filled at the next price, not at the stop."}
+          {"Every trade is charged the full real costs, and fees cannot be switched off. Commodity (MCX): brokerage, CTT, stamp duty, exchange charges, GST and a half-spread on every trade, real month-end MCX prices including the monthly contract-switch cost; whole lots only. Crypto (Delta Exchange India perpetual futures): taker fee 0.05% + 18% GST + slippage on market orders, maker fee 0.02% + GST on limit take-profits, real funding; stops that gap are filled at the next price, not at the stop. Equity (NSE intraday): Upstox Rs30 per order, STT 0.025% on the sale, exchange, SEBI and stamp charges, GST, plus 0.1% slippage each way."}
         </p>
       </Panel>
 

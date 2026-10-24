@@ -1,0 +1,13 @@
+[Unit]
+Description=Results-gap schedule (IST, Mon-Fri): 08:50 calendar, 09:30:05 buy, 15:20:05 sell, 15:26:05 sell retry
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 08:50:00 Asia/Kolkata
+OnCalendar=Mon..Fri *-*-* 09:30:05 Asia/Kolkata
+OnCalendar=Mon..Fri *-*-* 15:20:05 Asia/Kolkata
+OnCalendar=Mon..Fri *-*-* 15:26:05 Asia/Kolkata
+AccuracySec=1s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

@@ -70,7 +70,7 @@ export default function ReplayView({ result, title, blurb, params, live = false,
       <div className="replay-grid">
         <div className="replay-main">
           <div id="price-chart"><PriceChartPanel result={result} at={player.cur} focus={focus} onSelect={select} controls={!live && <PlayerControls player={{ ...player, count }} idp="fs-" />} /></div>
-          <Panel title={`Account value (dashed line: ${result.benchmark_label ?? `buying every ${unitNoun(result)} and holding`})`}><EquityLine result={result} upto={player.cur} start={start} /></Panel>
+          <Panel title={result.benchmark ? `Account value (dashed line: ${result.benchmark_label ?? `buying every ${unitNoun(result)} and holding`})` : "Account value"}><EquityLine result={result} upto={player.cur} start={start} /></Panel>
           <Panel title="Drop from the highest account value"><DrawdownChart result={result} upto={player.cur} /></Panel>
         </div>
         <aside className="replay-side">
