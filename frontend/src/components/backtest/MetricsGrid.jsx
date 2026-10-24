@@ -14,7 +14,7 @@ export function moneyFlow(m) {
     ["Profit from price moves (before fees)", <span className={tone(m.gross_profit)}>{signed(m.gross_profit)}</span>],
     ["Fees + funding paid", <span className="down">{signed(-fees)}</span>],
     ...(slip > 0.5 ? [["Slippage", <span className="down">{signed(-slip)}</span>]] : []),
-    ...(tax > 0.5 ? [["Before tax", inr(pretax)], ["Income tax", <span className="down">{signed(-tax)}</span>]] : []),
+    ...(tax > 0.5 ? [["Your money before income tax", inr(pretax)], ["Income tax", <span className="down">{signed(-tax)}</span>]] : []),
     ["You keep", <b>{inr(m.final_equity)}</b>],
   ];
 }
