@@ -309,6 +309,11 @@ class TradingDB:
             ).fetchall()
             return [dict(r) for r in rows]
 
+    def get_position_ids(self, account_id: str = "DRYRUN_ACCOUNT") -> set[str]:
+        """Every position id the account has, open or closed."""
+        with self._get_conn() as conn:
+            return {r[0] for r in conn.execute("SELECT position_id FROM positions WHERE account_id = ?", (account_id,))}
+
     def close_position(self, position_id: str, exit_price: float,
                        exit_reason: str, gross_pnl: float,
                        net_pnl: float, total_fees: float) -> None:

@@ -13,7 +13,7 @@ trading runs now: crypto (`dip_reversal`, own account CRYPTO_DIP_REVERSAL) and c
 Usage Examples:
     # 1. Report / reset the paper-trading database
     python3 cli.py report
-    python3 cli.py reset-db --capital 100000
+    python3 cli.py reset-db --account MCX_TREND_CARRY --capital 250000   # wipes EVERY account (backup kept first)
 
     # 4. New strategy from a template
     python3 cli.py new-strategy --market currency --timeframe 15min --name my_idea
@@ -142,20 +142,20 @@ def main():
     # Report Subcommand
     p_rep = subparsers.add_parser("report", help="View SQLite PnL & trade performance dashboard")
     p_rep.add_argument("--db", default=None, help="SQLite DB path")
-    p_rep.add_argument("--account", default="DRYRUN_ACCOUNT", help="Account ID")
+    p_rep.add_argument("--account", default="CRYPTO_DIP_REVERSAL", help="Account ID (CRYPTO_DIP_REVERSAL or MCX_TREND_CARRY)")
     p_rep.set_defaults(func=cmd_report)
 
     # Reset DB Subcommand
     p_rst = subparsers.add_parser("reset-db", help="Reset paper trading database")
     p_rst.add_argument("--db", default=None, help="SQLite DB path")
-    p_rst.add_argument("--account", default="DRYRUN_ACCOUNT", help="Account ID")
+    p_rst.add_argument("--account", required=True, help="Account ID to create after the reset (the reset itself wipes EVERY account in the DB)")
     p_rst.add_argument("--capital", type=float, default=float(_env("TRADING_CAPITAL", "100000.0")), help="Initial capital in INR")
     p_rst.add_argument("--risk-pct", type=float, default=float(_env("DRYRUN_RISK_PCT", "5.0")), help="Risk %% per trade")
     p_rst.add_argument("--leverage", type=float, default=float(_env("INTRADAY_LEVERAGE", "4.0")), help="Margin leverage")
     p_rst.set_defaults(func=cmd_reset_db)
 
     p_st = subparsers.add_parser("status", help="One-screen health check: daemon, heartbeat, P&L, open positions, token, last backup")
-    p_st.add_argument("--account", default="DRYRUN_ACCOUNT", help="Account ID")
+    p_st.add_argument("--account", default="CRYPTO_DIP_REVERSAL", help="Account ID (CRYPTO_DIP_REVERSAL or MCX_TREND_CARRY)")
     p_st.set_defaults(func=cmd_status)
 
     p_rs = subparsers.add_parser("restore-db", help="Restore the paper-trading DB from a backup (daemon must be stopped)")

@@ -22,7 +22,7 @@ def _service_state(name: str = "hft-dryrun.service") -> str:
         return "unknown"
 
 
-def collect(account: str = "DRYRUN_ACCOUNT", db_path=None, now: datetime | None = None) -> dict:
+def collect(account: str = "CRYPTO_DIP_REVERSAL", db_path=None, now: datetime | None = None) -> dict:
     now = now or datetime.now(IST)
     db = TradingDB(db_path)
     acct = db.get_account(account) or {}
@@ -76,5 +76,5 @@ def render(s: dict) -> str:
     return "\n".join(out)
 
 
-def main(account: str = "DRYRUN_ACCOUNT") -> None:
+def main(account: str = "CRYPTO_DIP_REVERSAL") -> None:
     print(render(collect(account)))

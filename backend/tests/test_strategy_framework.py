@@ -1,0 +1,365 @@
+"""The strategy framework: discovery, selection, and a toy overnight/delivery strategy driven end to end
+through BOTH runners. If adding a strategy is really "write one class", these are the behaviours a new
+strategy relies on without writing any of it itself."""
+import os
+import sqlite3
+import tempfile
+import unittest
+from contextlib import ExitStack, contextmanager
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+from core import registry
+from core.strategy import EntryContext, ExitDecision, Signal, Strategy
+
+# Pinned runner settings, so these tests never read the operator's .env.
+ENV = {
+    "USE_EQUITY_REGIME_FILTER": "false",
+    "ENABLE_MEAN_REVERSION": "false", "DRYRUN_INCLUDE_EQUITY": "true",
+    "ENABLE_CURRENCY_TRADING": "true", "ENABLE_EQUITY_TRADING": "true",
+    "CURRENCY_RISK_PCT": "4.0", "CURRENCY_LEVERAGE": "5.0",
+    "EQUITY_RISK_PCT": "4.0", "EQUITY_LEVERAGE": "5.0",
+    "MAX_PORTFOLIO_HEAT_PCT": "12.0", "MAX_DAILY_LOSS_PCT": "5.0",
+    "MAX_MARKET_DAILY_LOSS_PCT": "3.0", "MARKET_COOLDOWN_MINUTES": "60", "MAX_MARGIN_UTILIZATION_PCT": "1000.0",
+    "MAX_MARKET_MARGIN_UTILIZATION_PCT": "1000.0", "MAX_POSITIONS_PER_SECTOR": "1", "MARGIN_VERIFY": "off",
+    "EQUITY_PULLBACK_FRAC": "0", "CURRENCY_PULLBACK_FRAC": "0",
+    "LIVE_BAR_COMPLETE_LAG_S": "0", "CURRENCY_STRATEGIES": "", "EQUITY_STRATEGIES": "",
+}
+
+IST = timezone(timedelta(hours=5, minutes=30))
+
+
+class ToySwing(Strategy):
+    """Buys with half the account, holds overnight, sells at +2% or the -2% stop. Delivery, long only, 1x."""
+    name, market = "toy_swing", "equity"
+    intraday, product = False, "D"
+    uses_leverage, allow_short = False, False
+    id_prefix, max_positions = "TOY", 1
+    direction = "long"
+
+    def entry(self, ctx):
+        if not ctx.candles:
+            return None
+        px = float(ctx.candles[-1]["close"])
+        d = 1 if self.direction == "long" else -1
+        return Signal(symbol=ctx.symbol, direction=self.direction, entry_price=px, stop_loss=px * (1 - 0.02 * d),
+                      qty=int(ctx.capital * 0.5 / px), stop_dist=px * 0.02, instrument_key=ctx.instrument_key,
+                      exit_state={"target": px * 1.02}, target_price=px * 1.02, breakeven_price=px * 1.02,
+                      alert_levels={"tp": px * 1.02}, price_levels=("target",))
+
+    def manage(self, pos, ctx):
+        px = float(ctx.candles[-1]["close"])
+        if px >= pos["target"]:
+            return ExitDecision(px, "target")
+        if px <= pos["current_stop"]:
+            return ExitDecision(pos["current_stop"], "stop")
+        return None
+
+    def costs(self, symbol, direction, entry, exit_price, qty):
+        gross = (exit_price - entry) * qty
+        return {"gross": gross, "total": 10.0, "net": gross - 10.0, "brokerage": 10.0}
+
+
+class ToyShort(ToySwing):
+    name, direction = "toy_short", "short"
+
+
+_REAL_STRATEGIES = dict(registry.discover())       # captured once, before any test patches registry.discover
+
+
+def _table(*extra):
+    real = dict(_REAL_STRATEGIES)
+    for s in extra:
+        real[(s.market, s.name)] = s
+    return real
+
+
+class TestRegistry(unittest.TestCase):
+    def test_discovery_needs_no_list_and_only_accepts_the_two_markets(self):
+        found = registry.discover()                    # walks every markets/<market>/strategies folder; a broken strategy file would raise here
+        self.assertEqual(registry.MARKETS, ("currency", "equity"))                  # MCX commodity was removed 2026-10-12
+        self.assertTrue(all(m in registry.MARKETS for m, _ in found))
+
+    def test_new_strategies_stay_off_until_named_in_env(self):
+        with patch.object(registry, "discover", lambda: _table(ToySwing())), patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("EQUITY_STRATEGIES", None)
+            self.assertEqual([s.name for s in registry.active("equity")], [])            # nothing runs by default
+            with patch.dict(os.environ, {"EQUITY_STRATEGIES": "toy_swing"}):
+                self.assertEqual([s.name for s in registry.active("equity")], ["toy_swing"])
+
+    def test_an_unknown_name_in_env_fails_loudly(self):
+        with patch.dict(os.environ, {"EQUITY_STRATEGIES": "nonsense"}), self.assertRaises(KeyError):
+            registry.active("equity")
+
+    def test_a_positions_own_strategy_is_found_even_if_it_was_switched_off(self):
+        with patch.object(registry, "discover", lambda: _table(ToySwing())):
+            self.assertEqual(registry.get("equity", "toy_swing").name, "toy_swing")
+
+
+@contextmanager
+def _dry_runner(*strategies, symbols=("TATASTEEL",), db_path=None, clock=None, candles=None):
+    from engine import live_dryrun
+    from engine.database import TradingDB
+    sim = clock if clock is not None else {"now": datetime(2026, 9, 10, 11, 0, tzinfo=IST)}
+    bars = candles if candles is not None else {}
+    alerts = []
+
+    class SimDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return sim["now"] if tz is None else sim["now"].astimezone(tz)
+
+    with ExitStack() as st:
+        st.enter_context(patch.object(registry, "discover", lambda: _table(*strategies)))
+        for k, v in {**ENV, "EQUITY_STRATEGIES": ",".join(s.name for s in strategies)}.items():
+            st.enter_context(patch.dict(os.environ, {k: v}))
+        st.enter_context(patch.object(live_dryrun, "datetime", SimDatetime))
+        st.enter_context(patch.object(live_dryrun, "_fetch_candles", lambda b, s, t: list(bars.get(s, []))))
+        st.enter_context(patch.object(live_dryrun.DryRunner, "_maybe_sample_spread", lambda self, sym, now: None))
+        st.enter_context(patch("core.slippage._resolve_csv", lambda: Path(tempfile.gettempdir()) / "no_spreads_x.csv"))
+        st.enter_context(patch.object(live_dryrun.telegram, "send", lambda *a, **k: None))
+        st.enter_context(patch.object(live_dryrun.telegram, "alert_exit", lambda *a, **k: None))
+        st.enter_context(patch.object(live_dryrun.telegram, "alert_entry", lambda sig, cap: alerts.append(sig)))
+        path = db_path or str(Path(tempfile.mkdtemp()) / "fw.db")
+
+        def make():
+            return live_dryrun.DryRunner(broker=MagicMock(), db=TradingDB(path), symbols=list(symbols), capital=100000.0,
+                                         risk_pct=4.0, leverage=5.0, account_id="FW")
+        yield make, sim, bars, alerts, path
+
+
+def _bar(price, ts="2026-09-10T11:00:00+05:30"):
+    return {"timestamp": ts, "open": price, "high": price * 1.001, "low": price * 0.999, "close": price, "volume": 1000}
+
+
+def _rows(path, sql):
+    con = sqlite3.connect(path); con.row_factory = sqlite3.Row
+    try:
+        return [dict(r) for r in con.execute(sql)]
+    finally:
+        con.close()
+
+
+class TestOvernightStrategyInDryRunner(unittest.TestCase):
+    def test_entry_is_tagged_sized_at_1x_and_persisted_with_its_state(self):
+        with _dry_runner(ToySwing()) as (make, sim, bars, alerts, path):
+            bars["TATASTEEL"] = [_bar(200.0)]
+            runner = make()
+            signals = runner.scan()
+            self.assertEqual(len(signals), 1)
+            pos = runner.positions["TATASTEEL"]
+            self.assertEqual(pos["strategy"], "toy_swing")
+            self.assertEqual(pos["leverage"], 1.0)                              # uses_leverage = False
+            self.assertAlmostEqual(pos["margin_used"], pos["qty"] * 200.0, places=1)   # full notional, no leverage
+            row = _rows(path, "SELECT strategy, state FROM positions")[0]
+            self.assertEqual(row["strategy"], "toy_swing")
+            self.assertIn('"target"', row["state"])
+            self.assertEqual(signals[0]["strategy"], "toy_swing")      # what the alert is built from
+
+
+    def test_it_exits_by_its_own_rule_with_its_own_costs_and_is_recorded_under_its_name(self):
+        with _dry_runner(ToySwing()) as (make, sim, bars, alerts, path):
+            bars["TATASTEEL"] = [_bar(200.0)]
+            runner = make()
+            runner.scan()
+            sim["now"] = datetime(2026, 9, 11, 11, 5, tzinfo=IST)                # the next day
+            bars["TATASTEEL"] = [_bar(205.0)]
+            runner.scan()
+            self.assertNotIn("TATASTEEL", runner.positions)
+            trade = _rows(path, "SELECT strategy, exit_reason, total_friction FROM trades")[0]
+            self.assertEqual((trade["strategy"], trade["exit_reason"], trade["total_friction"]), ("toy_swing", "target", 10.0))
+
+    def test_the_runner_records_the_entry_bar_and_it_survives_a_restart(self):
+        # core/exits._side needs this to ignore prices from before the entry (see tests/test_exit_entry_bar.py)
+        with _dry_runner(ToySwing()) as (make, sim, bars, alerts, path):
+            bars["TATASTEEL"] = [_bar(200.0, ts="2026-09-10T10:55:00+05:30"), _bar(201.0, ts="2026-09-10T11:00:00+05:30")]
+            runner = make()
+            runner.scan()
+            self.assertEqual(runner.positions["TATASTEEL"]["entry_bar_ts"], "2026-09-10T11:00:00+05:30")
+            self.assertIn("entry_bar_ts", _rows(path, "SELECT state FROM positions")[0]["state"])
+            self.assertEqual(make().positions["TATASTEEL"]["entry_bar_ts"], "2026-09-10T11:00:00+05:30")
+
+    def test_after_max_daily_losses_the_strategy_stops_on_that_symbol_for_the_day(self):
+        capped = type("CappedSwing", (ToySwing,), {"name": "capped", "max_daily_losses": 2})()
+        with _dry_runner(capped) as (make, sim, bars, alerts, path):
+            bars["TATASTEEL"] = [_bar(200.0)]
+            runner = make()
+            with patch.object(runner, "_losses_today", return_value=2):
+                self.assertEqual(runner.scan(), [])
+                self.assertEqual(runner.positions, {})
+            with patch.object(runner, "_losses_today", return_value=1):
+                runner.scan()
+                self.assertIn("TATASTEEL", runner.positions)
+
+    def test_losses_today_are_counted_from_the_trades_table(self):
+        with _dry_runner(ToySwing()) as (make, sim, bars, alerts, path):
+            runner = make()
+            today = [{"symbol": "TATASTEEL", "strategy": "toy_swing", "net_pnl": -10.0}, {"symbol": "TATASTEEL", "strategy": "toy_swing", "net_pnl": 0.0},
+                     {"symbol": "TATASTEEL", "strategy": "toy_swing", "net_pnl": 25.0}, {"symbol": "SBIN", "strategy": "toy_swing", "net_pnl": -5.0},
+                     {"symbol": "TATASTEEL", "strategy": "other", "net_pnl": -5.0}]
+            with patch.object(runner.db, "get_trades_for_date", return_value=today):
+                self.assertEqual(runner._losses_today("toy_swing", "TATASTEEL", sim["now"]), 2)
+
+    def test_a_long_only_strategy_can_never_open_a_short(self):
+        with _dry_runner(ToyShort()) as (make, sim, bars, alerts, path):
+            bars["TATASTEEL"] = [_bar(200.0)]
+            runner = make()
+            self.assertEqual(runner.scan(), [])
+            self.assertEqual(runner.positions, {})
+
+    def test_max_positions_caps_that_strategy_only(self):
+        with _dry_runner(ToySwing(), symbols=("TATASTEEL", "SBIN")) as (make, sim, bars, alerts, path):
+            bars["TATASTEEL"], bars["SBIN"] = [_bar(200.0)], [_bar(300.0)]
+            runner = make()
+            runner.scan()
+            self.assertEqual(sorted(runner.positions), ["TATASTEEL"])             # max_positions = 1
+
+    def test_only_one_position_per_symbol_across_strategies(self):
+        with _dry_runner(ToySwing(), symbols=("TATASTEEL",)) as (make, sim, bars, alerts, path):
+            bars["TATASTEEL"] = [_bar(200.0)]
+            runner = make()
+            runner.strategies["equity"] = [ToySwing(), type("ToySwing2", (ToySwing,), {"name": "toy_swing2"})()]
+            runner.scan()
+            self.assertEqual(len(runner.positions), 1)
+            self.assertEqual(runner.positions["TATASTEEL"]["strategy"], "toy_swing")
+
+
+class TestOvernightStrategyInLiveTrader(unittest.TestCase):
+    def _trader(self, **broker_kw):
+        from tests.live_scenarios import FakeBroker, _trader
+        broker = FakeBroker(**broker_kw)
+        return broker, _trader(broker, str(Path(tempfile.mkdtemp()) / "l.db"))
+
+    def _signal(self):
+        return ToySwing().entry(EntryContext(symbol="TATASTEEL", candles=[_bar(200.0)], now=datetime.now(IST), instrument_key="IK|T",
+                                             capital=100000.0, risk_pct=4.0, leverage=1.0, direction_filter="both"))
+
+
+
+
+
+class TestScaffold(unittest.TestCase):
+    def test_generated_strategy_loads_is_valid_and_never_trades(self):
+        import importlib.util
+        from core import scaffold
+        root = Path(tempfile.mkdtemp())
+        path = scaffold.create("equity", "swing_trend", root=root)
+        spec = importlib.util.spec_from_file_location("generated_strategy", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        strat = module.STRATEGY
+        self.assertIsInstance(strat, Strategy)
+        self.assertEqual((strat.market, strat.name), ("equity", "swing_trend"))
+        ctx = EntryContext(symbol="X", candles=[_bar(100.0)], now=datetime.now(IST), instrument_key="K", capital=1e5,
+                           risk_pct=4.0, leverage=5.0, direction_filter="both")
+        self.assertIsNone(strat.entry(ctx))                     # inert until the author writes entry()
+        self.assertTrue((root / "equity" / "strategies" / "tf_5min" / "swing_trend" / "__init__.py").exists())
+
+    def test_strategies_of_one_market_and_timeframe_sit_side_by_side_by_timeframe(self):
+        from core import registry, scaffold
+        root = Path(tempfile.mkdtemp())
+        a = scaffold.create("currency", "carry", root=root, timeframe="daily")
+        b = scaffold.create("currency", "trend", root=root, timeframe="daily")
+        c = scaffold.create("currency", "fade", root=root, timeframe="15min")
+        self.assertEqual(a.parent.parent, b.parent.parent)                     # two daily strategies in one tf_daily folder
+        self.assertEqual(a.parent.parent.name, "tf_daily")
+        self.assertEqual(c.parent.parent.name, "tf_15min")
+        self.assertIn('timeframe = ("days", 1)', a.read_text())
+        self.assertIn("lookback_days = 250", a.read_text())
+        with self.assertRaises(ValueError):
+            scaffold.create("currency", "x", root=root, timeframe="3min")
+
+    def test_every_strategy_lives_in_the_folder_of_its_signal_timeframe(self):
+        from core import registry
+        for (market, name), strat in registry.discover().items():
+            parts = type(strat).__module__.split(".")
+            self.assertEqual(parts[:3], ["markets", market, "strategies"], type(strat).__module__)
+            self.assertEqual(parts[3], registry.timeframe_folder(strat), f"{market}/{name} is in {parts[3]}")
+
+    def test_it_refuses_bad_names_unknown_markets_and_overwrites(self):
+        from core import scaffold
+        root = Path(tempfile.mkdtemp())
+        scaffold.create("currency", "carry", root=root)
+        with self.assertRaises(FileExistsError):
+            scaffold.create("currency", "carry", root=root)
+        for market, name in [("equity", "Bad Name"), ("equity", "1abc"), ("futures", "ok"), ("commodity", "ok")]:
+            with self.assertRaises(ValueError):
+                scaffold.create(market, name, root=root)
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+class TestPullbackEntryInDryRunner(unittest.TestCase):
+    """core/entry_pullback wired into the runner: off by default, and when on a signal rests as a limit and opens only on a pullback, at the limit price."""
+
+    def _env(self, on):
+        env = {"EQUITY_PULLBACK_FRAC": "0.25", "EQUITY_PULLBACK_THROUGH": "0", "EQUITY_PULLBACK_BARS": "3"} if on else {}
+        return patch.dict(os.environ, env)
+
+    def test_off_by_default_enters_at_the_signal(self):
+        with patch.dict(os.environ, {"EQUITY_PULLBACK_FRAC": "0"}), _dry_runner(ToySwing()) as (make, sim, bars, alerts, path):
+            bars["TATASTEEL"] = [_bar(200.0)]
+            runner = make()
+            self.assertEqual(len(runner.scan()), 1)
+            self.assertEqual(runner.positions["TATASTEEL"]["entry_price"], 200.0)
+
+    def test_signal_rests_then_fills_on_the_pullback_and_the_levels_move_with_it(self):
+        with _dry_runner(ToySwing()) as (make, sim, bars, alerts, path), self._env(True):      # the runner fixture pins pullback off; switch it on after it
+            bars["TATASTEEL"] = [_bar(200.0, "2026-09-10T10:55:00+05:30")]
+            runner = make()
+            self.assertEqual(runner.scan(), [])                                       # signal -> resting limit, no position
+            self.assertNotIn("TATASTEEL", runner.positions)
+            self.assertIn("TATASTEEL", runner.pending_entries)
+            limit = 200.0 - 0.25 * 200.0 * 0.02                                        # 0.25 of the 4.0 stop distance = 199.0
+            sim["now"] = datetime(2026, 9, 10, 11, 2, tzinfo=IST)
+            bars["TATASTEEL"] = [_bar(200.0, "2026-09-10T10:55:00+05:30"), {**_bar(200.0, "2026-09-10T11:00:00+05:30"), "low": 199.5, "high": 200.4}]
+            self.assertEqual(runner.scan(), [])                                       # not pulled back enough yet
+            sim["now"] = datetime(2026, 9, 10, 11, 7, tzinfo=IST)
+            bars["TATASTEEL"] = [_bar(200.0, "2026-09-10T10:55:00+05:30"), {**_bar(200.0, "2026-09-10T11:00:00+05:30"), "low": 199.5, "high": 200.4},
+                                 {**_bar(199.4, "2026-09-10T11:05:00+05:30"), "low": 198.9, "high": 199.8}]
+            self.assertEqual(len(runner.scan()), 1)                                    # filled
+            pos = runner.positions["TATASTEEL"]
+            self.assertAlmostEqual(pos["entry_price"], limit, places=2)
+            self.assertAlmostEqual(pos["current_stop"], limit - 4.0, places=2)         # stop distance unchanged, anchored to the fill
+            self.assertAlmostEqual(pos["target"], 204.0 - 1.0, places=2)               # the strategy's own price level moved by the same 1.0
+            self.assertNotIn("TATASTEEL", runner.pending_entries)
+
+    def test_a_bar_through_the_limit_and_the_stop_is_a_filled_then_stopped_loss(self):
+        with _dry_runner(ToySwing()) as (make, sim, bars, alerts, path), self._env(True):
+            bars["TATASTEEL"] = [_bar(200.0, "2026-09-10T10:55:00+05:30")]
+            runner = make()
+            self.assertEqual(runner.scan(), [])                                       # signal -> resting limit 199.0, stop level 195.0
+            sim["now"] = datetime(2026, 9, 10, 11, 2, tzinfo=IST)
+            bars["TATASTEEL"] = [_bar(200.0, "2026-09-10T10:55:00+05:30"), {**_bar(195.5, "2026-09-10T11:00:00+05:30"), "low": 194.8, "high": 200.1}]
+            runner.scan()
+            self.assertNotIn("TATASTEEL", runner.positions)                           # price passed 199.0 on its way through 195.0
+            self.assertNotIn("TATASTEEL", runner.pending_entries)
+            trade = runner.trades[-1]
+            self.assertEqual(trade["exit_reason"], "initial_stop")
+            self.assertAlmostEqual(trade["entry_price"], 199.0, places=2)
+            self.assertAlmostEqual(trade["exit_price"], 195.0, places=2)
+            self.assertLess(trade["net_pnl"], 0)
+
+
+class TestGateSkipLoggedOncePerDay(unittest.TestCase):
+    """A signal blocked by a portfolio gate is re-evaluated every scan; its block is logged once a day, not every 30 seconds
+    (2026-10-09: the swing strategy's heat-cap blocks wrote 214 identical lines in one morning)."""
+
+    def test_same_block_logs_once_a_day(self):
+        with _dry_runner(ToySwing()) as (make, sim, bars, alerts, path):
+            bars["TATASTEEL"] = [_bar(200.0)]
+            runner = make()
+            runner.max_portfolio_heat_pct = 0.5                       # ToySwing risks 1% of the account: always over the cap
+            with self.assertLogs("live_dryrun", level="INFO") as cm:
+                runner.scan()
+                sim["now"] = datetime(2026, 9, 10, 11, 1, tzinfo=IST)
+                runner.scan()
+                sim["now"] = datetime(2026, 9, 11, 11, 0, tzinfo=IST)
+                bars["TATASTEEL"] = [_bar(200.0, "2026-09-11T11:00:00+05:30")]
+                runner.scan()
+            skips = [m for m in cm.output if "entry skipped" in m and "heat cap" in m]
+            self.assertEqual(len(skips), 2, cm.output)                # day 1 once, day 2 once
+            self.assertNotIn("TATASTEEL", runner.positions)

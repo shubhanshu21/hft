@@ -52,6 +52,21 @@ def _month_last_day(d) -> pd.Timestamp:
     return (pd.Timestamp(d) + pd.offsets.MonthEnd(0)).normalize()
 
 
+def needs_rebalance(st: dict, month_end: pd.Timestamp, open_pos: list, known_ids: set) -> bool:
+    """True when month_end's rebalance has not been done for THIS account yet.
+
+    2026-10-24: the Rs5L -> Rs2.5L reset (2026-10-21) wiped the positions but left rebalanced_for = September, so the account sat in
+    cash until the next month end. A rebalance now records the position ids it opened; when none is open and none is even in the DB any
+    more, the account was reset and the current signal is bought again. A state from before this fix (no ids) with nothing open counts
+    as reset too; a rebalance that legitimately bought nothing (every pick under one lot) records [] and is not repeated."""
+    if st.get("rebalanced_for") != str(month_end.date()):
+        return True
+    if open_pos:
+        return False
+    opened = st.get("opened")
+    return opened is None or (bool(opened) and not set(opened) & known_ids)
+
+
 def contract_for(signal: str, today, contracts: pd.DataFrame):
     """The mini contract to hold this month: the nearest expiry after this month ends (and more than ROLL_DAYS away)."""
     fam = S.TRADE[signal]
@@ -98,21 +113,22 @@ def run(broker, db, now: datetime, report: bool = True, send=None) -> dict:
         px = ltp.get(contract["instrument_key"])
         if not px:
             lines.append(f"• {S.TRADE[signal]}: no live price, skipped")
-            return
+            return None
         lots = lots if lots is not None else S.lots_for(capital, exposure, weight, px, signal)
         lot_val = px * lot_units(S.TRADE[signal])
         if lots < 1:
             lines.append(f"• {S.TRADE[signal]} (weight {weight:.0%}): one lot is {_inr(lot_val)}, more than its share -- kept in cash")
-            return
+            return None
         pid = f"POS_MCXTC_{now.strftime('%Y%m%d_%H%M%S')}_{contract['tradingsymbol']}"
         state = {"family": S.TRADE[signal], "signal": signal, "weight": round(weight, 4), "expiry": str(contract["expiry"].date()),
                  "lot_units": lot_units(S.TRADE[signal]), "margin_used": round(lots * lot_val * S.MARGIN_PCT[signal], 2), "month_end": str(month_end.date())}
         db.open_position(pid, contract["tradingsymbol"], "long", lots, px, 0.0, 0.0, 0.0, account_id=ACCOUNT,
                          instrument_key=contract["instrument_key"], strategy=NAME, state=json.dumps(state))
         lines.append(f"• BOUGHT {contract['tradingsymbol']} {lots} lot(s) @ {px:,.2f} = {_inr(lots * lot_val)} (weight {weight:.0%})")
+        return pid
 
     did = None
-    if st.get("rebalanced_for") != str(month_end.date()):
+    if needs_rebalance(st, month_end, open_pos, db.get_position_ids(ACCOUNT)):
         R, C = S.panel(table, ends)
         w = S.targets(R, C, month_end)
         if not w:
@@ -120,13 +136,16 @@ def run(broker, db, now: datetime, report: bool = True, send=None) -> dict:
         else:
             sold_ok = all(close(p, "monthly_rebalance") for p in open_pos)
             if sold_ok:
+                opened = []
                 for sig, wt in sorted(w.items(), key=lambda x: -x[1]):
                     c = contract_for(sig, now.date(), contracts)
                     if c is None:
                         lines.append(f"• {S.TRADE[sig]}: no contract alive past this month, skipped")
                         continue
-                    buy(sig, wt, c)
-                st["rebalanced_for"] = str(month_end.date())
+                    pid = buy(sig, wt, c)
+                    if pid:
+                        opened.append(pid)
+                st["rebalanced_for"], st["opened"] = str(month_end.date()), opened
                 did = "rebalance"
     else:
         for p in open_pos:                                           # roll a contract about to expire into the next one, same lots
