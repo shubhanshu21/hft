@@ -101,6 +101,18 @@ class TestEngineRun(unittest.TestCase):
             E.process_entries(self.db, state, {"DOT": df}, {"usdtinr": 90.0, "prices": {"DOT": 100.0}}, [], None)
         self.assertEqual(state["open_positions"]["DOT"]["entry_bar_t"], int(df["t"].iloc[-1]) + BAR)
 
+    def test_entry_risks_six_percent_of_the_account(self):
+        # 2026-10-24: risk per trade cut from 8% to 6% (8% added ~3-4% for a -88% worst fall vs -75%)
+        self.assertEqual(S.RISK_PCT, 0.06)
+        state = E.load_state()
+        df = candles([FLAT] * 60)
+        with mock.patch.object(S, "entry_signal", side_effect=lambda d: pd.Series([False] * (len(d) - 1) + [True])):
+            E.process_entries(self.db, state, {"DOT": df}, {"usdtinr": 90.0, "prices": {"DOT": 100.0}}, [], None)
+        p = state["open_positions"]["DOT"]
+        want_usd = state["trading_capital"] * 0.06 / S.STOPLOSS / 90.0          # risk 6% of the account / the 7% stop, in USD
+        self.assertLessEqual(p["pos_usd"], want_usd)
+        self.assertGreater(p["pos_usd"], want_usd - E.CONTRACT_VALUE["DOT"] * 100.0)   # whole DOT contracts, rounded down
+
     def test_exit_is_booked_at_the_live_price_and_recorded(self):
         state = E.load_state()
         state["open_positions"]["DOT"] = position()

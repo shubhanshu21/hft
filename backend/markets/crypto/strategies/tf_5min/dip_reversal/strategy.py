@@ -66,7 +66,10 @@ COINS = ("BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "AVAX", "DOT", "LTC",
 # genuine non-edge (not a hindsight pick: it failed before it was ever removed, on data not used to tune anything). Removing it
 # improved both windows: dev Rs17.45L -> Rs19.79L, test Rs2.44L -> Rs2.92L, worst fall -76%/-47% -> -75%/-45%.
 
-RISK_PCT = 0.08                                   # 2026-10-22, user's final choice: back to 8% with the crowd rule OFF (CROWD_K=None).
+RISK_PCT = 0.06                                   # 2026-10-24, user's choice after the fair re-test below: 6%, not 8%. 8% adds only
+                                                   # ~3-4% (2022-26 Rs49.6L vs Rs46.4L pretax) for a far deeper fall (-88% vs -75%), and
+                                                   # LOST money in 2024 alone (Rs1L -> Rs0.83L; 6% +27%). 10% is worse everywhere (-95%).
+                                                   # History: 2026-10-22 the user chose 8% with the crowd rule OFF (CROWD_K=None).
                                                    # 2026-10-24 CORRECTION: every figure below (and in markets/README.md) came from a size
                                                    # scale that used each day's OWN close (a same-day peek: it shrank trades on crash days
                                                    # before they happened). Fair re-test, business tax, Rs1L, dev 2022-24 / test 2025-26:
