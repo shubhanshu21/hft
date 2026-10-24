@@ -1,0 +1,10 @@
+[Unit]
+Description=Check the paper engines every 15 minutes (engine/engine_monitor.py)
+
+[Timer]
+OnCalendar=*:07/15
+AccuracySec=10s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

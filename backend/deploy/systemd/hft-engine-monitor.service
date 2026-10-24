@@ -1,0 +1,8 @@
+[Unit]
+Description=Telegram alert if a paper engine (crypto / MCX) stops running or the Upstox login expires
+
+[Service]
+Type=oneshot
+WorkingDirectory=/var/www/html/hft/backend
+ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m engine.engine_monitor
+TimeoutStartSec=5min
