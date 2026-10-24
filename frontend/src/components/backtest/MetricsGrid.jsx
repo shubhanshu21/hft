@@ -11,7 +11,7 @@ export function moneyFlow(m) {
   const tax = pretax - m.final_equity;
   return [
     ["You started with", inr(m.start_capital)],
-    ["Trades made (before costs)", <span className={tone(m.gross_profit)}>{signed(m.gross_profit)}</span>],
+    ["Profit from price moves (before fees)", <span className={tone(m.gross_profit)}>{signed(m.gross_profit)}</span>],
     ["Fees + funding paid", <span className="down">{signed(-fees)}</span>],
     ...(slip > 0.5 ? [["Slippage", <span className="down">{signed(-slip)}</span>]] : []),
     ...(tax > 0.5 ? [["Before tax", inr(pretax)], ["Income tax", <span className="down">{signed(-tax)}</span>]] : []),
