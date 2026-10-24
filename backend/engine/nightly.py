@@ -28,6 +28,8 @@ STEPS = [                            # (name, argv, exit codes that count as suc
     ("research data", [PY, "-m", "engine.research_data", "all", "--max-minutes", "40"], {0}),     # 1-minute stocks/indexes, futures/options OI, NSE participant OI;
                                                                                                 # stops inside STEP_TIMEOUT_S and resumes next night (a 2026-10-09 first backfill was killed at 45 min)
     ("commodity daily series", [PY, "-m", "markets.commodity.daily_series"], {0}),     # daily gold / crude series for research (runs after "mcx data")
+    ("crypto data", [PY, "-m", "markets.crypto.data"], {0}),                    # 5-min candles + funding: crypto dip_reversal's size scale and
+                                                                                # backtests (lost with the calm_coins timer 2026-10-20; re-added 2026-10-24)
     ("db backup", [PY, "-m", "engine.backup_db"], {0}),
     ("db backup verify", [PY, "-m", "engine.backup_db", "--verify"], {0}),      # open the newest backup: a backup nobody has opened is a hope
     ("trade audit", [PY, "-m", "engine.trade_audit"], {0, 1}),          # 1 = flagged trades: alerted by the audit itself
@@ -35,7 +37,7 @@ STEPS = [                            # (name, argv, exit codes that count as suc
 # representative archive files whose newest candle date must not lag (market, file)
 # NSE equity and currency removed 2026-10-21 (user: "remove equity and currency because it does not giving any profits")
 FRESHNESS = [("commodity", "CRUDEOILM_1minute.csv"), ("commodity", "GOLD_1minute.csv"), ("commodity", "SILVER_1minute.csv"),
-             ("commodity", "mcx_futures_daily.csv")]
+             ("commodity", "mcx_futures_daily.csv"), ("crypto", "BTC_5m.csv"), ("crypto", "BTC_funding_daily.csv")]
 IST = ZoneInfo("Asia/Kolkata")
 
 

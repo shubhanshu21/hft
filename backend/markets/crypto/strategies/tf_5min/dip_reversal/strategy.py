@@ -67,6 +67,12 @@ COINS = ("BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "AVAX", "DOT", "LTC",
 # improved both windows: dev Rs17.45L -> Rs19.79L, test Rs2.44L -> Rs2.92L, worst fall -76%/-47% -> -75%/-45%.
 
 RISK_PCT = 0.08                                   # 2026-10-22, user's final choice: back to 8% with the crowd rule OFF (CROWD_K=None).
+                                                   # 2026-10-24 CORRECTION: every figure below (and in markets/README.md) came from a size
+                                                   # scale that used each day's OWN close (a same-day peek: it shrank trades on crash days
+                                                   # before they happened). Fair re-test, business tax, Rs1L, dev 2022-24 / test 2025-26:
+                                                   # 2% Rs2.50L/1.49L (worst -35/-10%), 4% Rs5.06L/2.03L (-58/-20%), 6% Rs7.65L/2.48L
+                                                   # (-75/-32%), 8% Rs7.91L/2.58L (-88/-46%); fixed sizing 8% Rs6.88L/1.99L (-76/-63%).
+                                                   # Vol scaling still beats fixed; 8% adds ~3-4% over 6% for a far deeper fall.
                                                    # Business tax, Rs1L: from 2022 Rs65.2L, from 2023 Rs34.6L; worst fall -75%, 2026-08-22
                                                    # -11.9%. Alternatives tested the same day: K=4/12% (Rs104.5L / Rs37.3L, worst -72%)
                                                    # and K=3/13% (Rs83.7L / Rs27.5L, worst -64%). 8% WITH the crowd rule is worse than
@@ -150,7 +156,9 @@ def market_vol_scale_series() -> pd.Series:
         return pd.Series(dtype=float)
     basket = pd.concat(daily, axis=1).mean(axis=1)
     vol20 = basket.rolling(VOL_LOOKBACK_DAYS).std()
-    return (VOL_TARGET / vol20).clip(VOL_LO, VOL_HI)
+    # shift(1): day D is sized from days up to D-1 only. Before 2026-10-24 day D used its OWN close (the backtest peeked at the rest of
+    # the day; live read the still-forming day).
+    return (VOL_TARGET / vol20).clip(VOL_LO, VOL_HI).shift(1)
 
 
 def current_vol_scale() -> float:

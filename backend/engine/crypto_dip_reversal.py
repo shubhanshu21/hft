@@ -133,8 +133,9 @@ def fetch_live_prices() -> dict:
     return out
 
 
-def fetch_5m_candles(coin: str, limit: int = 100) -> pd.DataFrame:
-    """Finished 5-minute candles from Binance USDT-M futures, with the entry/exit indicators (same math as the backtest module)."""
+def fetch_5m_candles(coin: str, limit: int = 300) -> pd.DataFrame:
+    """Finished 5-minute candles from Binance USDT-M futures, with the entry/exit indicators (same math as the backtest module). 300 = 25h,
+    so a position can be re-checked over its whole 24h life after missed runs (was 100 = ~8h)."""
     r = requests.get("https://fapi.binance.com/fapi/v1/klines", params={"symbol": f"{coin}USDT", "interval": "5m", "limit": limit}, timeout=15)
     r.raise_for_status()
     df = pd.DataFrame(r.json()).iloc[:, :7]
@@ -153,6 +154,37 @@ def fetch_5m_candles(coin: str, limit: int = 100) -> pd.DataFrame:
     return df
 
 
+BAR_MS = S.BAR_MIN * 60 * 1000
+STOP_WHY, TARGET_WHY = f"STOP LOSS ({S.STOPLOSS:.0%})", f"TAKE PROFIT ({S.ROI:.0%})"
+SIGNAL_WHY, TIME_WHY = "EXIT SIGNAL (close > 20-candle mid-band)", "TIME STOP (24h)"
+
+
+def bar_exit(pos: dict, df: pd.DataFrame, live_px: float | None, coin: str) -> tuple:
+    """(exit price, exit fee %, reason, exit bar time) or (None, 0, "", None) -- the backtest's exit rule (strategy.web_backtest), bar by bar.
+
+    Walks EVERY finished candle since the position was last checked (from its entry candle on), so a run that failed or was skipped does
+    not miss a stop or target hit in between. Stop, then target, then the close back above the mid-band (filled at the NEXT candle's
+    open; for the newest candle that open is now, so the live price), then the 24h time stop at the close. On the entry candle itself the
+    target fills at the target price and the mid-band exit is not allowed -- as in the backtest. 2026-10-24: before this the mid-band exit
+    filled at the open of the candle that gave the signal (5 minutes stale), the entry candle counted as already past, and only the newest
+    candle was looked at."""
+    entry_t, done_t = pos["entry_bar_t"], pos.get("last_checked_t", -1)
+    slip = S.TAKER + S.SLIP.get(coin, 0.00015)
+    rows = df[(df["t"] >= entry_t) & (df["t"] > done_t)].reset_index(drop=True)
+    for k, b in rows.iterrows():
+        t, o, h, l, c = int(b["t"]), float(b["open"]), float(b["high"]), float(b["low"]), float(b["close"])
+        if l <= pos["sl_price"]:
+            return min(o, pos["sl_price"]), slip, STOP_WHY, t
+        if h >= pos["tp_price"]:
+            return (max(o, pos["tp_price"]) if t > entry_t else pos["tp_price"]), S.MAKER, TARGET_WHY, t
+        if not pd.isna(b["bb_mid20"]) and c > float(b["bb_mid20"]) and t > entry_t:
+            nxt = float(rows.loc[k + 1, "open"]) if k + 1 < len(rows) else (live_px or c)
+            return nxt, slip, SIGNAL_WHY, t + BAR_MS
+        if t - entry_t >= S.TIME_STOP_BARS * BAR_MS:
+            return c, slip, TIME_WHY, t
+    return None, 0.0, "", None
+
+
 def process_exits(db: TradingDB, state: dict, candles_map: dict, live_info: dict, lines: list, broker: DeltaDemoBroker | None) -> None:
     fx = live_info["usdtinr"]
     for coin, pos in list(state["open_positions"].items()):
@@ -160,9 +192,8 @@ def process_exits(db: TradingDB, state: dict, candles_map: dict, live_info: dict
         if df is None or len(df) < 2:
             continue
         last = df.iloc[-1]
-        o, h, l, c = float(last["open"]), float(last["high"]), float(last["low"]), float(last["close"])
-        entry_bar_t, entry_px, sl_px, tp_px, pos_usd = pos["entry_bar_t"], pos["entry_price"], pos["sl_price"], pos["tp_price"], pos["pos_usd"]
-        px = None; fee_pct = 0.0; why = ""
+        entry_bar_t, entry_px, pos_usd = pos["entry_bar_t"], pos["entry_price"], pos["pos_usd"]
+        px = None; fee_pct = 0.0; why = ""; exit_t = int(last["t"])
 
         # A real position's resting target limit order may already have filled on Delta's own book -- check that FIRST, since it's
         # the actual source of truth for whether the target was hit (not our own candle's high crossing tp_px).
@@ -171,22 +202,17 @@ def process_exits(db: TradingDB, state: dict, candles_map: dict, live_info: dict
             try:
                 tgt = broker.get_order(tgt_id)
                 if tgt.get("state") in ("closed", "filled") and tgt.get("average_fill_price"):
-                    px, fee_pct, why = float(tgt["average_fill_price"]), S.MAKER, "TAKE PROFIT (15%, Delta demo limit order filled)"
+                    px, fee_pct, why = float(tgt["average_fill_price"]), S.MAKER, TARGET_WHY + " (Delta demo limit order filled)"
+                    exit_t = int(last["t"])
             except Exception as e:
                 _log.warning("Delta demo target-order check failed for %s (falling back to the candle check): %s", coin, e)
 
         if px is None:
-            if l <= sl_px:
-                px, fee_pct, why = min(o, sl_px), S.TAKER + S.SLIP.get(coin, 0.00015), "STOP LOSS (7%)"
-            elif h >= tp_px:
-                px, fee_pct, why = max(o, tp_px) if int(last["t"]) > entry_bar_t else tp_px, S.MAKER, "TAKE PROFIT (7%)"
-            elif not pd.isna(last["bb_mid20"]) and c > float(last["bb_mid20"]) and int(last["t"]) > entry_bar_t:
-                px, fee_pct, why = o, S.TAKER + S.SLIP.get(coin, 0.00015), "EXIT SIGNAL (close > 20-candle mid-band)"
-            elif (int(last["t"]) - entry_bar_t) >= S.TIME_STOP_BARS * 5 * 60 * 1000:
-                px, fee_pct, why = c, S.TAKER + S.SLIP.get(coin, 0.00015), "TIME STOP (24h)"
+            px, fee_pct, why, exit_t = bar_exit(pos, df, live_info["prices"].get(coin), coin)
+            pos["last_checked_t"] = int(last["t"])
             if px is None:
                 continue
-            if pos.get("real") and broker is not None and tgt_id and why == "TAKE PROFIT (7%)":
+            if pos.get("real") and broker is not None and tgt_id and why == TARGET_WHY:
                 # our own candle says the target was crossed, but the top-of-function check just found Delta's resting order still
                 # open -- trust the resting order, not a redundant market close on top of it; it'll be picked up once it fills
                 continue
@@ -204,10 +230,10 @@ def process_exits(db: TradingDB, state: dict, candles_map: dict, live_info: dict
                 except Exception as e:
                     _log.warning("Delta demo close failed for %s, using the simulated exit price instead: %s", coin, e)
         gross_usd = (px - entry_px) / entry_px * pos_usd
-        hours = (int(last["t"]) - entry_bar_t) / 3_600_000
+        hours = (exit_t - entry_bar_t) / 3_600_000
         try:
             fr = requests.get("https://fapi.binance.com/fapi/v1/fundingRate", params={"symbol": f"{coin}USDT",
-                              "startTime": entry_bar_t, "endTime": int(last["t"]), "limit": 100}, timeout=15).json()
+                              "startTime": entry_bar_t, "endTime": exit_t, "limit": 100}, timeout=15).json()
             funding_usd = pos_usd * sum(float(x["fundingRate"]) for x in fr)
         except Exception:
             funding_usd = 0.0
@@ -295,7 +321,7 @@ def process_entries(db: TradingDB, state: dict, candles_map: dict, live_info: di
         pos_id = f"POS_DIPREV_{int(last['t'])}_{coin}"
         now_iso = datetime.now(IST).isoformat()
         open_pos[coin] = {"position_id": pos_id, "entry_price": entry_px, "sl_price": sl_px, "tp_price": entry_px * (1 + S.ROI),
-                           "pos_usd": pos_usd, "qty": qty, "entry_bar_t": int(last["t"]), "entry_time": now_iso,
+                           "pos_usd": pos_usd, "qty": qty, "entry_bar_t": int(last["t"]) + BAR_MS, "entry_time": now_iso,
                            "real": real, "contracts": contracts, "target_order_id": target_order_id}
         db.open_position(position_id=pos_id, symbol=coin, direction="long", qty=qty, entry_price=entry_px, current_stop=sl_px,
                           target_price=entry_px * (1 + S.ROI), breakeven_price=entry_px, account_id=ACCOUNT_ID,
