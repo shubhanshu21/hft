@@ -117,3 +117,30 @@ class TestAlerts(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestEngineStatus(Base):
+    def test_crypto_running(self):
+        now = datetime(2026, 10, 26, 10, 2, 30, tzinfo=IST)
+        self.crypto_saved(now - timedelta(minutes=2))
+        st = M.engine_status("CRYPTO_DIP_REVERSAL", now, sh=fake_sh(), crypto_state=self.crypto)
+        self.assertTrue(st["ok"])
+        self.assertIn("2 min ago", st["text"])
+        self.assertIn("next at 10:05", st["text"])
+
+    def test_crypto_stale_and_off(self):
+        self.crypto_saved(MON_10 - timedelta(hours=1))
+        self.assertFalse(M.engine_status("CRYPTO_DIP_REVERSAL", MON_10, sh=fake_sh(), crypto_state=self.crypto)["ok"])
+        off = M.engine_status("CRYPTO_DIP_REVERSAL", MON_10, sh=fake_sh(active=("hft-mcx-trend-carry.timer",)), crypto_state=self.crypto)
+        self.assertFalse(off["ok"])
+        self.assertIn("OFF", off["text"])
+
+    def test_mcx_running_shows_next_slot(self):
+        st = M.engine_status("MCX_TREND_CARRY", MON_10, sh=fake_sh(mcx=("success", MON_0910)))
+        self.assertTrue(st["ok"])
+        self.assertIn("next at Mon 23:40", st["text"])
+
+    def test_mcx_missed(self):
+        st = M.engine_status("MCX_TREND_CARRY", MON_10, sh=fake_sh(mcx=("success", FRI_2340)))
+        self.assertFalse(st["ok"])
+        self.assertIn("missed", st["text"])

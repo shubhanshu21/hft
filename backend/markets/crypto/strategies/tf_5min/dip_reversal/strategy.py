@@ -317,7 +317,8 @@ def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None
             events[i0].append({"t": "buy", "side": "long", "sym": x["symbol"], "q": x["qty"], "px": x["entry_price"],
                                 "entry": x["entry_price"], "note": f"BUY {x['symbol']} at {x['entry_price']}"})
         if i1 is not None:
-            events[i1].append({"t": "sell", "side": "long", "sym": x["symbol"], "q": x["qty"], "px": x["exit_price"],
+            hours = round((pd.Timestamp(x["exit_time"]) - pd.Timestamp(x["entry_time"])).total_seconds() / 3600, 1)
+            events[i1].append({"t": "sell", "side": "long", "sym": x["symbol"], "q": x["qty"], "px": x["exit_price"], "hours": hours,
                                 "entry": x["entry_price"], "pnl": x["pnl"], "fees": x["fees"], "slip": 0.0, "why": x["exit_reason"]})
         if i0 is not None:
             for di in range(i0, (i1 if i1 is not None else len(days) - 1) + 1):
@@ -330,4 +331,22 @@ def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None
             for di in range(i0, len(days)):
                 pos_by_day[di].append({"sym": c, "q": q, "e": e, "px": e, "start": i0, "stop": stop})
     return {"metrics": m, "equity": [round(v) for v in s_eq.values], "days": days, "trades": closed,
-            "events": events, "pos": pos_by_day, "bars": bars, "overlays": {}}
+            "events": events, "pos": pos_by_day, "bars": bars, "overlays": {},
+            "benchmark": btc_hold_benchmark(days, capital), "benchmark_label": "holding BTC", "unit": "coin"}
+
+
+def btc_hold_benchmark(days: list[str], capital: float) -> list[float] | None:
+    """The same starting money put into BTC on the first day and simply held (no fees, no leverage): one value per day in `days`, from
+    each day's last 5-minute close. The results page draws it as the dashed comparison line and says whether the strategy beat it."""
+    if not days:
+        return None
+    try:
+        btc = load_5m_data(["BTC"])["BTC"].set_index("date")["close"]
+    except (OSError, KeyError):
+        return None
+    daily = btc.resample("1D").last().ffill()
+    daily.index = daily.index.strftime("%Y-%m-%d")
+    row = daily.reindex(days).ffill().bfill()
+    if row.isna().any() or float(row.iloc[0]) <= 0:
+        return None
+    return [round(capital * float(v) / float(row.iloc[0])) for v in row.values]

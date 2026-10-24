@@ -392,7 +392,12 @@ def paper_summary(account: str = "CRYPTO_DIP_REVERSAL") -> dict:
             acc["business_value"] = round(acc["current_capital"] + open_pnl, 2)
             acc["strict_value"] = round(acc["current_capital"] + open_pnl, 2)
             acc["pretax_value"] = round(acc["current_capital"] + open_pnl, 2)
-    return {"available": True, "account_id": account, "accounts": tabs, "account": acc, "positions": pos, "trades": trades, "equity": snaps,
+    try:                                                          # engine alive? (same checks as the Telegram monitor)
+        from engine.engine_monitor import engine_status
+        engine = engine_status(account)
+    except Exception as e:                                        # a status probe must never break the page
+        engine = {"ok": None, "text": f"engine status unavailable ({type(e).__name__})"}
+    return {"available": True, "account_id": account, "accounts": tabs, "account": acc, "positions": pos, "trades": trades, "equity": snaps, "engine": engine,
             "stats": {"closed": len(trades), "wins": sum(1 for t in trades if (t["net_pnl"] or 0) > 0), "net": round(sum(t["net_pnl"] or 0 for t in trades)),
                       "fees": round(sum(t["total_friction"] or 0 for t in trades))}}
 

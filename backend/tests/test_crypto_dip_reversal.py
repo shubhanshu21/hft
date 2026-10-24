@@ -157,3 +157,16 @@ class TestNightlyKeepsCryptoCurrent(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestBtcBenchmark(unittest.TestCase):
+    def test_benchmark_is_capital_times_btc_growth(self):
+        idx = pd.date_range("2026-03-01", periods=3 * 288, freq="5min")
+        closes = [100.0] * 288 + [110.0] * 288 + [90.0] * 288
+        df = pd.DataFrame({"date": idx, "close": closes})
+        with mock.patch.object(S, "load_5m_data", return_value={"BTC": df}):
+            b = S.btc_hold_benchmark(["2026-03-01", "2026-03-02", "2026-03-03"], 100_000)
+        self.assertEqual(b, [100_000, 110_000, 90_000])
+
+    def test_no_days_no_benchmark(self):
+        self.assertIsNone(S.btc_hold_benchmark([], 100_000))

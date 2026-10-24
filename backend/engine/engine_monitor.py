@@ -159,3 +159,40 @@ def main(argv=None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+def engine_status(account: str, now: datetime | None = None, sh=_systemctl, crypto_state: Path = CRYPTO_STATE) -> dict:
+    """For the paper page (2026-10-24): is this account's engine alive? {"ok": bool, "last": iso|None, "next": iso|None, "text": plain words}."""
+    now = now or datetime.now(IST)
+    if account == "CRYPTO_DIP_REVERSAL":
+        on = unit_active("hft-crypto-dip-reversal.timer", sh)
+        try:
+            last = datetime.fromisoformat(json.loads(crypto_state.read_text())["updated_at"])
+        except (OSError, ValueError, KeyError):
+            last = None
+        nxt = now.replace(second=5, microsecond=0) + timedelta(minutes=5 - now.minute % 5) if on else None
+        fresh = last is not None and (now - last).total_seconds() <= CRYPTO_STALE_MIN * 60
+        ok = on and fresh
+        if not on:
+            text = "Engine is OFF -- no coins are being checked"
+        elif last is None:
+            text = "Engine has not run yet"
+        else:
+            mins = int((now - last).total_seconds() // 60)
+            text = f"{'Running' if fresh else 'NOT RUNNING'} · last check {('just now' if mins < 1 else f'{mins} min ago')} · next at {nxt:%H:%M} IST"
+        return {"ok": ok, "last": last.isoformat() if last else None, "next": nxt.isoformat() if nxt else None, "text": text}
+    if account == "MCX_TREND_CARRY":
+        on = unit_active("hft-mcx-trend-carry.timer", sh)
+        when, result = last_run("hft-mcx-trend-carry.service", sh)
+        slot = last_mcx_slot(now)
+        missed = now - slot > timedelta(minutes=MCX_GRACE_MIN) and (when is None or when < slot)
+        ok = on and not missed and result in ("", "success")
+        nxt = next_mcx_slot(now) if on else None
+        if not on:
+            text = "Engine is OFF -- the monthly rebalance will not happen"
+        elif not ok:
+            text = f"Last run {'was missed' if missed else 'FAILED'} · next at {nxt:%a %H:%M} IST"
+        else:
+            text = f"Running · last check {when:%a %H:%M} IST · next at {nxt:%a %H:%M} IST" if when else f"Running · next at {nxt:%a %H:%M} IST"
+        return {"ok": ok, "last": when.isoformat() if when else None, "next": nxt.isoformat() if nxt else None, "text": text}
+    return {"ok": None, "last": None, "next": None, "text": ""}
