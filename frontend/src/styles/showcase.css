@@ -140,3 +140,8 @@ button.danger-text:hover:not(:disabled){background:var(--loss-bg)}
 @keyframes pulse{50%{opacity:.45}}
 .quick-dates{grid-column:1 / -1}
 .quick-dates .chip{cursor:pointer}
+/* the selected wallet card keeps its gradient on hover (the general button:hover rule turned it white, hiding the white text) */
+.acct-tabs button.on,.acct-tabs button.on:hover:not(:disabled){background:linear-gradient(135deg,#0d2342,#1b56a0);border-color:transparent;color:#fff}
+.acct-tabs button.on:hover:not(:disabled){filter:brightness(1.08)}
+.acct-tabs button:not(.on):hover:not(:disabled){border-color:var(--accent);box-shadow:var(--shadow-lift)}
+.verdict .reset-acct button.linkish:hover:not(:disabled){color:#fff;background:none}
