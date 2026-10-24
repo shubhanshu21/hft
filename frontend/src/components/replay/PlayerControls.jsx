@@ -1,7 +1,7 @@
-export default function PlayerControls({ player, idp = "" }) {
+export default function PlayerControls({ player, idp = "", summary = null, sticky = false }) {
   const { playing, atEnd, toggle, seek, cur, speed, setSpeed, count, nextTrade, stopOnTrade, setStopOnTrade } = player;
   return (
-    <div className="panel ctrl row-flex">
+    <div className={`panel ctrl row-flex${sticky ? " sticky" : ""}`}>
       <button className="main" type="button" onClick={toggle}>{playing ? "Pause" : atEnd ? "Play from start" : "Play"}</button>
       <button type="button" onClick={() => seek(cur - 1)}>&lsaquo; Day</button>
       <button type="button" onClick={() => seek(cur + 1)}>Day &rsaquo;</button>
@@ -12,6 +12,7 @@ export default function PlayerControls({ player, idp = "" }) {
       </select>
       <label className="note check" htmlFor={`${idp}stop`}><input id={`${idp}stop`} type="checkbox" checked={stopOnTrade} onChange={(e) => setStopOnTrade(e.target.checked)} /> Pause at each trade</label>
       <input type="range" min={0} max={count - 1} value={cur} aria-label="Day" onChange={(e) => seek(+e.target.value)} />
+      {summary && <div className="ctrl-summary">{summary}</div>}
     </div>
   );
 }

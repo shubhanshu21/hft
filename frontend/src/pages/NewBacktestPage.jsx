@@ -4,6 +4,7 @@ import RunStatus from "../components/backtest/RunStatus.jsx";
 import ReplayView from "../components/replay/ReplayView.jsx";
 import { getRun, listRuns, listStrategies, startRun } from "../api/client.js";
 import { go } from "../hooks/useHashRoute.js";
+import Icon from "../components/ui/Icon.jsx";
 
 export default function NewBacktestPage() {
   const [strategies, setStrategies] = useState(null);
@@ -38,7 +39,7 @@ export default function NewBacktestPage() {
   const busy = run && (run.status === "queued" || run.status === "running");
   return (
     <div className="wrap">
-      <div className="page-head"><div><h1>New backtest</h1><div className="sub">Pick a market and a strategy, set the money, fees and slippage, and watch the result replay day by day.</div></div></div>
+      <div className="page-head"><div><div className="page-title"><span className="title-ico"><Icon name="sparkle" size={20} /></span><h1>New backtest</h1></div><div className="sub">Pick a market and a strategy, set the money, fees and slippage, and watch the result replay day by day.</div></div></div>
       <RunStatus run={run} error={error} />
       {busy && run.result?.days?.length > 0 && <ReplayView live result={run.result} title={`${run.strategy} on ${run.market}`} blurb="Live: trades, candles and account value appear as the backtest runs." />}
       {!strategies && !error && <div className="panel none">Loading strategies...</div>}

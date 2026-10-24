@@ -48,7 +48,7 @@ export default function ResultsPage({ runId }) {
           {samples.map((s) => <option key={s.file} value={`sample:${s.file}`}>Example: {s.title}</option>)}
           {saved.map((r) => <option key={r.id} value={r.id}>{label(r)}</option>)}
         </select>
-        <a href="#/new" className="note">Run a new backtest</a>
+        <a href="#/new" className="run-new">+ New backtest</a>
         {current && (naming == null
           ? <button type="button" onClick={() => setNaming(current.label ?? "")}>Rename</button>
           : <><input type="text" maxLength={60} value={naming} onChange={(e) => setNaming(e.target.value)} placeholder="e.g. 10% risk test" aria-label="Name" /><button type="button" className="main" onClick={saveName}>Save name</button><button type="button" onClick={() => setNaming(null)}>Cancel</button></>)}
@@ -56,8 +56,11 @@ export default function ResultsPage({ runId }) {
           ? <><span className="note">Delete this result?</span><button type="button" className="danger" onClick={() => remove("one")}>Yes, delete</button><button type="button" onClick={() => setConfirm(null)}>Cancel</button></>
           : <button type="button" onClick={() => setConfirm("one")}>Delete this result</button>)}
         {saved.length > 0 && (confirm === "all"
-          ? <><span className="note">Delete all {saved.length} saved results?</span><button type="button" className="danger" onClick={() => remove("all")}>Yes, clear all</button><button type="button" onClick={() => setConfirm(null)}>Cancel</button></>
-          : <button type="button" onClick={() => setConfirm("all")}>Clear all results</button>)}
+          ? <><span className="note">Delete all {saved.length} saved results? This cannot be undone.</span><button type="button" className="danger" onClick={() => remove("all")}>Yes, clear all</button><button type="button" onClick={() => setConfirm(null)}>Cancel</button></>
+          : <details className="more-menu">                                  {/* kept out of the everyday buttons: one wrong click deleted everything */}
+              <summary>More ▾</summary>
+              <div className="more-pop"><button type="button" className="danger-text" onClick={() => setConfirm("all")}>Clear all {saved.length} results…</button></div>
+            </details>)}
       </div>
       {error && <div className="panel error" role="alert">{error}</div>}
       {!loaded && !error && <div className="panel none">{key ? "Loading..." : "No results yet. Run a backtest to see one here."}</div>}

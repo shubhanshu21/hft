@@ -1,16 +1,16 @@
-.form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px}
-.field{display:flex;flex-direction:column;gap:5px;min-width:0}
-.field label{font-size:.6875rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+/* ---------- New backtest form ---------- */
+.form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:16px 18px}
+.field{display:flex;flex-direction:column;gap:6px;min-width:0}
+.field label{font-size:.8125rem;color:var(--fg-2);font-weight:500}
 .field input,.field select{width:100%;min-width:0}
-.field input[type=checkbox]{width:auto;flex:none}
+.field input[type=checkbox]{width:16px;flex:none}
 .field .check{flex-direction:row;justify-content:flex-start}
-.field .hint{font-size:.6875rem;color:var(--muted)}
-.symbols{display:flex;flex-wrap:wrap;gap:6px;max-height:140px;overflow-y:auto;padding:4px 0}
-.symbols label{display:flex;gap:5px;align-items:center;font-size:.75rem;font-family:var(--font-num);text-transform:none;letter-spacing:0;color:var(--fg)}
-.progress{height:8px;border-radius:4px;background:var(--grid);overflow:hidden}
-.progress > div{height:100%;background:var(--accent);transition:width .3s}
-.fees-box{background:var(--grid);border-radius:6px;padding:10px 12px;font-size:.8125rem;line-height:1.5}
-.warn{display:block;margin-top:4px;padding:8px 10px;border-radius:6px;background:var(--loss-bg);color:var(--loss);font-size:.75rem;line-height:1.45}
-.static-value{font-family:var(--font-num);padding:7px 0;font-variant-numeric:tabular-nums}
-
-button.linkish{background:none;border:0;padding:0;color:var(--accent);text-decoration:underline;cursor:pointer;font-size:inherit}
+.field .hint{font-size:.75rem;color:var(--muted);line-height:1.45}
+.symbols{display:flex;flex-wrap:wrap;gap:6px 14px;max-height:150px;overflow-y:auto;padding:6px 0}
+.symbols label{display:flex;gap:6px;align-items:center;font-size:.8125rem;font-family:var(--font-num);color:var(--fg)}
+.progress{height:10px;border-radius:999px;background:var(--grid);overflow:hidden}
+.progress > div{height:100%;background:linear-gradient(90deg,var(--accent),var(--gain));transition:width .3s;border-radius:999px}
+.fees-box{background:var(--panel-2);border:1px solid var(--line);border-radius:var(--radius-sm);padding:12px 14px;font-size:.8125rem;line-height:1.6;color:var(--fg-2)}
+.static-value{font-family:var(--font-num);padding:8px 0;font-variant-numeric:tabular-nums}
+button.linkish{background:none;border:0;padding:0;color:var(--accent);text-decoration:underline;text-underline-offset:3px;cursor:pointer;font-size:inherit;min-height:0;box-shadow:none}
+button.linkish:hover:not(:disabled){background:none;color:var(--accent-hover)}

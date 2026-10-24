@@ -1,9 +1,20 @@
 @import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap");
 
+/* Design tokens (2026-10-24 redesign). Every page reads colour, radius, shadow and spacing from here, so light and dark mode swap in
+   one place. Chart colours (accent / gain / loss) were run through the dataviz palette validator in both modes (CVD, lightness band,
+   contrast): #2a78d6 / #12805c / #c8372d -- all checks pass; gain and loss always also carry a
+   +/- sign or an arrow, so they are never colour alone. */
 :root{
   color-scheme:light;
-  --bg:#f3f5f7; --panel:#ffffff; --line:#dde3ea; --fg:#18222d; --muted:#5d6b7a;
-  --accent:#1f6fb2; --gain:#12805c; --loss:#c23a3a; --gain-bg:#e1f3ec; --loss-bg:#f9e4e4; --grid:#e8edf2;
+  --bg:#f4f6f9; --panel:#ffffff; --panel-2:#f8fafc; --line:#e3e8ef; --line-strong:#cfd7e2;
+  --fg:#0f172a; --fg-2:#334155; --muted:#64748b;
+  --accent:#2a78d6; --accent-hover:#1f63b5; --accent-bg:#e8f1fc;
+  --gain:#12805c; --loss:#c8372d; --gain-bg:#e6f5ee; --loss-bg:#fcebe9; --warn-bg:#fff5e1; --warn:#9a5b00;
+  --grid:#eef2f6;
+  --radius:14px; --radius-sm:9px;
+  --shadow:0 1px 2px rgba(15,23,42,.04),0 2px 8px rgba(15,23,42,.04);
+  --shadow-lift:0 4px 18px rgba(15,23,42,.08);
   --font-ui:Inter,"Segoe UI",system-ui,-apple-system,sans-serif;
   --font-num:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
 }
+/* Light only (2026-10-24, the user's choice): no dark-mode block, so the site stays light whatever the device setting is. */

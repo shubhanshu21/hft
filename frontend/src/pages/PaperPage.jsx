@@ -5,11 +5,13 @@ import Stat from "../components/ui/Stat.jsx";
 import { baseOptions } from "../components/charts/chartOptions.js";
 import { getPaper, resetPaper } from "../api/client.js";
 import ResetAccount from "../components/paper/ResetAccount.jsx";
+import Icon from "../components/ui/Icon.jsx";
+import Sparkline from "../components/ui/Sparkline.jsx";
 import OpenTradeCard from "../components/paper/OpenTradeCard.jsx";
 import Pager from "../components/ui/Pager.jsx";
 import { usePaged } from "../hooks/usePaged.js";
 import { useTheme } from "../hooks/useTheme.js";
-import { inr, signed, tone } from "../lib/format.js";
+import { inr, signed, tone, whyText } from "../lib/format.js";
 
 const STRATEGY_LABEL = { trend_carry: "MCX trend + carry", dip_reversal: "Crypto dip-reversal" };
 const when = (s) => (s ? String(s).replace("T", " ").slice(0, 16) : "-");
@@ -63,28 +65,35 @@ export default function PaperPage() {
         <div className="acct-tabs" role="tablist">
           {d.accounts.map((a) => (
             <button key={a.id} type="button" role="tab" aria-selected={a.id === d.account_id} className={a.id === d.account_id ? "on" : ""} onClick={() => pick(a.id)}>
-              <span className="t"><span className={`mkt-dot ${a.market_open ? "open" : "closed"}`} title={a.market_text} aria-label={a.market_text} />{a.label}</span>
-              {a.strategies && <span className="s">{a.strategies}</span>}
-              <span className="s">{inr(a.booked)} · {a.open} open</span>
+              <span className="wallet-ico"><Icon name={a.id.startsWith("CRYPTO") ? "coins" : "flame"} size={20} /></span>
+              <span className="wallet-txt">
+                <span className="t"><span className={`mkt-dot ${a.market_open ? "open" : "closed"}`} title={a.market_text} aria-label={a.market_text} />{a.label}</span>
+                <span className="s">{a.strategies}{a.market_text ? ` · ${a.market_text}` : ""}</span>
+              </span>
+              <span className="wallet-amt">{inr(a.booked)}<small>{a.open} open</small></span>
             </button>
           ))}
         </div>
       )}
-      <div className="page-head">
-        <div>
-          <h1>Paper trading</h1>
+      <section className="verdict paper-verdict">
+        <div className="v-main">
+          <div className="v-eyebrow"><Icon name="wallet" size={15} /> Paper trading · {d.accounts?.find((a) => a.id === d.account_id)?.label ?? d.account_id}</div>
+          <div className="v-big">{inr(value)}</div>
+          <div className="v-chg"><span className={`v-delta ${value - acc.initial_capital >= 0 ? "is-up" : "is-down"}`}>{value - acc.initial_capital >= 0 ? "▲" : "▼"} {signed(value - acc.initial_capital)}</span> since start ({inr(acc.initial_capital)})</div>
+          <h1 className="sr-only">Paper trading</h1>
+          {d.engine?.text && <div className={`engine-pill ${d.engine.ok === false ? "bad" : "good"}`} title="Checked every minute; the same checks send a Telegram alert if the engine stops"><i />{d.engine.text}</div>}
           <div className="sub">Practice account: real prices, no real money. Open trades use the live {["CRYPTO_CALM", "CRYPTO_DIP_REVERSAL"].includes(d.account_id) ? "Delta Exchange India futures" : "Upstox"} price{live ? "" : " when it is available (otherwise the last close)"}.
             Updated {loadedAt ? loadedAt.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }) : "-"}, refreshes every minute.</div>
         </div>
-        <div className="big">
-          <div className="eq">{inr(value)}</div>
-          <div className="chg"><span className={tone(value - acc.initial_capital)}>{signed(value - acc.initial_capital)}</span> since start ({inr(acc.initial_capital)})</div>
+        <div className="v-chart">
+          {d.equity?.length > 1 ? <Sparkline values={d.equity.map((e) => e.current_capital)} baseline={acc.initial_capital} height={150} />
+            : <div className="v-chart-empty">The value line starts after the first full day.</div>}
           <ResetAccount accountId={d.account_id} startMoney={acc.initial_capital} onReset={(acct, typed) => resetPaper(acct, typed).then((r) => { setReloadKey((k) => k + 1); return r; })} />
           {acc.business_value != null && (
-            <div className="note">If all sold now: {inr(acc.pretax_value)} before tax · {inr(acc.business_value)} after tax as business income (main view) · {inr(acc.strict_value)} under the strict crypto rule (worst case)</div>
+            <div className="v-note">If all sold now: {inr(acc.pretax_value)} before tax · {inr(acc.business_value)} after tax as business income · {inr(acc.strict_value)} under the strict crypto rule (worst case)</div>
           )}
         </div>
-      </div>
+      </section>
 
       <Panel className="stats money">
         <Stat label="Account (booked)" value={inr(acc.current_capital ?? 0)} />
@@ -98,10 +107,10 @@ export default function PaperPage() {
 
       <Panel title={`Open trades (${d.positions.length})`}>
         {!d.positions.length
-          ? <div className="none">{{
-            CRYPTO_DIP_REVERSAL: "No open trades. dip_reversal checks all 11 coins for a Bollinger-band dip every 5-minute candle close.",
-            MCX_TREND_CARRY: "No open trades. trend_carry rebalances at 09:10 on the first MCX trading day of each month.",
-          }[d.account_id] ?? "No open trades."}</div>
+          ? <div className="empty"><span className="empty-ico"><Icon name="sparkle" size={20} /></span><div><b>Nothing open right now</b>{{
+            CRYPTO_DIP_REVERSAL: "dip_reversal checks all 11 coins for a sharp dip 5 seconds after every 5-minute candle closes.",
+            MCX_TREND_CARRY: "trend_carry buys its picks at each month-end rebalance (09:10 or 23:40 IST, weekdays).",
+          }[d.account_id] ?? "Waiting for the next signal."}</div></div>
           : <div className="trade-cards">{d.positions.map((p) => <OpenTradeCard key={p.symbol} p={p} />)}</div>}
         {d.positions.length > 0 && <p className="note">"Last traded price" changes only when someone trades. "Buyers / sellers now" are the best live offers: selling now would get the buyers' price. "Profit now" is the price move only. "If sold now" also takes off brokerage, taxes and the buy–sell price gap, the same way the paper trader books a sale.
           The account changes only when a trade is sold.</p>}
@@ -118,11 +127,11 @@ export default function PaperPage() {
       )}
 
       <Panel title="Closed trades">
-        {!d.trades.length ? <div className="none">No closed trades yet.</div> : (
+        {!d.trades.length ? <div className="empty"><span className="empty-ico"><Icon name="inbox" size={20} /></span><div><b>No closed trades yet</b>Finished trades and their profit after fees will appear here.</div></div> : (
           <div className="table-wrap"><table className="trades-table">
-            <thead><tr><th>Stock</th><th>Bought</th><th>Sold</th><th>Qty</th><th>Buy</th><th>Sell</th><th>Fees</th><th>Profit after fees</th><th>Why it ended</th></tr></thead>
+            <thead><tr><th>{d.account_id.startsWith("CRYPTO") ? "Coin" : "Contract"}</th><th>Bought</th><th>Sold</th><th>Qty</th><th>Buy</th><th>Sell</th><th>Fees</th><th>Profit after fees</th><th>Why it ended</th></tr></thead>
             <tbody>{tradePaged.rows.map((t, i) => <tr key={i}><td>{t.symbol}</td><td>{when(t.entry_dt)}</td><td>{when(t.exit_dt)}</td><td>{qtyFmt(t.qty)}</td><td>{pxFmt(t.entry_price)}</td>
-              <td>{pxFmt(t.exit_price)}</td><td>{inr(t.total_friction ?? 0)}</td><td className={tone(t.net_pnl ?? 0)}>{signed(t.net_pnl ?? 0)}</td><td>{(t.exit_reason ?? "").replace(/_/g, " ")}</td></tr>)}</tbody>
+              <td>{pxFmt(t.exit_price)}</td><td>{inr(t.total_friction ?? 0)}</td><td className={tone(t.net_pnl ?? 0)}>{signed(t.net_pnl ?? 0)}</td><td>{whyText(t.exit_reason)}</td></tr>)}</tbody>
           </table><Pager paged={tradePaged} /></div>)}
       </Panel>
 

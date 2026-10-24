@@ -54,7 +54,7 @@ export default function PriceChartPanel({ result, at, focus, onSelect, controls 
         </div>
       </div>
       {full && controls}                                  {/* the Play controls, only in full screen (the page has its own above) */}
-      <div className="chips" role="group" aria-label="Choose a stock">
+      <div className="chips" role="group" aria-label="Choose what to show on the chart">
         <button type="button" className={`chip ${picked === "" ? "on" : ""}`} onClick={() => setPicked("")}>Follow the trade</button>
         {sorted.map((s) => {
           const t = trades[s] ?? [];

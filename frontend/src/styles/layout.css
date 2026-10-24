@@ -1,28 +1,32 @@
 /* Full-width app: a top bar, then pages that use the whole screen. */
 .shell{min-height:100%;display:flex;flex-direction:column}
 .app-header{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;
-  padding:12px clamp(16px,2.5vw,40px);background:var(--panel);border-bottom:1px solid var(--line)}
-.app-header .brand{font-weight:600;letter-spacing:.01em;display:flex;align-items:center;gap:10px}
-.app-header .brand::before{content:"";width:10px;height:10px;border-radius:2px;background:var(--accent)}
-.nav{display:flex;gap:4px}
-.nav a{color:var(--muted);text-decoration:none;padding:7px 14px;border-radius:6px;font-size:.875rem}
+  padding:10px clamp(16px,2.5vw,40px);background:color-mix(in srgb,var(--panel) 86%,transparent);backdrop-filter:saturate(1.4) blur(10px);
+  -webkit-backdrop-filter:saturate(1.4) blur(10px);border-bottom:1px solid var(--line)}
+.app-header .brand{font-weight:650;letter-spacing:-.01em;display:flex;align-items:center;gap:10px;font-size:1rem}
+.app-header .brand::before{content:"";width:22px;height:22px;border-radius:7px;background:linear-gradient(135deg,var(--accent),var(--gain));
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.25)}
+.nav{display:flex;gap:2px;padding:3px;background:var(--grid);border-radius:11px}
+.nav a{color:var(--muted);text-decoration:none;padding:6px 14px;border-radius:8px;font-size:.875rem;font-weight:500;transition:color .15s,background .15s}
 .nav a:hover{color:var(--fg)}
-.nav a.active{background:var(--grid);color:var(--fg);font-weight:500}
-.page{width:100%;max-width:1760px;margin:0 auto;padding-block:20px 48px;padding-inline:clamp(16px,2.5vw,40px)}
-.wrap{display:flex;flex-direction:column;gap:16px;min-width:0}
-.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
+.nav a.active{background:var(--panel);color:var(--fg);box-shadow:var(--shadow)}
+.page{width:100%;max-width:1680px;margin:0 auto;padding-block:24px 56px;padding-inline:clamp(16px,2.5vw,40px)}
+.wrap{display:flex;flex-direction:column;gap:18px;min-width:0}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:18px 20px;box-shadow:var(--shadow)}
 .row-flex{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
-.page-head{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-end;gap:12px}
-.sub{color:var(--muted);font-size:.8125rem;margin-top:4px;max-width:70ch}
+.page-head{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-end;gap:16px}
+.sub{color:var(--muted);font-size:.875rem;margin-top:6px;max-width:72ch;line-height:1.5}
+/* The one big number a page leads with: Inter, proportional figures (tabular only in columns) */
 .big{text-align:right}
-.big .date{font-family:var(--font-num);color:var(--muted);font-size:.8125rem}
-.big .eq{font-family:var(--font-num);font-size:2rem;font-weight:600;font-variant-numeric:tabular-nums;line-height:1.15}
-.big .chg{font-family:var(--font-num);font-size:.875rem;font-variant-numeric:tabular-nums}
-.replay-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:16px;align-items:start}
-.replay-main,.replay-side{display:flex;flex-direction:column;gap:16px;min-width:0}
+.big .date{color:var(--muted);font-size:.8125rem;font-weight:500}
+.big .eq{font-size:clamp(2.25rem,4vw,3.25rem);font-weight:700;letter-spacing:-.025em;line-height:1.05;margin-top:2px}
+.big .chg{font-size:.9375rem;font-weight:500;margin-top:6px}
+.big .chg.muted{font-size:.8125rem;font-weight:400}
+.replay-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:18px;align-items:start}
+.replay-main,.replay-side{display:flex;flex-direction:column;gap:18px;min-width:0}
 @media (min-width:1180px){
   .replay-grid{grid-template-columns:minmax(0,1fr) 400px}
-  .replay-side{position:sticky;top:72px}
+  .replay-side{position:sticky;top:76px}
   .replay-side .feed{max-height:calc(100vh - 460px);min-height:220px}
 }
-@media (max-width:760px){.big{text-align:left}}
+@media (max-width:760px){.big{text-align:left}.nav a{padding:6px 10px}}

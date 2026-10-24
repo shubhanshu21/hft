@@ -19,7 +19,7 @@ export default function EquityLine({ result, upto, start }) {
       lineWidth: 2, priceFormat: { type: "custom", formatter: (v) => `₹${Math.round(v).toLocaleString("en-IN")}` },
     });
     const bench = chart.addLineSeries({ color: colors.muted, lineWidth: 1, lineStyle: 2, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false,
-                                        title: "buy & hold", priceFormat: { type: "custom", formatter: (v) => `\u20B9${Math.round(v).toLocaleString("en-IN")}` } });
+                                        title: result.benchmark_label ?? "buy & hold", priceFormat: { type: "custom", formatter: (v) => `\u20B9${Math.round(v).toLocaleString("en-IN")}` } });
     api.current = { chart, series, bench, fitted: false };
     return () => { chart.remove(); api.current = {}; };
   }, [colors, start]);

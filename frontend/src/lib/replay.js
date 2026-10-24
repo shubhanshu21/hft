@@ -1,3 +1,4 @@
+import { qty } from "./format.js";
 /** Helpers over a replay result: { days, equity, events, pos, bars, metrics }. */
 
 /** Totals of everything that closed up to (and including) day index `upto`. */
@@ -38,7 +39,7 @@ export function tradesBySymbol(result, upto) {
     if (e.t === "buy" && open[e.sym]) open[e.sym].adds.push({ i: k, px: e.px, q: e.q });          // pyramiding: a second buy into the same trade
     else if (e.t === "buy") open[e.sym] = { sym: e.sym, side: e.side ?? "long", i0: k, i1: null, entry: e.px, qty: e.q, soldQty: null, stop: e.stop ?? null, exit: null, pnl: null, why: null, adds: [] };
     else if (open[e.sym]) {
-      const t = { ...open[e.sym], i1: k, exit: e.px, soldQty: e.q, pnl: e.pnl, why: e.why, fees: e.fees, days: e.days };
+      const t = { ...open[e.sym], i1: k, exit: e.px, soldQty: e.q, pnl: e.pnl, why: e.why, fees: e.fees, days: e.days, hours: e.hours };
       (bySym[e.sym] ??= []).push(t);
       delete open[e.sym];
     }
@@ -51,7 +52,7 @@ export function tradesBySymbol(result, upto) {
 export function qtyText(result, sym, q, short = false) {
   const l = result?.lots?.[sym];
   if (q == null) return "-";
-  if (!l) return q;
+  if (!l) return qty(q);
   const lots = Math.round(q / l.q_per_lot);
   const amount = +(lots * l.per_lot).toFixed(2);
   const unit = l.unit === "tonne" && amount !== 1 ? "tonnes" : l.unit;
@@ -60,4 +61,8 @@ export function qtyText(result, sym, q, short = false) {
 }
 
 /** Column heading for quantities: "Lots" for futures results, else "Shares". */
-export const qtyHeader = (result) => (result?.lots ? "Lots" : "Shares");
+export const qtyHeader = (result) => (result?.lots ? "Lots" : result?.unit === "coin" ? "Coins" : "Shares");
+/** What one traded thing is called in this result: "coin" (crypto), "commodity" (MCX lots) or "stock". */
+export const unitNoun = (result) => result?.unit ?? (result?.lots ? "commodity" : "stock");
+/** How long a trade was held, in the unit that reads best: "3 h" under two days, else "5 d". */
+export const heldText = (t) => (t == null ? "-" : t.hours != null ? (t.hours < 48 ? `${t.hours < 1 ? "<1" : Math.round(t.hours)} h` : `${Math.round(t.hours / 24)} d`) : t.days != null ? `${t.days} d` : "-");

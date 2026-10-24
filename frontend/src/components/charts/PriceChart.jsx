@@ -69,13 +69,17 @@ export default function PriceChart({ qtyFmt = (q) => q ?? "", tf = "1D", overlay
       for (const lv of osc.levels ?? []) sr.createPriceLine({ price: lv, color: colors.muted, lineStyle: LineStyle.Dashed, lineWidth: 1, axisLabelVisible: true, title: String(lv) });
     }
 
+    // Label selectively (2026-10-24): arrows show every buy and sell; only the 3 biggest wins/losses of this coin carry a rupee label,
+    // plus a trade the user clicked -- a number on every marker piled up into an unreadable stack. The table and trade list have the rest.
     const markers = [];
+    const closed = (trades ?? []).filter((t) => t.i1 != null && t.pnl != null);
+    const labelled = new Set([...closed].sort((a, b) => Math.abs(b.pnl) - Math.abs(a.pnl)).slice(0, 3));
     for (const t of trades ?? []) {
       const sh = t.side === "short";
-      const entryPx = t.entry != null ? t.entry.toFixed(2) : "-";
-      markers.push({ time: calendar[t.i0], position: sh ? "aboveBar" : "belowBar", shape: sh ? "arrowDown" : "arrowUp", color: colors.accent, text: `${sh ? "SHORT" : "BUY"} ${qtyFmt(t.qty)} @ ${entryPx}` });
-      for (const a of t.adds ?? []) markers.push({ time: calendar[a.i], position: "belowBar", shape: "arrowUp", color: colors.accent, text: `ADD ${qtyFmt(a.q)} @ ${a.px != null ? a.px.toFixed(2) : "-"}` });
-      if (t.i1 != null) markers.push({ time: calendar[t.i1], position: sh ? "belowBar" : "aboveBar", shape: sh ? "arrowUp" : "arrowDown", color: t.pnl >= 0 ? colors.gain : colors.loss, text: `${sh ? "COVER" : "SELL"} ${qtyFmt(t.soldQty)} ${signed(t.pnl)}` });
+      const picked = focus && t.i0 <= focus.at && (t.i1 ?? Infinity) >= focus.at;
+      markers.push({ time: calendar[t.i0], position: sh ? "aboveBar" : "belowBar", shape: sh ? "arrowDown" : "arrowUp", color: colors.accent, text: picked ? (sh ? "SHORT" : "BUY") : "" });
+      for (const a of t.adds ?? []) markers.push({ time: calendar[a.i], position: "belowBar", shape: "arrowUp", color: colors.accent, text: "" });
+      if (t.i1 != null) markers.push({ time: calendar[t.i1], position: sh ? "belowBar" : "aboveBar", shape: sh ? "arrowUp" : "arrowDown", color: t.pnl >= 0 ? colors.gain : colors.loss, text: labelled.has(t) || picked ? signed(t.pnl) : "" });
     }
     for (const m of overlay?.markers ?? []) if (m.i >= first && m.i <= at) markers.push({ time: calendar[m.i], position: "aboveBar", shape: "circle", color: colors.muted, text: m.text });
     candles.setMarkers(markers.filter((m) => m.time >= calendar[first]).sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0)));

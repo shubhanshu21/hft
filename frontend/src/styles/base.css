@@ -1,19 +1,28 @@
 *{box-sizing:border-box}
 html,body{height:100%}
-body{background:var(--bg);color:var(--fg);font-family:Inter,"Segoe UI",system-ui,-apple-system,sans-serif !important;margin:0;padding:0}
+body{background:var(--bg);color:var(--fg);font-family:var(--font-ui);margin:0;padding:0;-webkit-font-smoothing:antialiased;font-feature-settings:"cv11","ss01"}
 button,select,input{font-family:inherit}
 #root{min-height:100%}
-h1{font-size:1.25rem;margin:0;font-weight:600;text-wrap:balance}
-h2{font-size:.75rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:0 0 10px;font-weight:600}
+h1{font-size:1.375rem;margin:0;font-weight:650;letter-spacing:-.01em;text-wrap:balance}
+/* Card titles: sentence case, readable -- not tiny tracked capitals */
+h2{font-size:.9375rem;color:var(--fg);margin:0 0 12px;font-weight:600;letter-spacing:-.005em}
 svg{display:block;width:100%;height:auto}
 svg text{font-family:var(--font-num);font-size:11px;fill:var(--muted)}
-button,select,input[type=text],input[type=number],input[type=date],input[type=password]{font:inherit;font-size:.875rem;color:var(--fg);background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:7px 10px}
-button{cursor:pointer}
-button.main{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
-button:disabled{opacity:.55;cursor:not-allowed}
-button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+button,select,input[type=text],input[type=number],input[type=date],input[type=password]{font:inherit;font-size:.875rem;color:var(--fg);background:var(--panel);
+  border:1px solid var(--line-strong);border-radius:var(--radius-sm);padding:8px 12px;min-height:38px;transition:border-color .15s,background .15s,box-shadow .15s}
+select{padding-right:30px}
+button{cursor:pointer;font-weight:500}
+button:hover:not(:disabled){background:var(--panel-2);border-color:var(--muted)}
+input:hover,select:hover{border-color:var(--muted)}
+button.main{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600;box-shadow:0 1px 2px rgba(42,120,214,.25)}
+button.main:hover:not(:disabled){background:var(--accent-hover);border-color:var(--accent-hover)}
+button:disabled{opacity:.5;cursor:not-allowed}
+button:focus-visible,select:focus-visible,input:focus-visible,a:focus-visible{outline:none;box-shadow:0 0 0 3px var(--accent-bg),0 0 0 1px var(--accent)}
+input[type=checkbox]{accent-color:var(--accent);width:16px;height:16px;min-height:0}
+a{color:var(--accent)}
 .up{color:var(--gain)} .down{color:var(--loss)}
-.note{color:var(--muted);font-size:.75rem;line-height:1.5}
+.note{color:var(--muted);font-size:.8125rem;line-height:1.55}
 .none{color:var(--muted);font-size:.875rem;padding:8px 0}
 .error{color:var(--loss);font-size:.875rem}
-@media (prefers-reduced-motion:reduce){*{scroll-behavior:auto}}
+::selection{background:var(--accent-bg)}
+@media (prefers-reduced-motion:reduce){*{scroll-behavior:auto;transition:none !important}}

@@ -1,3 +1,4 @@
+import Icon from "../ui/Icon.jsx";
 import { useEffect, useMemo, useState } from "react";
 import Panel from "../ui/Panel.jsx";
 
@@ -5,14 +6,19 @@ const today = () => new Date().toISOString().slice(0, 10);
 const THIS_YEAR = new Date().getFullYear();
 const FIRST_YEAR = 2022;                    // the archived daily candles start in September 2022
 const YEARS = Array.from({ length: THIS_YEAR - FIRST_YEAR + 1 }, (_, i) => THIS_YEAR - i);
+// Remembers the last market, strategy and dates used (this browser only; 2026-10-24) so a repeat test needs no re-typing.
+const SAVED_KEY = "lastBacktest";
+const loadSaved = () => { try { return JSON.parse(localStorage.getItem(SAVED_KEY) || "null"); } catch { return null; } };
+const isoDaysAgo = (n) => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
 const yearRange = (y) => ({ start: `${y}-01-01`, end: y === THIS_YEAR ? today() : `${y}-12-31` });
 const MARKET_LABEL = { commodity: "Commodity (MCX futures)", crypto: "Crypto (Delta Exchange India futures)" };
 
 export default function BacktestForm({ strategies, onSubmit, busy }) {
   const markets = useMemo(() => [...new Set(strategies.map((s) => s.market))], [strategies]);
-  const [market, setMarket] = useState(markets[0] ?? "equity");
+  const saved = useMemo(loadSaved, []);
+  const [market, setMarket] = useState(saved && markets.includes(saved.market) ? saved.market : markets[0] ?? "equity");
   const options = strategies.filter((s) => s.market === market);
-  const [name, setName] = useState(options[0]?.name ?? "");
+  const [name, setName] = useState(saved && options.some((s) => s.name === saved.strategy) ? saved.strategy : options[0]?.name ?? "");
   const strategy = options.find((s) => s.name === name) ?? options[0];
   useEffect(() => { if (strategy) setF((x) => ({ ...x, risk_pct: strategy.default_risk_pct ?? 2, exposure: strategy.exposure ?? 1, capital: strategy.default_capital ?? x.capital })); }, [strategy?.market, strategy?.name]);
   useEffect(() => {                                   // pre-tick the strategy's own list (what its paper trading uses) when it is narrower than the market
@@ -27,10 +33,10 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
   const auto = !!strategy?.auto_universe;            // equity/breakout_pair: picks from the day's 200 most-traded NSE stocks itself, fixed 5 + 3 holdings
   const [all, setAll] = useState(true);
   const [chosen, setChosen] = useState([]);
-  const [f, setF] = useState({ ...yearRange(THIS_YEAR), capital: 100000, slippage_bp: 5, risk_pct: 2, max_positions: 3, leverage: 1, label: "", exposure: 1.5, tax: "business" });
-  const [year, setYear] = useState(String(THIS_YEAR));       // "custom" once the dates are edited by hand
+  const [f, setF] = useState({ ...(saved?.start && saved?.end ? { start: saved.start, end: saved.end } : yearRange(THIS_YEAR)), capital: 100000, slippage_bp: 5, risk_pct: 2, max_positions: 3, leverage: 1, label: "", exposure: 1.5, tax: "business" });
+  const [year, setYear] = useState(saved?.year ?? String(THIS_YEAR));       // "custom" once the dates are edited by hand
 
-  useEffect(() => { const o = strategies.filter((s) => s.market === market); setName(o[0]?.name ?? "");
+  useEffect(() => { const o = strategies.filter((s) => s.market === market); setName((n) => (o.some((s) => s.name === n) ? n : o[0]?.name ?? ""));
     setF((x) => ({ ...x, slippage_bp: market === "currency" ? 0 : 5 }));   // currency: costs include the real spread; futures margin is ~2-3%
   }, [market, strategies]);
 
@@ -39,8 +45,10 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
   const setDate = (k) => (e) => { setYear("custom"); setF({ ...f, [k]: e.target.value }); };
   const toggle = (s) => setChosen(chosen.includes(s) ? chosen.filter((x) => x !== s) : [...chosen, s]);
 
+  const quick = (start, end, label) => { setYear(label); setF({ ...f, start, end }); };
   const submit = (e) => {
     e.preventDefault();
+    try { localStorage.setItem(SAVED_KEY, JSON.stringify({ market, strategy: name, start: f.start, end: f.end, year })); } catch { /* private window */ }
     onSubmit({
       market, strategy: name, symbols: all ? strategy.symbols : chosen,
       start: f.start, end: f.end, capital: +f.capital, slippage_bp: market === "currency" ? 0 : +f.slippage_bp, risk_pct: +f.risk_pct, max_positions: +f.max_positions,
@@ -50,7 +58,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
   };
 
   return (
-    <form onSubmit={submit} className="wrap">
+    <form onSubmit={submit} className="wrap steps">
       <Panel title="What to test">
         <div className="form-grid">
           <div className="field"><label htmlFor="market">Market</label>
@@ -63,7 +71,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
             </select>
             <span className="hint">{strategy?.summary}</span></div>
           <div className="field"><label htmlFor="year">Year</label>
-            <select id="year" value={year} onChange={(e) => pickYear(e.target.value)}>
+            <select id="year" value={/^\d{4}$/.test(year) ? year : "custom"} onChange={(e) => pickYear(e.target.value)}>
               {YEARS.map((y) => <option key={y} value={y}>{y}{y === FIRST_YEAR ? " (data starts in September)" : y === THIS_YEAR ? " (so far)" : ""}</option>)}
               <option value="custom">Custom dates</option>
             </select>
@@ -71,6 +79,11 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
           <div className="field"><label htmlFor="label">Name this run (optional)</label><input id="label" type="text" maxLength={60} placeholder="e.g. 2% risk, best 20 stocks" value={f.label} onChange={set("label")} /></div>
           <div className="field"><label htmlFor="start">From</label><input id="start" type="date" value={f.start} onChange={setDate("start")} required /></div>
           <div className="field"><label htmlFor="end">To</label><input id="end" type="date" value={f.end} onChange={setDate("end")} required /></div>
+          <div className="field quick-dates"><span className="hint">Quick dates</span><div className="row-flex">
+            <button type="button" className={`chip${year === String(THIS_YEAR) ? " on" : ""}`} onClick={() => pickYear(String(THIS_YEAR))}>This year</button>
+            <button type="button" className={`chip${year === "12m" ? " on" : ""}`} onClick={() => quick(isoDaysAgo(365), today(), "12m")}>Last 12 months</button>
+            <button type="button" className={`chip${year === "since" ? " on" : ""}`} onClick={() => quick(monthly ? "2023-01-01" : "2022-01-01", today(), "since")}>{monthly ? "Since 2023 (all)" : "Since 2022 (all)"}</button>
+          </div></div>
         </div>
         {strategy && monthly && (
           <p className="hint">Monthly strategy: every month end it ranks the chosen MCX commodities against each other on 12-month trend and carry (next contract cheaper), and holds the best 3 (with fewer than 6 chosen,
@@ -155,7 +168,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
         </p>
       </Panel>
 
-      <div><button className="main" type="submit" disabled={busy || !strategy?.supported}>{busy ? "Running..." : "Run backtest"}</button></div>
+      <div className="run-cta"><button className="main" type="submit" disabled={busy || !strategy?.supported}><Icon name="play" size={16} /> {busy ? "Running..." : "Run backtest"}</button><span className="note">Takes a few seconds to a minute; the result replays day by day.</span></div>
     </form>
   );
 }
