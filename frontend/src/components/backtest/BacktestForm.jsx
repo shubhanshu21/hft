@@ -87,8 +87,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
           </div></div>
         </div>
         {strategy && monthly && (
-          <p className="hint">Monthly strategy: every month end it ranks the chosen MCX commodities against each other on 12-month trend and carry (next contract cheaper), and holds the best 3 (with fewer than 6 chosen,
-            the best half). Pick at least 2. History starts December 2021; the first trade is in January 2023 (it needs 12 months of trend).</p>
+          <p className="hint">Every 2 weeks (10 trading days) it ranks the chosen MCX commodities against each other on 12-month trend and carry (next contract cheaper), and holds the best 3 (with fewer than 6 chosen, the best half); a holding that stays in the top 3 is kept. Pick at least 2. History starts December 2021; the first trade is in January 2023 (it needs about a year of trend).</p>
         )}
         {strategy && gap && (
           <p className="hint">Intraday, buys only: the morning after a company's quarterly results, it buys at 09:30 if the stock opened 7% or more above the

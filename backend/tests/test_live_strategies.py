@@ -6,15 +6,16 @@ import numpy as np
 import pandas as pd
 
 from markets.commodity.costs import compute_mcx_costs, lot_units
-from markets.commodity.strategies.tf_monthly.trend_carry import strategy as TC
+from markets.commodity.strategies.tf_daily.trend_carry import strategy as TC
 from markets.crypto.strategies.tf_5min.dip_reversal import strategy as DR
 
 
-def _panel(cols, months=14, seed=0):
+def _panel(cols, days=300, seed=0):
+    """Daily returns and carry (2026-10-25: trend_carry ranks on 252 trading days of daily data, re-checked every 10 days)."""
     rng = np.random.default_rng(seed)
-    idx = pd.date_range("2025-01-31", periods=months, freq="ME")
-    R = pd.DataFrame(rng.normal(0.01, 0.05, (months, len(cols))), index=idx, columns=cols)
-    C = pd.DataFrame(rng.normal(0, 0.01, (months, len(cols))), index=idx, columns=cols)
+    idx = pd.bdate_range("2025-01-01", periods=days)
+    R = pd.DataFrame(rng.normal(0.0005, 0.015, (days, len(cols))), index=idx, columns=cols)
+    C = pd.DataFrame(rng.normal(0, 0.01, (days, len(cols))), index=idx, columns=cols)
     return R, C
 
 
@@ -34,8 +35,17 @@ class TestTrendCarryTargets(unittest.TestCase):
         self.assertEqual(TC.targets(R, C, t), TC.targets(R[rev], C[rev], t))
 
     def test_not_enough_history_gives_no_signal(self):
-        R, C = _panel(list(TC.SIGNALS), months=5)
+        R, C = _panel(list(TC.SIGNALS), days=150)          # under ~0.8 x 252 days of trend
         self.assertEqual(TC.targets(R, C, R.index[-1]), {})
+
+
+class TestTrendCarryRebalanceDue(unittest.TestCase):
+    def test_every_ten_trading_days(self):
+        days = list(pd.bdate_range("2026-10-01", periods=15))
+        self.assertTrue(TC.rebalance_due(None, days, days[0]))                                  # never checked
+        self.assertFalse(TC.rebalance_due(str(days[0].date()), days, days[9]))                 # 9 trading days later
+        self.assertTrue(TC.rebalance_due(str(days[0].date()), days, days[TC.REBALANCE_DAYS]))  # 10 trading days later
+        self.assertEqual(TC.REBALANCE_DAYS, 10)
 
 
 class TestTrendCarryLots(unittest.TestCase):

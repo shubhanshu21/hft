@@ -109,7 +109,7 @@ export default function PaperPage() {
         {!d.positions.length
           ? <div className="empty"><span className="empty-ico"><Icon name="sparkle" size={20} /></span><div><b>Nothing open right now</b>{{
             CRYPTO_DIP_REVERSAL: "dip_reversal checks all 11 coins for a sharp dip 5 seconds after every 5-minute candle closes.",
-            MCX_TREND_CARRY: "trend_carry buys its picks at each month-end rebalance (09:10 or 23:40 IST, weekdays).",
+            MCX_TREND_CARRY: "trend_carry re-checks its picks every 2 weeks (10 trading days) and buys at the next 09:10 or 23:40 IST run on a weekday.",
             RESULTS_GAP: "Every weekday at 09:30 it checks stocks that just reported results: it buys any that opened 7%+ above the market and kept rising, and sells them at 15:20.",
           }[d.account_id] ?? "Waiting for the next signal."}</div></div>
           : <div className="trade-cards">{d.positions.map((p) => <OpenTradeCard key={p.symbol} p={p} />)}</div>}

@@ -45,7 +45,7 @@ export default function PriceChartPanel({ result, at, focus, onSelect, controls 
     <Panel>
       <div ref={fsBox} className="chart-fs">
       <div className="chart-head">
-        <h2>{sym} · {c4 ? "4-hour" : result.lots ? "monthly" : "daily"} candles: price and every trade taken <span className="hint-inline">drag to move, scroll to zoom</span></h2>
+        <h2>{sym} · {c4 ? "4-hour" : "daily"} candles: price and every trade taken <span className="hint-inline">drag to move, scroll to zoom</span></h2>
         <div className="row-flex">
           <span className="legend"><span className="acc">&#9650; buy</span>{c4 && <span className="acc">&#9660; short</span>}<span className="up">{c4 ? "sell / cover, profit" : "▼ sell, profit"}</span><span className="down">{c4 ? "sell / cover, loss" : "▼ sell, loss"}</span></span>
           {!c4 && <label className="note check" htmlFor="showvol"><input id="showvol" type="checkbox" checked={showVolume} onChange={(e) => toggleVolume(e.target.checked)} /> Volume</label>}
@@ -69,7 +69,7 @@ export default function PriceChartPanel({ result, at, focus, onSelect, controls 
       {c4 ? (
         <PriceChart qtyFmt={(q) => qtyText(result, sym, q, true)} tf={c4.tf} overlay={null} stopPath={null} symbol={sym} bars={c4.bars[sym]} calendar={c4.times} first={0} last={c4.times.length - 1} at={at4} trades={mine4} fitKey={fitKey} showVolume={false} focus={null} />
       ) : (
-        <PriceChart qtyFmt={(q) => qtyText(result, sym, q, true)} tf={result.lots ? "1M" : "1D"} overlay={result.overlays?.[sym] ?? null} stopPath={stopPath} symbol={sym} bars={result.bars[sym]} calendar={calendar} first={0} last={last} at={at} trades={mine} fitKey={fitKey} showVolume={showVolume} focus={focus && focus.sym === sym ? focus : null} />
+        <PriceChart qtyFmt={(q) => qtyText(result, sym, q, true)} tf="1D" overlay={result.overlays?.[sym] ?? null} stopPath={stopPath} symbol={sym} bars={result.bars[sym]} calendar={calendar} first={0} last={last} at={at} trades={mine} fitKey={fitKey} showVolume={showVolume} focus={focus && focus.sym === sym ? focus : null} />
       )}
       <SymbolTrades result={result} trades={mine} days={result.days} onSelect={(t) => onSelect?.({ sym, at: t.i0 })} />
       </div>

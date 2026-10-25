@@ -1,9 +1,9 @@
-"""Paper trading for commodity/trend_carry (monthly MCX trend + carry). Its own paper account, kept apart from the Rs1 lakh equity/currency one.
+"""Paper trading for commodity/trend_carry (MCX trend + carry, re-checked every S.REBALANCE_DAYS trading days, ~2 weeks since 2026-10-25).
 
-    python3 -m engine.mcx_trend_carry            # rebalance if a month has ended since the last one, then mark to market (Telegram)
+    python3 -m engine.mcx_trend_carry            # re-check if REBALANCE_DAYS trading days have passed (or after a reset), then mark to market
     python3 -m engine.mcx_trend_carry --status   # print the account, no trading
 
-Run by hft-mcx-trend-carry.timer at 09:10 IST (after MCX opens: a pending month-end rebalance trades at the live price) and 23:40 IST (after
+Run by hft-mcx-trend-carry.timer at 09:10 IST (after MCX opens: a pending re-check trades at the live price, signals from the last close) and 23:40 IST (after
 the close: a daily mark-to-market line). No real orders: prices come from Upstox quotes, fills are recorded in var/db/paper_trading.db under
 account MCX_TREND_CARRY. Settings (.env): MCX_TREND_CARRY_CAPITAL (default Rs2.5 lakh, since 2026-10-21 -- user: "make it 2.5 lakh account
 and reset"; below ~Rs2-2.5L whole-lot minimums starve the strategy of trades, but above ~Rs2.5L the % return barely changes with more
@@ -24,7 +24,7 @@ import pandas as pd
 from core.paths import DB_DIR
 from markets.commodity import futures_eod
 from markets.commodity.costs import compute_mcx_costs, lot_units
-from markets.commodity.strategies.tf_monthly.trend_carry import strategy as S
+from markets.commodity.strategies.tf_daily.trend_carry import strategy as S
 
 IST = timezone(timedelta(hours=5, minutes=30))
 ACCOUNT, NAME = "MCX_TREND_CARRY", "trend_carry"
@@ -48,18 +48,12 @@ def _save_state(st: dict) -> None:
     STATE.write_text(json.dumps(st, indent=1))
 
 
-def _month_last_day(d) -> pd.Timestamp:
-    return (pd.Timestamp(d) + pd.offsets.MonthEnd(0)).normalize()
+def needs_rebalance(st: dict, signal_day: pd.Timestamp, days: list, open_pos: list, known_ids: set) -> bool:
+    """True when a re-check is due: S.REBALANCE_DAYS trading days since the last one (S.rebalance_due) -- or the account was reset.
 
-
-def needs_rebalance(st: dict, month_end: pd.Timestamp, open_pos: list, known_ids: set) -> bool:
-    """True when month_end's rebalance has not been done for THIS account yet.
-
-    2026-10-24: the Rs5L -> Rs2.5L reset (2026-10-21) wiped the positions but left rebalanced_for = September, so the account sat in
-    cash until the next month end. A rebalance now records the position ids it opened; when none is open and none is even in the DB any
-    more, the account was reset and the current signal is bought again. A state from before this fix (no ids) with nothing open counts
-    as reset too; a rebalance that legitimately bought nothing (every pick under one lot) records [] and is not repeated."""
-    if st.get("rebalanced_for") != str(month_end.date()):
+    Reset (2026-10-24 fix): a re-check records the position ids it holds; when none is open and none is even in the DB any more, the
+    account was reset and the current signal is bought again. A re-check that legitimately bought nothing records [] and is not repeated."""
+    if S.rebalance_due(st.get("rebalanced_on"), days, signal_day):
         return True
     if open_pos:
         return False
@@ -68,10 +62,9 @@ def needs_rebalance(st: dict, month_end: pd.Timestamp, open_pos: list, known_ids
 
 
 def contract_for(signal: str, today, contracts: pd.DataFrame):
-    """The mini contract to hold this month: the nearest expiry after this month ends (and more than ROLL_DAYS away)."""
+    """The mini contract to hold: the nearest expiry more than ROLL_DAYS away (a later roll switches it before expiry)."""
     fam = S.TRADE[signal]
-    cutoff = max(_month_last_day(today), pd.Timestamp(today) + timedelta(days=ROLL_DAYS))
-    c = contracts[(contracts["symbol"] == fam) & (contracts["expiry"] > cutoff)]
+    c = contracts[(contracts["symbol"] == fam) & (contracts["expiry"] > pd.Timestamp(today) + timedelta(days=ROLL_DAYS))]
     return c.sort_values("expiry").iloc[0] if len(c) else None
 
 
@@ -80,13 +73,14 @@ def run(broker, db, now: datetime, report: bool = True, send=None) -> dict:
     send = send or telegram.send
     capital0 = float(os.environ.get("MCX_TREND_CARRY_CAPITAL", 250_000))
     exposure = float(os.environ.get("MCX_TREND_CARRY_EXPOSURE", 1.5))
-    db.init_account(ACCOUNT, name="MCX trend + carry (monthly)", capital=capital0, leverage=exposure, risk_pct=0.0)
+    db.init_account(ACCOUNT, name="MCX trend + carry", capital=capital0, leverage=exposure, risk_pct=0.0)
     acc = db.get_account(ACCOUNT)
     capital = float(acc["current_capital"])
     st = _state()
     table = futures_eod.load()
-    ends = S.month_ends(table, before=pd.Timestamp(now.date()))
-    month_end = ends[-1]
+    sig_rows = table[table["symbol"].isin(S.SIGNALS)] if len(table) else table
+    days = sorted(d for d in (sig_rows["date"].unique() if len(sig_rows) else []) if pd.Timestamp(d).date() < now.date())
+    signal_day = pd.Timestamp(days[-1]) if days else pd.Timestamp(now.date())      # signals from the last completed session
     contracts = futures_eod.active_contracts()
     open_pos = db.get_open_positions(ACCOUNT)
     keys = set(contracts["instrument_key"]) | {p["instrument_key"] for p in open_pos if p.get("instrument_key")}
@@ -121,32 +115,43 @@ def run(broker, db, now: datetime, report: bool = True, send=None) -> dict:
             return None
         pid = f"POS_MCXTC_{now.strftime('%Y%m%d_%H%M%S')}_{contract['tradingsymbol']}"
         state = {"family": S.TRADE[signal], "signal": signal, "weight": round(weight, 4), "expiry": str(contract["expiry"].date()),
-                 "lot_units": lot_units(S.TRADE[signal]), "margin_used": round(lots * lot_val * S.MARGIN_PCT[signal], 2), "month_end": str(month_end.date())}
+                 "lot_units": lot_units(S.TRADE[signal]), "margin_used": round(lots * lot_val * S.MARGIN_PCT[signal], 2), "signal_day": str(signal_day.date())}
         db.open_position(pid, contract["tradingsymbol"], "long", lots, px, 0.0, 0.0, 0.0, account_id=ACCOUNT,
                          instrument_key=contract["instrument_key"], strategy=NAME, state=json.dumps(state))
         lines.append(f"• BOUGHT {contract['tradingsymbol']} {lots} lot(s) @ {px:,.2f} = {_inr(lots * lot_val)} (weight {weight:.0%})")
         return pid
 
     did = None
-    if needs_rebalance(st, month_end, open_pos, db.get_position_ids(ACCOUNT)):
-        R, C = S.panel(table, ends)
-        w = S.targets(R, C, month_end)
+    if needs_rebalance(st, signal_day, days, open_pos, db.get_position_ids(ACCOUNT)):
+        R, C = S.daily_panel(table)
+        w = S.targets(R, C, signal_day)
         if not w:
             lines.append("not enough history for a signal")
         else:
-            sold_ok = all(close(p, "monthly_rebalance") for p in open_pos)
-            if sold_ok:
-                opened = []
-                for sig, wt in sorted(w.items(), key=lambda x: -x[1]):
-                    c = contract_for(sig, now.date(), contracts)
-                    if c is None:
-                        lines.append(f"• {S.TRADE[sig]}: no contract alive past this month, skipped")
-                        continue
-                    pid = buy(sig, wt, c)
-                    if pid:
-                        opened.append(pid)
-                st["rebalanced_for"], st["opened"] = str(month_end.date()), opened
-                did = "rebalance"
+            held = {json.loads(p.get("state") or "{}").get("signal"): p for p in open_pos}
+            ok = True
+            for sig, p in held.items():                               # sell what dropped out of the top 3
+                if sig not in w:
+                    ok = close(p, "rebalance_dropped") and ok
+            for sig, wt in sorted(w.items(), key=lambda x: -x[1]):
+                c = contract_for(sig, now.date(), contracts)
+                if c is None:
+                    lines.append(f"• {S.TRADE[sig]}: no contract alive past the next few days, skipped")
+                    continue
+                px = ltp.get(c["instrument_key"])
+                want = S.lots_for(capital, exposure, wt, px, sig) if px else None
+                p = held.get(sig)
+                if p is not None and want is not None and p["instrument_key"] == c["instrument_key"] and int(p["qty"]) == want:
+                    lines.append(f"• KEPT {p['symbol']} {p['qty']} lot(s) (still in the top {S.TOP_N}, weight {wt:.0%})")
+                    continue
+                if p is not None:
+                    ok = close(p, "rebalance_resize") and ok
+                buy(sig, wt, c)
+            if ok:
+                st["rebalanced_on"] = str(signal_day.date())
+                st["opened"] = [p["position_id"] for p in db.get_open_positions(ACCOUNT)]
+                st.pop("rebalanced_for", None)
+            did = "rebalance"
     else:
         for p in open_pos:                                           # roll a contract about to expire into the next one, same lots
             stt = json.loads(p.get("state") or "{}")
@@ -175,7 +180,7 @@ def run(broker, db, now: datetime, report: bool = True, send=None) -> dict:
     db.record_snapshot(ACCOUNT)
     value = capital + open_pnl
     exposure_now = sum((ltp.get(p["instrument_key"]) or p["entry_price"]) * p["qty"] * json.loads(p.get("state") or "{}").get("lot_units", 1) for p in open_pos)
-    head = {"rebalance": f"🛢 <b>MCX TREND+CARRY: monthly rebalance</b> (signals from {month_end.date():%d %b})",
+    head = {"rebalance": f"🛢 <b>MCX TREND+CARRY: 2-weekly re-check</b> (signals from the {signal_day.date():%d %b} close)",
             "roll": "🛢 <b>MCX TREND+CARRY: contract roll</b>"}.get(did, f"🛢 <b>MCX TREND+CARRY</b> ({now:%d %b %H:%M} IST)")
     msg = (head + "\n" + ("\n".join(lines) + "\n\n" if lines else "")
            + f"Account value: <b>{_inr(value)}</b> (started {_inr(float(acc['initial_capital']))}; booked {_inr(capital)} + open {'+' if open_pnl >= 0 else ''}{_inr(open_pnl)})\n"

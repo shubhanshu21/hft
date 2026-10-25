@@ -17,5 +17,6 @@ export const qty = (q) => {
 export const price = (p) => (p == null || Number.isNaN(+p) ? "-" : (+p).toFixed(Math.abs(+p) < 10 ? 4 : 2));
 /** The engine's exit codes in plain words. */
 const WHY = { exit_signal: "price bounced back (exit signal)", stop: "stop-loss hit", target: "target hit", time: "held 24 hours (time limit)",
-  monthly_rebalance: "monthly rebalance", "Monthly rebalance": "monthly rebalance" };
+  monthly_rebalance: "monthly rebalance", "Monthly rebalance": "monthly rebalance", rebalance_dropped: "dropped from the top 3",
+  rebalance_resize: "resized at the 2-weekly check", roll_before_expiry: "switched to the next contract", "Roll before expiry": "switched to the next contract" };
 export const whyText = (w) => (w == null ? "" : WHY[w] ?? String(w).replace(/_/g, " "));
