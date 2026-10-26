@@ -170,3 +170,11 @@ class TestResultsGapMonitor(Base):
         st = M.engine_status("RESULTS_GAP", MON_10, sh=fake_sh(rg=("success", None)))
         self.assertTrue(st["ok"])
         self.assertIn("Waiting for the first run", st["text"])
+
+    def test_rg_no_prices_at_0930_alerts(self):
+        self.crypto_saved(MON_10)
+        st = self.dir / "results_gap_state.json"
+        st.write_text(json.dumps({"entered_on": "2026-10-26", "last_check": {"candidates": 43, "market_gap": None, "signals": []}}))
+        self.assertIn("rg_no_prices", self.check(MON_10)["problems"])
+        st.write_text(json.dumps({"entered_on": "2026-10-26", "last_check": {"candidates": 43, "market_gap": -0.0035, "signals": []}}))
+        self.assertNotIn("rg_no_prices", self.check(MON_10)["problems"])

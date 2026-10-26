@@ -69,7 +69,7 @@ class TestCosts(unittest.TestCase):
 class FakeBroker:
     def __init__(self, q, ltp=None):
         self.q, self.ltp = q, ltp or {}
-    def get_ohlc_batch(self, keys):
+    def get_quote_batch(self, keys):
         return {k: self.q.get(k.split("|")[1]) for k in keys}
     def get_ltp_batch(self, keys):
         return {k: self.ltp.get(k.split("|")[1]) for k in keys}
@@ -179,3 +179,33 @@ class TestWebsiteCatalog(unittest.TestCase):
         self.assertEqual((p["leverage"], p["capital"]), (3.0, 100000.0))
         with self.assertRaises(ValueError):
             B.validate({"market": "equity", "strategy": "results_gap", "capital": 100000, "exposure": 8, "start": "2026-01-01", "end": "2026-10-14"})
+
+
+class TestQuoteBatchPrevClose(unittest.TestCase):
+    """services/broker/upstox_broker.UpstoxBroker.get_quote_batch: prev close = last price - net change (the v3 OHLC quote has no
+    previous close for NSE equities -- the 2026-10-26 morning got no usable prices because of it)."""
+    def broker(self, data):
+        from services.broker.upstox_broker import UpstoxBroker
+        b = UpstoxBroker.__new__(UpstoxBroker)
+        resp = mock.Mock(); resp.data = data
+        b._market_quote = mock.Mock(); b._market_quote.get_full_market_quote.return_value = resp
+        return b
+
+    def q(self, key, ltp, chg, o=100.0):
+        return mock.Mock(instrument_token=key, last_price=ltp, net_change=chg, ohlc=mock.Mock(open=o, high=o + 2, low=o - 2))
+
+    def test_prev_close_from_net_change(self):
+        b = self.broker({"NSE_EQ:A": self.q("NSE_EQ|A", 975.0, -22.1, 990.0)})
+        with mock.patch("services.broker.upstox_broker._circuit_is_open", return_value=False):
+            out = b.get_quote_batch(["NSE_EQ|A", "NSE_EQ|B"])
+        self.assertAlmostEqual(out["NSE_EQ|A"]["prev_close"], 997.1)
+        self.assertEqual(out["NSE_EQ|A"]["today_open"], 990.0)
+        self.assertIsNone(out["NSE_EQ|B"])                      # not returned by Upstox -> None, never a made-up price
+
+    def test_missing_net_change_gives_no_prev_close(self):
+        b = self.broker({"NSE_EQ:A": self.q("NSE_EQ|A", 975.0, None)})
+        with mock.patch("services.broker.upstox_broker._circuit_is_open", return_value=False):
+            self.assertIsNone(b.get_quote_batch(["NSE_EQ|A"])["NSE_EQ|A"]["prev_close"])
+
+    def test_engine_uses_the_full_quote(self):
+        self.assertIn("get_quote_batch", open(E.__file__).read())

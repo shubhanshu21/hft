@@ -75,7 +75,7 @@ def enter(db, broker, now: datetime, holidays: set[date], lookup, lines: list) -
             lines.append(f"results calendar refresh failed ({type(e).__name__}); using the saved one")
     cands = S.candidates(today, prev_trading_day(today, holidays))
     keys = _keys(S.universe(), lookup)
-    raw = broker.get_ohlc_batch(list(keys.values())) or {}
+    raw = broker.get_quote_batch(list(keys.values())) or {}           # full quote: has the previous close (v3 OHLC does not, 2026-10-26)
     quotes = {s: raw.get(k) for s, k in keys.items()}
     buys, mkt = S.signals(quotes, cands)
     st["entered_on"] = str(today)

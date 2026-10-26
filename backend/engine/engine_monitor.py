@@ -136,6 +136,14 @@ def problems(now: datetime, sh=_systemctl, crypto_state: Path = CRYPTO_STATE, to
             out["rg_missed"] = f"Results-gap engine missed its {slot:%a %d %b %H:%M} IST run."
         elif result and result != "success":
             out["rg_failed"] = f"Results-gap engine's {when:%a %H:%M} IST run FAILED ({result}). Check: journalctl --user -u hft-results-gap.service -n 50"
+    # results_gap got no usable prices at its 09:30 check today (2026-10-26: Upstox's OHLC quote had no previous close)
+    try:
+        rg = json.loads((crypto_state.parent / "results_gap_state.json").read_text())
+        chk = rg.get("last_check") or {}
+        if rg.get("entered_on") == str(now.date()) and chk.get("market_gap") is None and now.time() >= dtime(9, 31):
+            out["rg_no_prices"] = "Results-gap got NO usable prices at 09:30 today -- it could not check any stock. Check: journalctl --user -u hft-results-gap.service -n 30"
+    except (OSError, ValueError):
+        pass
     # Upstox login, shortly before an MCX run
     if next_mcx_slot(now) - now <= timedelta(minutes=TOKEN_WINDOW_MIN):
         ok = token_ok() if token_ok else _upstox_token_ok()

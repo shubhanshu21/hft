@@ -716,6 +716,51 @@ class UpstoxBroker(BaseBroker):
 
         return results
 
+    def get_quote_batch(self, instrument_keys: list[str]) -> dict[str, dict | None]:
+        """
+        Like get_ohlc_batch, but with a RELIABLE previous close: {"ltp", "prev_close", "today_open", "today_high", "today_low"}.
+
+        2026-10-26: the v3 OHLC quote returns prev_ohlc = None for NSE equities, so get_ohlc_batch's prev_close is None and the
+        results_gap engine could not measure any opening gap (its first live morning traded nothing). The v2 FULL market quote carries
+        net_change = last_price - previous close, so prev_close = last_price - net_change. Up to 500 instruments per call.
+        """
+        results: dict[str, dict | None] = dict.fromkeys(instrument_keys)
+        if not instrument_keys:
+            return results
+        for i in range(0, len(instrument_keys), 500):
+            chunk = instrument_keys[i:i + 500]
+            chunk_set = set(chunk)
+            if _circuit_is_open():
+                log.warning("Skipping full-quote fetch for %d symbols: Upstox token is known-bad (circuit open).", len(chunk))
+                continue
+            for attempt in range(1, _MAX_RETRIES + 1):
+                try:
+                    data = self._market_quote.get_full_market_quote(",".join(chunk), "2.0").data or {}
+                    for q in data.values():
+                        key = getattr(q, "instrument_token", None)
+                        if key not in chunk_set:
+                            continue
+                        ltp, chg, o = q.last_price, q.net_change, q.ohlc
+                        results[key] = {
+                            "ltp": ltp,
+                            "prev_close": (ltp - chg) if ltp is not None and chg is not None else None,
+                            "today_open": o.open if o else None,
+                            "today_high": o.high if o else None,
+                            "today_low": o.low if o else None,
+                        }
+                    break
+                except ApiException as exc:
+                    log.warning("ApiException on full-quote fetch (attempt %d/%d, %d symbols): HTTP %s -- %s",
+                                attempt, _MAX_RETRIES, len(chunk), exc.status, exc.reason)
+                    if attempt < _MAX_RETRIES:
+                        time.sleep(_RETRY_DELAY_SEC)
+                    elif exc.status == 401:
+                        _trip_circuit()
+                except Exception as exc:
+                    log.error("Unexpected error fetching full quotes: %s", exc, exc_info=True)
+                    break
+        return results
+
     def get_market_depth(self, instrument_key: str) -> dict | None:
         """
         Fetch the 5-level bid/offer order book plus OHLC, volume, average
