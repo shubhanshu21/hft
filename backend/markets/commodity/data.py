@@ -43,7 +43,6 @@ from core.paths import ARCHIVE_ROOT, BACKEND_ROOT, LOG_DIR
 import argparse
 import sys
 from datetime import date, timedelta
-from pathlib import Path
 
 sys.path.insert(0, str(BACKEND_ROOT))
 
@@ -182,7 +181,7 @@ def build_all_real_commodity_archives(topup: bool = False) -> None:
             else:
                 df = download_real_commodity_history(symbol, unit, interval, mcx_symbol)
                 if df is None or df.empty:
-                    print(f"    No data available.")
+                    print("    No data available.")
                     continue
                 out_path = ARCHIVE_DIR / f"{symbol}_{suffix}.csv"
                 df.to_csv(out_path, index=False)

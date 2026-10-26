@@ -1,26 +1,37 @@
 # Multi-Asset Quantitative Trading Framework (Indian Markets)
 
-> **Status 2026-10-17 — read first. Everything is PAPER trading (no real orders anywhere).** Four paper accounts, each on its own tab of the web page (Paper trading; a green/red dot shows whether that market is open now):
+> **Status 2026-10-26 — read first. Everything is PAPER trading; no real order is placed anywhere unless all three gates in
+> [`engine/safety_gate.py`](backend/engine/safety_gate.py) agree.** Three paper accounts, each on its own tab of the web page (Paper
+> trading; a green/red dot shows whether that market is open now):
 >
-> | Account | Strategies | Money | Runs |
+> | Account | Strategy | Money | Runs |
 > |---|---|---|---|
-> | `EQUITY_SWING` | equity swing: `breakout_pair` (quiet-day + 55-day breakouts), `momentum_portfolio`, `earnings_drift`, `trend_ema_cross` | Rs4L (Rs1L each) | `engine/equity_swing.py`, `hft-equity-swing.timer` (Mon-Fri 09:08-15:31 IST) |
-> | `DRYRUN_ACCOUNT` | currency `rsi_range` (USDINR EURINR GBPINR) | Rs1L | `hft-dryrun.service` |
-> | `MCX_TREND_CARRY` | commodity `trend_carry` (monthly MCX trend + carry) | Rs5L | `engine/mcx_trend_carry.py`, `hft-mcx-trend-carry.timer` |
-> | `CRYPTO_CALM` | crypto, two sleeves: `calm_coins` (Rs1L: BTC ETH SOL DOGE TRX futures long 1x while the 12-coin market is calm, 7 weekday parts; at Rs1L the BTC parts are below CoinDCX's minimum order and stay in cash) + `trend_breakout` (Rs1L: 4-hour breakout on BTC ETH SOL, long and short, 10-candle exit, 8% stop) | Rs2L (since 2026-10-17) | `engine/crypto_calm.py` (`hft-crypto-calm.timer`, daily 05:45 IST) + `engine/crypto_breakout.py` (`hft-crypto-breakout.timer`, every 4 hours at :02 UTC) |
+> | `CRYPTO_DIP_REVERSAL` | crypto `dip_reversal` — 5-min Bollinger-band dip-buy on 11 perpetual futures; 15% target / 7% stop / mid-band exit / 24h time stop; 6% risk per trade scaled 0.6–1.8x by market volatility; at most 5 open | Rs1L | `engine/crypto_dip_reversal.py`, `hft-crypto-dip-reversal.timer` (every 5 min). Prices from Delta Exchange India, candles/funding from Binance. Real demo orders on Delta exist but are **off** (`DELTA_PLACE_REAL_ORDERS=false`), and now need the safety gates as well |
+> | `MCX_TREND_CARRY` | commodity `trend_carry` — top 3 of 8 MCX commodities by 12-month trend + carry, sized by 1/volatility, whole mini lots, re-checked every 2 weeks (10 trading days) | Rs2.5L, 1.5x exposure | `engine/mcx_trend_carry.py`, `hft-mcx-trend-carry.timer` (Mon–Fri 09:10 and 23:40 IST) |
+> | `RESULTS_GAP` | equity `results_gap` — buy a stock that opens 7%+ above the market the morning after its results and is still rising, 09:30 → 15:20, long only, 3x | Rs1L | `engine/results_gap.py`, `hft-results-gap.timer` (08:50 calendar, 09:30 buy, 09:40 buy retry, 15:20 sell, 15:26 sell retry) |
 >
-> Crypto results (Mar 2022 - Oct 2026, after CoinDCX fees, real funding and India's 31.2% tax (30% + 4% cess) on each winning trade with losses not set off, with CoinDCX's real minimum order sizes): Rs3L account (every order clears CoinDCX's minimums): 1.80x, worst fall -33%; at Rs1L a BTC part is below the smallest BTC order, so BTC's fifth stays in cash (1.73x). 91 AI/ML versions, 624 per-coin rules and funding collection were tested and did not beat it. India's tax on crypto futures is unsettled: ask a CA before real money.
-> Every strategy and its status: `backend/markets/README.md`. Sections further down that describe intraday scalpers, MCX scalping or `cli.py backtest` are history.
-
-> **Earlier status 2026-10-14.** Crypto and the MCX `gold_crude` strategy were **removed** (git history has them); MCX data is still downloaded nightly (`markets/commodity/data.py`, `daily_series.py`). Paper trading runs equity `trend_ema_cross` and currency `rsi_range` only. Earlier: **2026-10-12** — MCX commodity was **removed** (user: "remove commodity section totally"): its strategies, cost model, features, engine support and tests are deleted (git history has them). MCX **data is still recorded**: the nightly candle top-up (`markets/commodity/data.py`) and the order-book recorder (`engine/depth_recorder.py`). The 5-minute scalpers of every market were deleted on 2026-10-10, so **no strategy trades** in the paper daemon, which is disabled (`hft-dryrun.service`); only the crypto slow-momentum paper trader runs. Sections below that describe MCX trading, the scalpers or `cli.py backtest` are history. `backend/markets/README.md` lists what exists now.
-
-An institutional-grade, 100% configurable **quantitative trading framework for Indian markets**, built for **MCX Commodity Futures** (removed 2026-10-12, see above), **NSE Currency Derivatives** (USDINR/EURINR/GBPINR), and **NSE Equities** (Cash/MIS), trading through Upstox.
-
-> **Update 2026-09-28:** crypto is back as a PAPER-ONLY slow-momentum trader (BTC/ETH/SOL spot on Binance public data, `engine/crypto_paper.py`, see `docs/CRYPTO_MOMENTUM.md`), added only after a held-out test found a real risk-adjusted edge for slow trend rules; fast crypto scalping and options remain removed.
+> Every strategy, its numbers and its status: [`backend/markets/README.md`](backend/markets/README.md). Settings: [`backend/.env.example`](backend/.env.example)
+> (the variables the three engines actually read are in its first section; the rest is documented legacy).
 >
-> **Scope note (2026-09-17):** this project previously also included a Binance USDT-M crypto perpetuals pipeline and an options analytics/trading module (`engine/`, `framework/`, `strategies/options/`, options Greeks/chain tooling). Both were removed to focus entirely on the Indian market path — see git history if you need to recover either. The crypto research findings (why 650+ tested strategy/indicator combinations found no scalping edge, and where the one real edge — funding-rate arbitrage — lived) are preserved in the git history's `docs/CRYPTO_RESEARCH_FINDINGS.md` if useful context for future work.
+> **Website API.** Read endpoints and starting a backtest are open; **deleting** a run and **resetting a paper account** require the
+> `X-API-Token` header to match `BACKTEST_ADMIN_TOKEN` from `.env` (unset = those endpoints refuse everything). The page asks for the
+> token once and keeps it in the browser.
 >
-> **Equity note (2026-09-19):** the NSE equity scalper was ALSO removed once (2026-09-18) on the same "no real OOS edge" grounds, then rebuilt from scratch the next day once the root cause was found: the original universe was hand-picked *because* each stock already backtested well (a circular, survivorship-biased selection, not a real edge), and its untuned entry rules generated so many small trades that Upstox's flat brokerage cap exceeded the average trade's gross profit — capital was mathematically guaranteed to decay to zero regardless of risk-sizing. The rebuild fixed both: a fixed, performance-blind NIFTY50 universe (49 names — see [Supported Instruments & Trading Profiles](#supported-instruments--trading-profiles)) and higher-conviction thresholds validated across three independent train/test folds. **Switched off 2026-10-07:** those validations used a fill model that sold stops at prices the market had already passed; with real fills it loses in every year 2022-26 (see [docs/FILL_MODEL_AUDIT.md](docs/FILL_MODEL_AUDIT.md)).
+> **One note on `.agents/rules/trading_rules.md`:** that file records an earlier, narrower preference set (crypto perpetuals only,
+> ₹30,000 base, 0.02% maker per side). The deployed accounts are the three above — three markets, ₹1L/₹2.5L/₹1L — and this README plus the
+> code are the authority on what actually runs. Crypto fees here are Delta India's 0.05% taker / 0.02% maker **plus 18% GST**, and profits
+> are reported after costs as business income (31.2% at the financial-year level, losses carried), not as a VDA flat tax per trade.
+>
+> **Earlier status blocks (kept as history).** 2026-10-17: four accounts, including `EQUITY_SWING`, `DRYRUN_ACCOUNT` and `CRYPTO_CALM` — all
+> removed since (git history has them). 2026-10-14: crypto and MCX `gold_crude` removed. 2026-10-12: MCX commodity removed; it returned as
+> `trend_carry` on 2026-10-15. 2026-10-10: the 5-minute scalpers deleted. The old crypto spot paper trader, the options module and the
+> ML/regime machinery are gone too (git history). Sections further down that describe intraday scalpers, MCX scalping or `cli.py backtest`
+> are history as well.
+>
+> Earlier notes, still useful for context: the equity scalper was rebuilt once to fix a survivorship-biased universe and Upstox's flat
+> brokerage cap, then switched off on 2026-10-07 because its validations used a fill model that sold stops at prices the market had already
+> passed (with real fills it loses in every year 2022-26 — see the "Fill model" section below); the rebuild's universe analysis is in git
+> history.
 
 ---
 
@@ -59,9 +70,7 @@ The framework provides an end-to-end quantitative trading infrastructure:
 
 ## System Architecture Flow
 
-![HFT Trading System Architecture & Execution Flowchart](docs/images/system_architecture.png)
-
-The framework is architected into 5 modular, production-grade layers:
+The framework is architected into 5 modular layers (the diagram that used to sit here is in git history):
 1. **Real-Time Data Ingestion Layer**: ingests real-time 5-minute bar feeds via Upstox and parses the official daily MCX/NSE master contracts.
 2. **Microstructure Feature Engine**: computes Parkinson volatility, volume surge ratios, EMA slope, ADX/DMI trend expansion, and VWAP distance.
 3. **Quantitative Signal Engine & Regime Gate**: pure rule-based momentum breakout core with multi-symbol daily-return autocorrelation regime gates (blocks trading on choppy/mean-reverting days).
@@ -78,7 +87,7 @@ backend/
 ├── .env / .env.example / requirements.txt
 │
 ├── engine/                           # What runs: runners + plumbing
-│   ├── live_dryrun.py                # 24/7 paper-trading daemon (commodity + currency + equity)
+│   ├── live_dryrun.py                # RETIRED 24/7 intraday paper daemon (kept, nothing left for it to trade)
 │   ├── live_trading.py               # Real-order engine -- gated by the multi-layer safety switch
 │   ├── safety_gate.py                # Layered live-trading kill switch (source constant + .env flag + armed-state file)
 │   ├── database.py                   # SQLite persistence: accounts, orders, positions, trades, snapshots
@@ -95,13 +104,13 @@ backend/
 │                                     # a new strategy (e.g. swing) = a new sibling folder of scalping/
 │
 ├── core/                             # Market-agnostic logic
-│   ├── regime.py  regime_shift.py    # daily-return autocorrelation gate; out-of-distribution gate
+│   ├── regime.py                     # daily-return autocorrelation gate (used by the retired runners)
 │   ├── slippage.py                   # real bid/ask spread -> adaptive slippage
 │   ├── sector_correlation.py
-│   ├── strategy.py                   # THE strategy contract (Strategy, Signal, contexts) -- see docs/ADDING_A_STRATEGY.md
+│   ├── strategy.py                   # the Strategy contract (Strategy, Signal, contexts) -- used by the RETIRED runners, see its docstring
 │   ├── registry.py                   # auto-discovers markets/*/*/strategy.py; picks the active ones from <MARKET>_STRATEGIES
 │   ├── exits.py                      # reusable exit managers (fixed TP + breakeven trail; activation trail)
-│   ├── risk.py                       # heat / margin gates shared by the paper and live runners
+│   ├── risk.py                       # heat / margin gates for the RETIRED paper/live runners (the three live engines size their own trades)
 │   ├── sessions.py                   # trading-session windows per market
 │   └── paths.py                      # single source of truth for every filesystem path
 │
@@ -165,7 +174,7 @@ Structurally different from commodity/currency in three ways, all deliberate:
 
 | | Status | Result |
 |---|---|---|
-| **Full NIFTY50 (49 names)** | **Off since 2026-10-07** (`ENABLE_EQUITY_TRADING=false`; the validation below used the pre-fix fill model, [docs/FILL_MODEL_AUDIT.md](docs/FILL_MODEL_AUDIT.md)) | Validated across **3 independent train/test folds** (2023-09→2024-08, 2024-07→2025-06, 2025-07→2026-09): win rate 64.7–68.0%, profit factor 1.41–1.56, all three net-positive with no exceptions. |
+| **Full NIFTY50 (49 names)** | **Off since 2026-10-07** (`ENABLE_EQUITY_TRADING=false`; the validation below used the pre-fix fill model — the audit is in git history) | Validated across **3 independent train/test folds** (2023-09→2024-08, 2024-07→2025-06, 2025-07→2026-09): win rate 64.7–68.0%, profit factor 1.41–1.56, all three net-positive with no exceptions. |
 
 **Why the original version failed, root-caused (not just re-asserted):** beyond the circular universe selection above, its untuned entry rules generated ~7,700 trades over 4 years averaging just ₹4.07 gross profit each — but ₹17.02 in fees each (mostly Upstox's flat ~₹20-per-leg brokerage cap). Every trade had negative expected value after costs, so capital was mathematically guaranteed to decay toward zero over enough trades, confirmed by testing risk-per-trade from 0.5% to 5% and concurrency caps from 3 to 10 — all converged to the same near-total wipeout. The fix wasn't better risk management, it was fewer, higher-conviction trades (`min_ema_slope` raised to 0.22, a much stronger trend-strength requirement) so each trade's edge meaningfully exceeds the flat fee floor.
 
@@ -274,13 +283,19 @@ Drawdown-scaled position sizing (5 / 10 / 15% drawdown → 10 / 25 / 50% smaller
 
 | Variable | Default | Description |
 |---|---|---|
-| `ALLOW_LIVE_TRADING` | `false` | Gate 2 of 3 (Gate 1 is `KILL_SWITCH_ENGAGED` in `engine/safety_gate.py`, Gate 3 is the armed-state file from `cli.py arm-live-trading`). Read `docs/LIVE_TRADING_ARMING.md` in full before touching it. |
+| `ALLOW_LIVE_TRADING` | `false` | Gate 2 of 3 (Gate 1 is `KILL_SWITCH_ENGAGED` in `engine/safety_gate.py`, Gate 3 is the armed-state file from `cli.py arm-live-trading`). Read `engine/safety_gate.py` in full before touching it — and note that the crypto engine's Delta demo orders need these gates too. |
 
 ---
 
 ## Adding a strategy
 
-A strategy is **one class in one file** — `markets/<market>/strategies/<timeframe>/<name>/strategy.py` exposing `STRATEGY` (`python3 cli.py new-strategy --market equity --name swing` creates the template). You write the decisions (entry, sizing, exit, costs); the paper runner and the real-order runner both pick it up automatically and apply the same kill switches, cooldowns, heat/margin limits, sector cap and drawdown-scaled sizing, place orders with the right product type, persist the position across restarts, and tag every order and trade with the strategy name. Switch it on with `EQUITY_STRATEGIES=scalping,swing` (or the commodity / currency equivalent); a strategy that isn't named there never trades. Overnight/delivery strategies (`intraday = False`, `product = "D"`, `uses_leverage = False`) are supported. Full guide and a template: **[docs/ADDING_A_STRATEGY.md](docs/ADDING_A_STRATEGY.md)**. A swing-strategy research study across all three markets (documented rules, real-data train/test, costs) is in **[docs/SWING_RESEARCH.md](docs/SWING_RESEARCH.md)** — its result: no equity or currency swing rule survives out-of-sample, and one commodity rule (12-month momentum, `markets/commodity/strategies/tf_daily/swing`) is added as an unproven, off-by-default paper candidate. Since 2026-10-07 it is **on in paper trading** and commodity scalping is off (weak evidence and 30-60% drawdowns: see the re-test in that doc).
+There are two shapes today, and only the second one trades:
+
+**1. The `Strategy` contract** — `markets/<market>/strategies/<timeframe>/<name>/strategy.py` exposing `STRATEGY` (`python3 cli.py new-strategy --market equity --name swing` creates the template), discovered through `core/registry.py` and run by `engine/live_dryrun.py` / `engine/live_trading.py`. **Those runners are retired** (equity and currency were removed 2026-10-21), so a strategy written this way is *not* picked up by any running engine unless a runner is brought back. The contract itself is documented in `core/strategy.py`; there is no separate guide file.
+
+**2. What the three live engines do** — each engine (`engine/crypto_dip_reversal.py`, `engine/mcx_trend_carry.py`, `engine/results_gap.py`) names its strategy module in code, owns its own execution, sizing and state file, and is scheduled by its own systemd timer. Adding a strategy to one of those markets means writing the strategy module plus an engine like those (and a timer), then recording it in `backend/markets/README.md`. There is no shared-gate layer between them: each engine implements its own risk rules, which is why they are reviewed one by one.
+
+Project rule either way: a credible backtest (>= 15 trades) and a genuine held-out test window on the real cost model before a strategy is switched on, then paper trading.
 
 ---
 

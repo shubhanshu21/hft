@@ -122,6 +122,38 @@ class TestEngine(unittest.TestCase):
         out = E.run(self.db, FakeBroker({}), self.at(9, 30), set(), self.lookup, send=None)
         self.assertIn("No usable 09:30 quotes", out[0])
 
+    def test_a_failed_quote_fetch_does_not_burn_the_day(self):
+        # 2026-10-26 in the live account: the 09:30 run got no quotes, marked the day done, and took no trade even though prices
+        # were back minutes later. The day must stay open for the 09:40 retry.
+        out = E.run(self.db, FakeBroker({}), self.at(9, 30), set(), self.lookup, send=None)
+        self.assertIn("retrying at the next slot", out[0])
+        self.assertNotEqual(E._state().get("entered_on"), "2026-10-26")
+        E.run(self.db, FakeBroker(quotes(BIG)), self.at(9, 40), set(), self.lookup, send=None)
+        pos = self.db.get_open_positions(E.ACCOUNT)
+        self.assertEqual([p["symbol"] for p in pos], ["WIN"])
+        state = json.loads(pos[0]["state"])
+        self.assertTrue(state["late"])
+        self.assertEqual(state["entry_slot"], "09:40")
+
+    def test_the_retried_entry_says_it_was_late(self):
+        E.run(self.db, FakeBroker({}), self.at(9, 30), set(), self.lookup, send=None)
+        out = E.run(self.db, FakeBroker(quotes(BIG)), self.at(9, 40), set(), self.lookup, send=None)
+        self.assertTrue(any("DELAYED" in ln and "BOUGHT WIN" in ln for ln in out))
+
+    def test_it_gives_the_day_up_once_the_retry_window_closes(self):
+        E.run(self.db, FakeBroker({}), self.at(9, 30), set(), self.lookup, send=None)
+        out = E.run(self.db, FakeBroker({}), self.at(9, 46), set(), self.lookup, send=None)
+        self.assertIn("giving up on today", out[0])
+        self.assertEqual(E._state()["entered_on"], "2026-10-26")
+        E.run(self.db, FakeBroker(quotes(BIG)), self.at(9, 50), set(), self.lookup, send=None)   # and it really is done
+        self.assertEqual(self.db.get_open_positions(E.ACCOUNT), [])
+
+    def test_three_failed_attempts_is_enough(self):
+        for hh, mm in ((9, 30), (9, 35), (9, 40)):
+            E.run(self.db, FakeBroker({}), self.at(hh, mm), set(), self.lookup, send=None)
+        self.assertEqual(E._state()["entered_on"], "2026-10-26")
+        self.assertEqual(E._state()["entry_attempts"], E.MAX_ENTRY_ATTEMPTS)
+
 
 class TestResetKnowsTheAccount(unittest.TestCase):
     def test_reset_registry(self):

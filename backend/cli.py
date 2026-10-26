@@ -76,7 +76,8 @@ def cmd_new_strategy(args):
         sys.exit(f"error: {exc}")
     print(f"Created {path.relative_to(Path(__file__).parent)}\n"
           f"Fill in entry() / manage() / costs(), then switch it on with {args.market.upper()}_STRATEGIES=scalping,{args.name} in .env.\n"
-          f"Guide: docs/ADDING_A_STRATEGY.md")
+          f"Contract: core/strategy.py. Note it is only run by the RETIRED runners (engine/live_dryrun.py, engine/live_trading.py) --"
+          f" the three live engines name their strategy module directly (see markets/README.md).")
 
 
 def cmd_arm_live_trading(args):
@@ -178,7 +179,7 @@ def main():
     p_disarm.add_argument("--component", default=None, choices=["upstox", "ALL", None])
     p_disarm.set_defaults(func=cmd_disarm_live_trading)
 
-    p_new = subparsers.add_parser("new-strategy", help="Create a new strategy file from a template (see docs/ADDING_A_STRATEGY.md)")
+    p_new = subparsers.add_parser("new-strategy", help="Create a new strategy file from a template (contract: core/strategy.py)")
     p_new.add_argument("--market", required=True, choices=["currency", "equity"])
     p_new.add_argument("--name", required=True, help="strategy name, e.g. swing (lowercase, digits, underscores)")
     p_new.add_argument("--timeframe", default="5min", choices=["5min", "15min", "1hour", "daily"],

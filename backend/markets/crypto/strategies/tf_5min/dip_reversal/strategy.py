@@ -49,17 +49,18 @@ that strategy's own freqtrade-screen ranked below this one on the same 2022-26 d
 """
 from __future__ import annotations
 
-import time
-from pathlib import Path
+import json
+from datetime import datetime, timezone
 
 import numpy as np
 import pandas as pd
-import requests
 
-from core.paths import ARCHIVE_ROOT
+from core.atomic_io import write_json
+from core.paths import ARCHIVE_ROOT, CACHE_DIR
 from core.backtester import metrics
 
 DATA_DIR = ARCHIVE_ROOT / "crypto"
+_VOL_CACHE_FILE = CACHE_DIR / "crypto_vol_scale.json"
 TAX = 0.312
 COINS = ("BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "AVAX", "DOT", "LTC", "TRX")  # DOT/LTC/TRX added 2026-10-21 (data already
 # on disk); LINK removed 2026-10-22 -- lost money in BOTH the dev window (Rs-2.66L) and the held-out test window (Rs-0.29L), a
@@ -164,18 +165,53 @@ def market_vol_scale_series() -> pd.Series:
     return (VOL_TARGET / vol20).clip(VOL_LO, VOL_HI).shift(1)
 
 
-def current_vol_scale() -> float:
-    """The risk-size scale for right now, from the latest completed day. 1.0 (no change) if there isn't enough history yet."""
+def current_vol_scale(use_cache: bool = True) -> float:
+    """The risk-size scale for right now, from the latest completed day. 1.0 (no change) if there isn't enough history yet.
+
+    Rebuilding it means reading all 11 archived 5-minute CSVs (~265 MB) and resampling them -- measured at 17.3 s on 2026-10-26,
+    which the live engine paid on every entry, twice (once to size the trade, once for the message), inside a 5-minute job. The
+    result only changes when the nightly top-up rewrites those files, so it is cached in var/cache keyed by each file's
+    mtime+size and memoised in the process; a stale cache can never be used because the key is the archive itself."""
+    key = _vol_key()
+    if use_cache:
+        if _VOL_MEMO.get("key") == key:
+            return float(_VOL_MEMO["value"])
+        try:
+            cached = json.loads(_VOL_CACHE_FILE.read_text())
+            if cached.get("key") == key and isinstance(cached.get("value"), (int, float)):
+                _VOL_MEMO.update(key=key, value=float(cached["value"]))
+                return float(cached["value"])
+        except (OSError, ValueError):
+            pass
     s = market_vol_scale_series().dropna()
-    return float(s.iloc[-1]) if len(s) else 1.0
+    value = float(s.iloc[-1]) if len(s) else 1.0
+    if use_cache:
+        _VOL_MEMO.update(key=key, value=value)
+        try:
+            write_json(_VOL_CACHE_FILE, {"key": key, "value": value, "computed_at": datetime.now(timezone.utc).isoformat(timespec="seconds")})
+        except OSError:
+            pass                                       # a read-only cache dir must not stop a trading run
+    return value
+
+
+def _vol_key() -> list:
+    """What the cached scale was built from: every archived 5-minute file's identity, so a top-up invalidates it."""
+    key = []
+    for c in COINS:
+        try:
+            st = (DATA_DIR / f"{c}_5m.csv").stat()
+        except OSError:
+            continue
+        key.append([c, st.st_mtime_ns, st.st_size])
+    return key
 
 
 _CACHE: dict = {}
+_VOL_MEMO: dict = {}
 
 
 def load_5m_data(coins: list[str]) -> dict:
     """5-minute OHLC + the entry/exit indicators, cached per coin. Call markets.crypto.data.topup_5m() first to keep this current."""
-    global _CACHE
     for c in [c for c in coins if c not in _CACHE]:
         df = pd.read_csv(DATA_DIR / f"{c}_5m.csv", parse_dates=["date"]).sort_values("date").reset_index(drop=True)
         df["date"] = df["date"].dt.tz_localize(None)

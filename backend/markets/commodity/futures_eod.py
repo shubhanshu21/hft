@@ -17,7 +17,6 @@ from __future__ import annotations
 import gzip
 import json
 import logging
-import re
 import sys
 from datetime import date, timedelta
 from pathlib import Path

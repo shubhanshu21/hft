@@ -5,6 +5,7 @@ A reset deletes that account's trade history, so it is deliberately hard to do b
   * the whole database is backed up first (var/db/backups/pre_reset_<account>_<time>.db) -- a reset can always be undone with
     `python3 -m engine.backup_db --restore <that file>`;
   * only rows of that account are touched (trades, positions, orders, daily snapshots); the other account is left alone;
+  * the engine's state file is rewritten atomically (core/atomic_io.py), so a crash cannot leave a half-written one;
   * it holds the same per-account lock the paper engine holds while it runs (account_lock), so a reset never lands in the middle of
     an engine run that would then write the old state back.
 
@@ -83,6 +84,7 @@ def reset_account(account_id: str, confirm: str, db_path: Path | None = None, st
         if real:                                                # a real Delta demo order would be orphaned on the exchange
             raise ResetError(f"Close the real Delta demo positions first: {', '.join(real)}")
         from engine.backup_db import BACKUP_DIR, backup_once
+        from core.atomic_io import write_json
         saved = backup_once(db_path, backup_dir or BACKUP_DIR, kind=f"pre_reset_{account_id.lower()}")
         if not saved:
             raise ResetError("Could not back up the database, so nothing was reset")
@@ -99,5 +101,5 @@ def reset_account(account_id: str, confirm: str, db_path: Path | None = None, st
                             (now, now, account_id))
         finally:
             con.close()
-        state_file.write_text(json.dumps(_fresh_state(account_id, capital, now), indent=2))
+        write_json(state_file, _fresh_state(account_id, capital, now))
     return {"account": account_id, "capital": capital, "deleted": deleted, "backup": str(saved), "reset_at": now}

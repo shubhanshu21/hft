@@ -134,7 +134,8 @@ def audit_trade(trade: dict, candles: pd.DataFrame | None, suffix: str = "1minut
             out.findings.append(Finding(tid, sym, "unarmed_breakeven", f"{why} but breakeven level {be} never reached (range {lo}-{hi})"))
 
     # -- entry sanity and fill offset --
-    recent = candles[(candles["ts"] >= e_bar - pd.Timedelta(minutes=ENTRY_LOOKBACK_MIN)) & (candles["ts"] <= e_bar)]
+    # plain datetime.timedelta: pd.Timedelta(minutes=...) raises a numpy DeprecationWarning about the generic unit under pandas 2.2 + numpy 2.x
+    recent = candles[(candles["ts"] >= e_bar - timedelta(minutes=ENTRY_LOOKBACK_MIN)) & (candles["ts"] <= e_bar)]
     if len(recent):
         if not (float(recent["low"].min()) * (1 - TOL) <= entry <= float(recent["high"].max()) * (1 + TOL)):
             out.findings.append(Finding(tid, sym, "entry_off_market",

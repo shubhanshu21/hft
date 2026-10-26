@@ -77,7 +77,7 @@ class TradingDB:
                 account_id TEXT DEFAULT 'DRYRUN_ACCOUNT',
                 symbol TEXT NOT NULL,
                 direction TEXT NOT NULL,       -- long / short
-                qty INTEGER NOT NULL,
+                qty REAL NOT NULL,             -- shares/lots for NSE & MCX, coin units for crypto (fractional) -- REAL since 2026-10-26
                 entry_price REAL NOT NULL,
                 current_stop REAL NOT NULL,
                 target_price REAL NOT NULL,
@@ -103,7 +103,7 @@ class TradingDB:
                 account_id TEXT DEFAULT 'DRYRUN_ACCOUNT',
                 symbol TEXT NOT NULL,
                 direction TEXT NOT NULL,
-                qty INTEGER NOT NULL,
+                qty REAL NOT NULL,             -- REAL: a crypto position is not a whole number of coins
                 entry_price REAL NOT NULL,
                 exit_price REAL NOT NULL,
                 entry_dt TEXT NOT NULL,
@@ -308,6 +308,12 @@ class TradingDB:
                 (account_id,)
             ).fetchall()
             return [dict(r) for r in rows]
+
+    def get_position(self, position_id: str) -> Optional[dict]:
+        """One position row by id, open or closed -- lets a runner tell "already booked" from "still open" after a crash."""
+        with self._get_conn() as conn:
+            row = conn.execute("SELECT * FROM positions WHERE position_id = ?", (position_id,)).fetchone()
+            return dict(row) if row else None
 
     def get_position_ids(self, account_id: str = "DRYRUN_ACCOUNT") -> set[str]:
         """Every position id the account has, open or closed."""

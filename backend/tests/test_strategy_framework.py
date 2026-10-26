@@ -257,7 +257,7 @@ class TestScaffold(unittest.TestCase):
         self.assertTrue((root / "equity" / "strategies" / "tf_5min" / "swing_trend" / "__init__.py").exists())
 
     def test_strategies_of_one_market_and_timeframe_sit_side_by_side_by_timeframe(self):
-        from core import registry, scaffold
+        from core import scaffold
         root = Path(tempfile.mkdtemp())
         a = scaffold.create("currency", "carry", root=root, timeframe="daily")
         b = scaffold.create("currency", "trend", root=root, timeframe="daily")

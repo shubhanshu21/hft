@@ -11,7 +11,6 @@ from pathlib import Path
 from core.slippage import (
     adaptive_slippage_per_leg,
     set_spread_log_path,
-    _load_spread_stats,
 )
 
 

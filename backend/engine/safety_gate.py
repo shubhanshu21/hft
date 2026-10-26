@@ -34,7 +34,6 @@ from __future__ import annotations
 
 from core.paths import DB_DIR
 import logging
-from pathlib import Path
 
 log = logging.getLogger("safety_gate")
 

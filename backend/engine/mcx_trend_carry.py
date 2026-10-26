@@ -21,6 +21,7 @@ from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 
+from core.atomic_io import read_json, write_json
 from core.paths import DB_DIR
 from markets.commodity import futures_eod
 from markets.commodity.costs import compute_mcx_costs, lot_units
@@ -38,14 +39,11 @@ def _inr(v: float) -> str:
 
 
 def _state() -> dict:
-    try:
-        return json.loads(STATE.read_text())
-    except (OSError, ValueError):
-        return {}
+    return read_json(STATE)
 
 
 def _save_state(st: dict) -> None:
-    STATE.write_text(json.dumps(st, indent=1))
+    write_json(STATE, st, indent=1)        # atomic: a crash mid-write must not leave a truncated state file
 
 
 def needs_rebalance(st: dict, signal_day: pd.Timestamp, days: list, open_pos: list, known_ids: set) -> bool:

@@ -6,7 +6,6 @@ with automatic background reconnection, thread-safe quote caching, and graceful 
 """
 from __future__ import annotations
 
-import logging
 import threading
 import time
 from typing import Any, Dict, List, Optional, Set

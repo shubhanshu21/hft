@@ -279,9 +279,18 @@ def ensure_master(force: bool = False) -> None:
 
     nse_downloaded = force or not _cache_is_fresh(_META_FILE, _CACHE_FILE)
     if nse_downloaded:
-        _download_master()
-    if nse_downloaded or stale_in_process or not _SYMBOL_KEY_MAP:
+        # Untreated (fixed 2026-10-26: it used to raise straight through ensure_master), a network blip on the daily download
+        # killed the whole 09:30 results_gap run even though yesterday's master was sitting on disk and is almost certainly
+        # still correct. Same fallback as the MCX half below: keep the cached file, log, carry on.
+        try:
+            _download_master()
+        except Exception as e:
+            log.warning("Could not download NSE master: %s -- using the cached copy if there is one", e)
+            nse_downloaded = False
+    if _CACHE_FILE.exists() and (nse_downloaded or stale_in_process or not _SYMBOL_KEY_MAP):
         _load_master()
+    elif not _CACHE_FILE.exists():
+        log.error("No NSE instrument master on disk and the download failed -- no NSE symbols can be resolved today")
 
     mcx_downloaded = force or not _cache_is_fresh(_MCX_META_FILE, _MCX_CACHE_FILE)
     if mcx_downloaded:

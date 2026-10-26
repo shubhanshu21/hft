@@ -14,10 +14,11 @@ MON_0910 = datetime(2026, 10, 26, 9, 10, 4, tzinfo=IST)
 
 
 MON_0930 = datetime(2026, 10, 26, 9, 30, 9, tzinfo=IST)
+MON_0940 = datetime(2026, 10, 26, 9, 40, 6, tzinfo=IST)     # the buy-retry slot added 2026-10-26
 ALL_TIMERS = ("hft-crypto-dip-reversal.timer", "hft-mcx-trend-carry.timer", "hft-results-gap.timer")
 
 
-def fake_sh(active=ALL_TIMERS, crypto=("success", None), mcx=("success", MON_0910), rg=("success", MON_0930)):
+def fake_sh(active=ALL_TIMERS, crypto=("success", None), mcx=("success", MON_0910), rg=("success", MON_0940)):
     def sh(*args):
         if args[0] == "is-active":
             return "active" if args[1] in active else "inactive"
@@ -40,9 +41,9 @@ class Base(unittest.TestCase):
     def crypto_saved(self, at):
         self.crypto.write_text(json.dumps({"updated_at": at.isoformat()}))
 
-    def check(self, now, sh=None, token_ok=lambda: True, dry_run=False):
+    def check(self, now, sh=None, token_ok=lambda: True, dry_run=False, journal=None):
         return M.check(now, sh=sh or fake_sh(), crypto_state=self.crypto, token_ok=token_ok, notify=self.sent.append,
-                       state_path=self.state, dry_run=dry_run)
+                       state_path=self.state, dry_run=dry_run, journal=journal or (lambda cmd: ""))
 
 
 class TestProblems(Base):
@@ -120,8 +121,40 @@ class TestAlerts(Base):
         self.assertFalse(self.state.exists())
 
 
-if __name__ == "__main__":
-    unittest.main()
+class TestFailedRunIsNotMasked(Base):
+    """2026-10-26: `systemctl show` only reports the LAST exit, so a failed 09:30 results-gap run disappeared as soon as the 15:20
+    run succeeded. The journal keeps every invocation."""
+
+    FAILED = "Failed with result 'exit-code'.\n"
+
+    def test_a_failed_morning_run_is_still_reported_later(self):
+        self.crypto_saved(MON_10)
+        p = self.check(MON_10, journal=lambda cmd: self.FAILED)["problems"]       # the 15:20 run itself succeeded
+        self.assertIn("rg_failed", p)
+        self.assertIn("1 failed run", p["rg_failed"])
+        self.assertIn("mcx_failed", p)
+
+    def test_the_real_journal_line_with_the_unit_name_first_counts(self):
+        # what journalctl -o cat really prints (seen on this server): the unit name, then the message
+        real = "hft-results-gap.service: Main process exited, code=exited, status=1/FAILURE\n" \
+               "hft-results-gap.service: Failed with result 'exit-code'.\n"
+        self.assertEqual(M.failed_runs("hft-results-gap.service", MON_10, run=lambda cmd: real), 1)
+        self.crypto_saved(MON_10)
+        self.assertIn("rg_failed", self.check(MON_10, journal=lambda cmd: real)["problems"])
+
+    def test_a_clean_journal_raises_nothing(self):
+        self.crypto_saved(MON_10)
+        p = self.check(MON_10, journal=lambda cmd: "Finished with result: success")["problems"]
+        self.assertNotIn("rg_failed", p)
+        self.assertNotIn("mcx_failed", p)
+
+    def test_an_unreadable_journal_is_not_an_alarm(self):
+        self.crypto_saved(MON_10)
+
+        def boom(cmd):
+            raise OSError("no journal")
+
+        self.assertNotIn("rg_failed", self.check(MON_10, journal=boom)["problems"])
 
 
 class TestEngineStatus(Base):
@@ -155,9 +188,9 @@ class TestResultsGapMonitor(Base):
     def test_rg_running_and_missed(self):
         self.crypto_saved(MON_10)
         self.assertEqual(self.check(MON_10)["problems"], {})
-        p = self.check(MON_10, sh=fake_sh(rg=("success", FRI_2340)))["problems"]
+        p = self.check(MON_10 + timedelta(minutes=10), sh=fake_sh(rg=("success", FRI_2340)))["problems"]
         self.assertIn("rg_missed", p)
-        self.assertIn("09:30", p["rg_missed"])
+        self.assertIn("09:40", p["rg_missed"])                     # the retry slot is the last one due by then
 
     def test_rg_status_text(self):
         st = M.engine_status("RESULTS_GAP", MON_10, sh=fake_sh())
@@ -178,3 +211,15 @@ class TestResultsGapMonitor(Base):
         self.assertIn("rg_no_prices", self.check(MON_10)["problems"])
         st.write_text(json.dumps({"entered_on": "2026-10-26", "last_check": {"candidates": 43, "market_gap": -0.0035, "signals": []}}))
         self.assertNotIn("rg_no_prices", self.check(MON_10)["problems"])
+
+    def test_rg_no_prices_before_the_retry_slot_is_not_an_alert_yet(self):
+        # 09:42: the 09:40 retry may still bring prices back -- the engine alerts by itself on each failed attempt
+        self.crypto_saved(MON_10)
+        (self.dir / "results_gap_state.json").write_text(json.dumps(
+            {"entry_date": "2026-10-26", "entry_attempts": 1, "last_check": {"market_gap": None}}))
+        self.assertNotIn("rg_no_prices", self.check(datetime(2026, 10, 26, 9, 42, tzinfo=IST))["problems"])
+        self.assertIn("rg_no_prices", self.check(datetime(2026, 10, 26, 9, 46, tzinfo=IST))["problems"])
+
+
+if __name__ == "__main__":
+    unittest.main()

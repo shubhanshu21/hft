@@ -11,9 +11,7 @@ Saved to var/archive/crypto/<COIN>_4h.csv with columns:
 from __future__ import annotations
 
 import argparse
-import sys
 import time
-from pathlib import Path
 
 import pandas as pd
 import requests

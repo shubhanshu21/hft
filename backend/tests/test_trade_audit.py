@@ -77,6 +77,18 @@ class TestPhantomExits(unittest.TestCase):
         self.assertAlmostEqual(res.fill_offset_bps, (8864.0 / 8891.0 - 1) * 1e4, places=6)     # vs the entry bar's (20:59) close, long
 
 
+class TestNoDeprecationNoise(unittest.TestCase):
+    """The nightly job runs unattended: an audit must not emit warnings that a future numpy/pandas turns into errors."""
+
+    def test_auditing_a_trade_raises_no_deprecation_warning(self):
+        import warnings
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            audit_trade(_trade(entry_price=8864.0, exit_reason="timeout_exit", exit_price=8878.0, exit_dt=f"2026-09-23T21:01:20{TZ}"), CRUDE)
+        dep = [str(w.message) for w in caught if issubclass(w.category, DeprecationWarning)]
+        self.assertEqual(dep, [], f"audit_trade emitted DeprecationWarning(s): {dep}")
+
+
 class TestReport(unittest.TestCase):
     def test_summary_counts_flags_and_no_data(self):
         text, n = format_report([audit_trade(_trade(), CRUDE), audit_trade(_trade(trade_id=2), None)])

@@ -96,14 +96,12 @@ import os
 import sys
 import time
 from datetime import datetime, timedelta
-from pathlib import Path
 from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(BACKEND_ROOT))
 
 import engine.safety_gate as safety_gate
 from services.auth.upstox_auto_login import ensure_fresh_upstox_token
-from services.broker.feed_streamer import UpstoxFeedStreamer
 from services.broker.order_manager import SmartOrderManager
 from services.broker.upstox_broker import UpstoxBroker, token_invalid_event
 from engine.config import UpstoxConfig
@@ -116,7 +114,6 @@ from core.strategy import EntryContext, ExitContext
 from markets.equity.universe import NIFTY50_SYMBOLS
 from core.sector_correlation import SectorCorrelationGate
 from services.broker.instruments import build_currency_map, get_instrument_key
-import pandas as pd
 from services.utils.logger import get_logger, setup_logger
 from services.utils import telegram
 

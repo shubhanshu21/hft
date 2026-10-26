@@ -112,7 +112,6 @@ def run_backtest(strategy: Strategy, symbols: list[str], start: str, end: str, *
     pending: list[dict] = []                   # signals decided yesterday, filled today
     closed: list[dict] = []
     out = {"days": [], "equity": [], "events": [], "pos": []}
-    day_index = {d: i for i, d in enumerate(days)}
     last_close = {s: None for s in frames}
     bars_cache: dict[str, list] = {}                           # [o, h, l, c] per calendar day, built once per symbol the first time it trades
     all_days = [d.strftime("%Y-%m-%d") for d in days]

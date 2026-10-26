@@ -164,7 +164,6 @@ def run() -> dict:
             tmp = Path(tempfile.mkdtemp()) / "s.db"
             broker = FakeBroker(**bk); broker._last_price = price
             trader = _trader(broker, str(tmp))
-            lot = 1 if market == "equity" else 1000
             qty = 2500 if market == "equity" else 5
             entry = {"USDINR": 95.75, "TATASTEEL": 189.9, "SBIN": 800.0}[sym]
             trader.db.open_position(position_id="POS1", symbol=sym, direction=direction, qty=qty, entry_price=entry,

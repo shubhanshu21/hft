@@ -81,12 +81,24 @@ class DeltaDemoBroker:
                 out[sym] = {"size": size, "entry_price": float(p.get("entry_price") or 0)}
         return out
 
-    def place_market_order(self, coin: str, side: str, contracts: int) -> dict:
-        """side: 'buy' or 'sell'. Returns the order's result dict (id, state, average_fill_price once filled)."""
+    def _product(self, coin: str) -> int:
+        """product_id for a testnet coin. Every order path goes through here so an unknown/typo'd coin can never reach the API."""
         if coin not in PRODUCTS:
             raise ValueError(f"{coin} is not on Delta's testnet product list")
-        product_id, _ = PRODUCTS[coin]
-        body = {"product_id": product_id, "size": int(contracts), "side": side, "order_type": "market_order"}
+        return PRODUCTS[coin][0]
+
+    @staticmethod
+    def _check_size(contracts: int) -> int:
+        """A zero or negative size is a bug in the caller, not an order: refuse it here rather than let the API interpret it."""
+        n = int(contracts)
+        if n < 1:
+            raise ValueError(f"order size must be at least 1 contract, got {contracts!r}")
+        return n
+
+    def place_market_order(self, coin: str, side: str, contracts: int) -> dict:
+        """side: 'buy' or 'sell'. Returns the order's result dict (id, state, average_fill_price once filled)."""
+        product_id = self._product(coin)
+        body = {"product_id": product_id, "size": self._check_size(contracts), "side": side, "order_type": "market_order"}
         return self._request("POST", "/v2/orders", body=body)
 
     def place_market_order_fit_margin(self, coin: str, side: str, contracts: int) -> dict:
@@ -114,10 +126,8 @@ class DeltaDemoBroker:
 
     def place_limit_order(self, coin: str, side: str, contracts: int, limit_price: float, reduce_only: bool = False) -> dict:
         """A resting GTC limit order (the take-profit: a maker fill if it's reached, not a market/taker exit)."""
-        if coin not in PRODUCTS:
-            raise ValueError(f"{coin} is not on Delta's testnet product list")
-        product_id, _ = PRODUCTS[coin]
-        body = {"product_id": product_id, "size": int(contracts), "side": side, "order_type": "limit_order",
+        product_id = self._product(coin)
+        body = {"product_id": product_id, "size": self._check_size(contracts), "side": side, "order_type": "limit_order",
                 "limit_price": str(round(limit_price, 8)), "time_in_force": "gtc", "reduce_only": reduce_only}
         return self._request("POST", "/v2/orders", body=body)
 
@@ -125,8 +135,7 @@ class DeltaDemoBroker:
         return self._request("GET", f"/v2/orders/{order_id}")
 
     def cancel_order(self, coin: str, order_id: int) -> dict:
-        product_id, _ = PRODUCTS[coin]
-        return self._request("DELETE", "/v2/orders", body={"id": order_id, "product_id": product_id})
+        return self._request("DELETE", "/v2/orders", body={"id": order_id, "product_id": self._product(coin)})
 
     def close_position(self, coin: str) -> dict | None:
         """Flatten an open position at market, whichever side it's on. No-op (returns None) if already flat."""

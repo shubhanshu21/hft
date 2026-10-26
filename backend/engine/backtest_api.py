@@ -10,12 +10,17 @@
 
 It only reads archived candles and runs the strategy code; it never talks to Upstox, touches the paper-trading database or places an order.
 Fees (the strategy's cost model) and slippage are always charged. One run at a time; results are saved in var/backtests/<id>.json.
-Binds to 127.0.0.1 -- nginx publishes /api/. No login: a run only uses CPU, so it is limited to one at a time, one start per address every
-COOLDOWN_S seconds, and the newest MAX_SAVED runs are kept.
+Binds to 127.0.0.1 -- nginx publishes /api/.
+
+Authentication (2026-10-26): nginx publishes this port to the internet, so the DESTRUCTIVE calls -- DELETE /api/backtests[/<id>] and
+POST /api/paper/reset -- require an `X-API-Token` header matching BACKTEST_ADMIN_TOKEN in backend/.env (the web page asks for it once and
+keeps it in the browser). With BACKTEST_ADMIN_TOKEN unset those calls are refused outright (fail closed); reading and starting a backtest
+stay open -- a run only uses CPU -- limited to one at a time, one start per address every COOLDOWN_S seconds, and the newest MAX_SAVED runs.
 """
 from __future__ import annotations
 
 import argparse
+import hmac
 import json
 import math
 import os
@@ -27,7 +32,6 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
 from urllib.parse import urlparse
 
 import pandas as pd
@@ -43,9 +47,24 @@ LIMITS = {"capital": (10_000, 1_000_000_000), "slippage_bp": (0, 100), "risk_pct
           "trail_stop_pct": (0, 30), "trail_after_pct": (0, 50), "profit_trail_pct": (0, 20)}
 COOLDOWN_S = 5
 MAX_SAVED = 200
+ADMIN_TOKEN_ENV = "BACKTEST_ADMIN_TOKEN"
+MAX_TRACKED_ADDRESSES = 2000
 _lock = threading.Lock()
 _running: dict | None = None
 _last_start: dict[str, float] = {}
+
+
+def admin_check(provided: str, expected: str | None = None) -> int | None:
+    """HTTP status to refuse a destructive request with, or None when it may proceed.
+
+    Fail closed: with no BACKTEST_ADMIN_TOKEN configured, nothing destructive is allowed at all (the page then says so) -- an
+    unauthenticated DELETE /api/backtests or POST /api/paper/reset is refused rather than silently accepted."""
+    expected = (os.environ.get(ADMIN_TOKEN_ENV, "") if expected is None else expected).strip()
+    if not expected:
+        return HTTPStatus.FORBIDDEN
+    if not provided or not hmac.compare_digest(str(provided).strip(), expected):
+        return HTTPStatus.UNAUTHORIZED
+    return None
 
 
 def universe(market: str) -> list[str]:
@@ -367,7 +386,7 @@ def _value_crypto(p: dict, live: dict) -> None:
     from engine.crypto_dip_reversal import fetch_live_prices
     st = json.loads(p.get("state") or "{}")
     q = live.get("crypto") or live.setdefault("crypto", fetch_live_prices())
-    price, fx = q.get("prices", {}).get(p["symbol"]), q.get("usdtinr", 92.5)
+    price, fx = q.get("prices", {}).get(p["symbol"]), q.get("usdtinr")      # no invented rate: no FX means no rupee valuation
     size = f"{p['direction']} · stop {p.get('current_stop', 0):,.4g}"
     p.update(market="crypto", lot_size=1, units=p["qty"], size_text=f"{p['qty']:g} {p['symbol']} · {size}", price_now=price,
              price_source="live" if price else None, price_time=q.get("timestamp"), bid=None, ask=None, checked_at=q.get("timestamp"),
@@ -552,8 +571,20 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, run)
         self._send(HTTPStatus.NOT_FOUND, {"error": "not found"})
 
+    def _admin_ok(self) -> bool:
+        """Answer the caller and return False when a destructive action is not authorised."""
+        status = admin_check(self.headers.get("X-API-Token") or "")
+        if status is None:
+            return True
+        msg = (f"Destructive actions are disabled: set {ADMIN_TOKEN_ENV} in backend/.env and restart the API." if status == HTTPStatus.FORBIDDEN
+               else "A valid X-API-Token header is required for this action.")
+        self._send(status, {"error": msg})
+        return False
+
     def do_POST(self) -> None:                                     # noqa: N802
         if urlparse(self.path).path.rstrip("/") == "/api/paper/reset":   # reset ONE paper account (backup first; must type its name)
+            if not self._admin_ok():
+                return
             try:
                 body = json.loads(self.rfile.read(min(int(self.headers.get("Content-Length") or 0), 2000)) or b"{}")
             except ValueError:
@@ -579,6 +610,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(HTTPStatus.NOT_FOUND, {"error": "not found"})
         who = self.headers.get("X-Real-IP") or self.client_address[0]
         now = time.time()
+        if len(_last_start) > MAX_TRACKED_ADDRESSES:                 # a public port sees many addresses; do not grow without bound
+            for k in [k for k, t in _last_start.items() if now - t > 3600]:
+                del _last_start[k]
         if now - _last_start.get(who, 0) < COOLDOWN_S:
             return self._send(HTTPStatus.TOO_MANY_REQUESTS, {"error": "Please wait a few seconds before starting another backtest"})
         try:
@@ -594,6 +628,8 @@ class Handler(BaseHTTPRequestHandler):
         self._send(HTTPStatus.ACCEPTED, {"id": run["id"], "status": run["status"]})
 
     def do_DELETE(self) -> None:                                   # noqa: N802
+        if not self._admin_ok():
+            return
         path = urlparse(self.path).path.rstrip("/")
         running = _running["id"] if _running else None
         if path == "/api/backtests":

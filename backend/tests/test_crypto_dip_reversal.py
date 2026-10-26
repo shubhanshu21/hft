@@ -2,6 +2,7 @@
 the NEXT candle's open (the live price for the newest candle), not the signal candle's own open; the trade starts on the candle it buys
 into; every candle since the last check is walked, so a missed run cannot skip a stop/target; labels show the real 15%/7%. Also: the
 volatility size scale uses finished days only, and the nightly job keeps the crypto archive current."""
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -84,6 +85,36 @@ class TestBarExit(unittest.TestCase):
         self.assertEqual((px, why, t), (100, E.TIME_WHY, T0 + (1 + S.TIME_STOP_BARS) * BAR))
 
 
+class TestDeltaOrdersNeedTheSafetyGates(unittest.TestCase):
+    """2026-10-26: DELTA_PLACE_REAL_ORDERS alone used to be the whole defence before an order went to an exchange. The three
+    gates in engine/safety_gate.py must also agree (and they are all shut by default)."""
+
+    def test_orders_are_simulated_when_only_the_env_flag_is_on(self):
+        with mock.patch.dict(E.os.environ, {"DELTA_PLACE_REAL_ORDERS": "true"}), \
+             mock.patch.object(E, "DeltaDemoBroker") as broker, \
+             mock.patch("engine.safety_gate.live_trading_allowed", return_value=False):
+            self.assertIsNone(E._delta())
+            broker.assert_not_called()
+
+    def test_orders_go_out_only_when_the_flag_and_all_gates_agree(self):
+        with mock.patch.dict(E.os.environ, {"DELTA_PLACE_REAL_ORDERS": "true"}), \
+             mock.patch.object(E, "DeltaDemoBroker") as broker, \
+             mock.patch("engine.safety_gate.live_trading_allowed", return_value=True):
+            E._delta()
+            broker.assert_called_once_with()
+
+    def test_the_flag_being_off_never_constructs_a_broker(self):
+        with mock.patch.dict(E.os.environ, {"DELTA_PLACE_REAL_ORDERS": "false"}), \
+             mock.patch.object(E, "DeltaDemoBroker") as broker, \
+             mock.patch("engine.safety_gate.live_trading_allowed", return_value=True):
+            self.assertIsNone(E._delta())
+            broker.assert_not_called()
+
+    def test_the_real_safety_gate_blocks_by_default(self):
+        from engine.safety_gate import KILL_SWITCH_ENGAGED
+        self.assertTrue(KILL_SWITCH_ENGAGED, "the source-code kill switch must stay on unless someone deliberately disarms it")
+
+
 class TestEngineRun(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
@@ -135,6 +166,89 @@ class TestEngineRun(unittest.TestCase):
         self.assertEqual(state["open_positions"]["DOT"]["last_checked_t"], T0 + 2 * BAR)
 
 
+class TestFxFallbackIsLoud(unittest.TestCase):
+    """2026-10-26: the USD/INR rate fell back to a hardcoded 92.5 with nothing said, so rupee P&L silently used a stale rate."""
+
+    def test_a_dead_fx_feed_is_flagged(self):
+        with mock.patch.object(E.requests, "get", side_effect=OSError("down")):
+            info = E.fetch_live_prices()
+        self.assertTrue(info["fx_fallback"])
+        self.assertEqual(info["usdtinr"], E.USDINR_FALLBACK)
+
+    def test_a_live_fx_feed_clears_the_flag(self):
+        resp = mock.Mock(status_code=200)
+        resp.json.return_value = {"rates": {"INR": 91.37}, "result": {"close": 100.0}}
+        with mock.patch.object(E.requests, "get", return_value=resp):
+            info = E.fetch_live_prices()
+        self.assertFalse(info["fx_fallback"])
+        self.assertEqual(info["usdtinr"], 91.37)
+
+    def test_a_run_that_uses_the_fallback_says_so(self):
+        db = TradingDB(Path(tempfile.mkdtemp()) / "t.db")
+        live = {"prices": {}, "usdtinr": E.USDINR_FALLBACK, "fx_fallback": True, "timestamp": ""}
+        with mock.patch.object(E, "STATE_FILE", Path(tempfile.mkdtemp()) / "s.json"), \
+             mock.patch.object(E, "fetch_live_prices", return_value=live), \
+             mock.patch.object(E.requests, "get", side_effect=OSError("no network in tests")):
+            out = E.run_iteration(db, send_fn=None)
+        self.assertTrue(any("fallback rate" in ln for ln in out["lines"]))
+
+
+class TestLedgerSurvivesACrash(unittest.TestCase):
+    """2026-10-26: the state file is the account's ledger. A half-written file used to be replaced with the defaults (Rs1L) and the
+    database overwritten to match; a crash between the DB write and the state write booked the same exit twice."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.state_path = self.tmp / "state.json"
+        self.db = TradingDB(self.tmp / "t.db")
+        self.db.init_account(E.ACCOUNT_ID, capital=100_000)
+        for p in (mock.patch.object(E, "STATE_FILE", self.state_path),
+                  mock.patch.object(E.requests, "get", side_effect=OSError("no network in tests")),
+                  mock.patch.object(S, "current_vol_scale", return_value=1.0)):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_an_unreadable_state_file_keeps_the_database_capital(self):
+        self.db.update_capital(E.ACCOUNT_ID, 173_500.0)
+        self.state_path.write_text('{"trading_capital": 1735')          # truncated by a crash mid-write
+        state = E.load_state(self.db)
+        self.assertEqual(state["trading_capital"], 173_500.0)
+        self.assertTrue(state["state_recovered"])
+
+    def test_a_recovered_state_says_so_out_loud(self):
+        self.state_path.write_text("not json at all")
+        out = E.run_iteration(self.db, send_fn=None)
+        self.assertTrue(any("recovered from the database" in ln for ln in out["lines"]))
+
+    def test_saving_is_atomic_and_keeps_the_previous_version(self):
+        E.save_state({"trading_capital": 1.0, "open_positions": {}})
+        E.save_state({"trading_capital": 2.0, "open_positions": {}})
+        self.assertEqual(json.loads(self.state_path.read_text())["trading_capital"], 2.0)
+        self.assertEqual(json.loads((self.tmp / "state.json.bak").read_text())["trading_capital"], 1.0)
+        self.assertEqual([p.name for p in self.tmp.iterdir() if p.name.endswith(".tmp")], [])
+
+    def test_a_position_already_closed_in_the_database_is_not_booked_twice(self):
+        self.db.open_position("P", "DOT", "long", 10.0, 100.0, 93.0, 115.0, 100.0, account_id=E.ACCOUNT_ID)
+        self.db.close_position("P", 101.0, "stop", 10.0, 9.0, 1.0)      # the run that died before saving the state file
+        state = {"trading_capital": 100_000.0, "open_positions": {"DOT": position()}, "completed_trades_count": 0,
+                 "winning_trades_count": 0, "total_fees_paid": 0.0}
+        df = candles([FLAT, FLAT, (99.0, 101.5, 98.8, 101.2, 100.5)])
+        lines = []
+        E.process_exits(self.db, state, {"DOT": df}, {"usdtinr": 90.0, "prices": {"DOT": 101.25}}, lines, None)
+        self.assertNotIn("DOT", state["open_positions"])
+        self.assertEqual(state["trading_capital"], 100_000.0, "a re-run must not credit the same exit again")
+        self.assertEqual(len(self.db.get_trades(account_id=E.ACCOUNT_ID)), 0)
+
+    def test_a_normal_exit_is_booked_once(self):
+        self.db.open_position("P", "DOT", "long", 10.0, 100.0, 93.0, 115.0, 100.0, account_id=E.ACCOUNT_ID)
+        state = {"trading_capital": 100_000.0, "open_positions": {"DOT": position()}, "completed_trades_count": 0,
+                 "winning_trades_count": 0, "total_fees_paid": 0.0}
+        df = candles([FLAT, FLAT, (99.0, 101.5, 98.8, 101.2, 100.5)])
+        E.process_exits(self.db, state, {"DOT": df}, {"usdtinr": 90.0, "prices": {"DOT": 101.25}}, [], None)
+        self.assertEqual(len(self.db.get_trades(account_id=E.ACCOUNT_ID)), 1)
+        self.assertGreater(state["completed_trades_count"], 0)
+
+
 class TestVolScaleUsesFinishedDaysOnly(unittest.TestCase):
     def test_a_day_is_sized_from_the_day_before(self):
         tmp = Path(tempfile.mkdtemp())
@@ -147,6 +261,96 @@ class TestVolScaleUsesFinishedDaysOnly(unittest.TestCase):
         # 2026-02-05 is the first wild day: its own close must not shrink its own size, only the NEXT day's
         self.assertAlmostEqual(s[pd.Timestamp("2026-02-05")], S.VOL_HI)
         self.assertLess(s[pd.Timestamp("2026-02-06")], S.VOL_HI)
+
+
+class TestPortfolioCaps(unittest.TestCase):
+    """2026-10-26: MAX_LEVERAGE is per position, so five positions could run at ~4.3x the account with ~30% of it lost if every
+    stop hit at once. The book-level caps exist now but ship OFF -- turning them on changes how the paper record would have traded."""
+
+    def test_both_caps_are_off_unless_asked_for(self):
+        self.assertEqual(E.MAX_TOTAL_NOTIONAL_X, 0.0)
+        self.assertEqual(E.MAX_TOTAL_RISK_PCT, 0.0)
+        big = {"BTC": {"pos_usd": 1e6}, "ETH": {"pos_usd": 1e6}}
+        self.assertIsNone(E.portfolio_cap_block(100_000, 90.0, big, 1e6))
+
+    def test_the_notional_cap_blocks_the_trade_that_would_breach_it(self):
+        with mock.patch.object(E, "MAX_TOTAL_NOTIONAL_X", 3.0):
+            open_pos = {"BTC": {"pos_usd": 2000.0}, "ETH": {"pos_usd": 1000.0}}       # 3000 USD = Rs2.7L = 2.7x
+            self.assertIsNone(E.portfolio_cap_block(100_000, 90.0, open_pos, 300.0))   # 2.97x: still under
+            reason = E.portfolio_cap_block(100_000, 90.0, open_pos, 400.0)             # 3.06x: over
+        self.assertIn("portfolio notional cap", reason)
+
+    def test_the_risk_cap_counts_a_stop_on_every_open_position(self):
+        with mock.patch.object(E, "MAX_TOTAL_RISK_PCT", 0.15):
+            open_pos = {"BTC": {"pos_usd": 2000.0}}                                   # stop hit = 7% of Rs1.8L = 12.6% risked
+            self.assertIsNone(E.portfolio_cap_block(100_000, 90.0, open_pos, 0.0))
+            reason = E.portfolio_cap_block(100_000, 90.0, open_pos, 500.0)              # + Rs45k notional = 16.1% risked
+        self.assertIn("portfolio risk cap", reason)
+
+    def test_a_blocked_entry_is_reported_and_no_position_is_opened(self):
+        db = TradingDB(Path(tempfile.mkdtemp()) / "t.db")
+        with mock.patch.object(E, "MAX_TOTAL_NOTIONAL_X", 1.5), \
+             mock.patch.object(S, "current_vol_scale", return_value=1.0):
+            state = {"trading_capital": 100_000.0, "open_positions": {}, "completed_trades_count": 0,
+                     "winning_trades_count": 0, "total_fees_paid": 0.0}
+            df = candles([FLAT] * 60)
+            with mock.patch.object(S, "entry_signal", side_effect=lambda d: pd.Series([False] * (len(d) - 1) + [True])):
+                lines = []
+                E.process_entries(db, state, {"DOT": df, "ADA": df}, {"usdtinr": 90.0, "prices": {"DOT": 100.0, "ADA": 100.0}}, lines, None)
+        # each entry is ~0.86x the account, so the second would take the book past 1.5x and must be refused
+        self.assertEqual(len(state["open_positions"]), 1)
+        self.assertTrue(any("portfolio notional cap" in ln and "skipped" in ln for ln in lines))
+
+
+class TestVolScaleIsCached(unittest.TestCase):
+    """2026-10-26: rebuilding the scale reads ~265 MB of 5-minute CSVs (measured 17.3 s) and the live engine paid that on EVERY
+    entry, twice. It now reads once and is cached in var/cache, keyed by the archive files themselves so a nightly top-up still
+    invalidates it."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.cache = self.tmp / "vol_scale.json"
+        for coin in ("BTC", "ETH"):
+            (self.tmp / f"{coin}_5m.csv").write_text("date,close\n")
+        self.calls = 0
+
+        def fake_series():
+            self.calls += 1
+            return pd.Series([1.25])
+
+        for p in (mock.patch.object(S, "DATA_DIR", self.tmp),
+                  mock.patch.object(S, "COINS", ("BTC", "ETH")),
+                  mock.patch.object(S, "_VOL_CACHE_FILE", self.cache),
+                  mock.patch.object(S, "_VOL_MEMO", {}),
+                  mock.patch.object(S, "market_vol_scale_series", side_effect=fake_series)):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_the_archive_is_read_once_per_process(self):
+        self.assertEqual(S.current_vol_scale(), 1.25)
+        self.assertEqual(S.current_vol_scale(), 1.25)
+        self.assertEqual(self.calls, 1, "the second call must come from the in-process memo")
+
+    def test_a_new_process_reuses_the_disk_cache(self):
+        S.current_vol_scale()
+        self.assertTrue(self.cache.exists())
+        S._VOL_MEMO.clear()                                     # what a fresh `python3 -m engine...` sees
+        self.assertEqual(S.current_vol_scale(), 1.25)
+        self.assertEqual(self.calls, 1, "a warm cache must not re-read the CSVs")
+
+    def test_a_new_archive_file_invalidates_the_cache(self):
+        S.current_vol_scale()
+        S._VOL_MEMO.clear()
+        f = self.tmp / "BTC_5m.csv"
+        with open(f, "a", encoding="utf-8") as fh:              # the nightly top-up appends to the archive
+            fh.write("2026-10-26 00:00:00+00:00,100\n")
+        S.current_vol_scale()
+        self.assertEqual(self.calls, 2, "an appended candle must be recomputed, never served stale")
+
+    def test_the_cached_value_is_the_freshly_computed_one(self):
+        fresh = S.current_vol_scale(use_cache=False)
+        self.assertEqual(self.calls, 1)
+        self.assertEqual(S.current_vol_scale(), fresh)
 
 
 class TestNightlyKeepsCryptoCurrent(unittest.TestCase):

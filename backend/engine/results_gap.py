@@ -2,12 +2,17 @@
 
     python3 -m engine.results_gap               # what the timer runs; the mode follows the clock (IST, Mon-Fri):
                                                 #   before 09:25  -> refresh the NSE results calendar
-                                                #   09:25-14:59   -> morning entry (once a day)
+                                                #   09:25-14:59   -> morning entry (once a day; 09:40 retries a failed quote fetch)
                                                 #   from 15:15    -> sell everything still open (idempotent; 15:26 retries)
     python3 -m engine.results_gap --status [--no-telegram]
 
 Account RESULTS_GAP, Rs1L, notional = RESULTS_GAP_LEVERAGE (default 3x) x the account, split equally across the morning's signals.
 Prices come from Upstox's live OHLC quote (09:15 open, previous close, last price). Rules and costs live in the strategy module.
+
+2026-10-26: the 09:30 run used to mark the day as done BEFORE checking whether Upstox had returned usable quotes, so one failed quote
+fetch lost the whole day even when prices were fine minutes later (it happened that morning: market_gap null, no trades). A run with no
+usable quotes now leaves the day open for the 09:40 retry slot, and gives up -- loudly, and still alerted by engine_monitor -- only
+once the window closes.
 """
 from __future__ import annotations
 
@@ -16,6 +21,7 @@ import json
 import sys
 from datetime import date, datetime, time as dtime, timedelta, timezone
 
+from core.atomic_io import read_json, write_json
 from core.paths import DB_DIR
 from markets.equity.strategies.tf_intraday.results_gap import strategy as S
 
@@ -23,6 +29,9 @@ IST = timezone(timedelta(hours=5, minutes=30))
 ACCOUNT, NAME = "RESULTS_GAP", "results_gap"
 INITIAL_CAPITAL = 100_000.0
 STATE = DB_DIR / "results_gap_state.json"
+RETRY_UNTIL = dtime(9, 45)             # no usable quotes by then -> give up on the day (09:40 is the retry slot in the timer)
+MAX_ENTRY_ATTEMPTS = 3                 # or after this many tries, whichever comes first
+LATE_AFTER = dtime(9, 35)              # an entry after this is a delayed entry, and the trade record says so
 
 
 def _inr(v: float) -> str:
@@ -30,15 +39,12 @@ def _inr(v: float) -> str:
 
 
 def _state() -> dict:
-    try:
-        return json.loads(STATE.read_text())
-    except (OSError, ValueError):
-        return {}
+    return read_json(STATE)
 
 
 def _save_state(st: dict) -> None:
     st["updated_at"] = datetime.now(IST).isoformat()
-    STATE.write_text(json.dumps(st, indent=1))
+    write_json(STATE, st, indent=1)        # atomic: a crash mid-write must not leave a truncated state file
 
 
 def prev_trading_day(d: date, holidays: set[date]) -> date:
@@ -66,6 +72,8 @@ def enter(db, broker, now: datetime, holidays: set[date], lookup, lines: list) -
     today = now.date()
     if st.get("entered_on") == str(today):
         return
+    if st.get("entry_date") != str(today):                     # a new day: the attempt counter starts over
+        st["entry_date"], st["entry_attempts"] = str(today), 0
     for p in db.get_open_positions(ACCOUNT):                       # a sale the engine missed (e.g. a failed 15:20 run): sell it now
         _close(db, broker, p, now, "missed_exit", lines)
     if not S.CALENDAR.exists() or datetime.fromtimestamp(S.CALENDAR.stat().st_mtime, IST).date() != today:
@@ -78,16 +86,27 @@ def enter(db, broker, now: datetime, holidays: set[date], lookup, lines: list) -
     raw = broker.get_quote_batch(list(keys.values())) or {}           # full quote: has the previous close (v3 OHLC does not, 2026-10-26)
     quotes = {s: raw.get(k) for s, k in keys.items()}
     buys, mkt = S.signals(quotes, cands)
-    st["entered_on"] = str(today)
-    st["last_check"] = {"candidates": len(cands), "market_gap": mkt, "signals": [b["symbol"] for b in buys]}
     if mkt is None:
-        lines.append("No usable 09:30 quotes from Upstox (login expired or market closed?) -- no trades today.")
+        # NOT a finished day (2026-10-26): one failed quote fetch at 09:30 must not throw away the morning. Keep the day open so the
+        # 09:40 slot can try again, and only mark it done -- out loud -- once the retry window has closed.
+        st["entry_attempts"] = int(st.get("entry_attempts") or 0) + 1
+        st["last_check"] = {"candidates": len(cands), "market_gap": None, "signals": [], "attempt": st["entry_attempts"]}
+        if now.time() >= RETRY_UNTIL or st["entry_attempts"] >= MAX_ENTRY_ATTEMPTS:
+            st["entered_on"] = str(today)
+            lines.append(f"No usable 09:30 quotes from Upstox after {st['entry_attempts']} attempt(s) (login expired or market closed?) "
+                         "-- giving up on today, no trades were checked.")
+        else:
+            lines.append(f"No usable 09:30 quotes from Upstox (login expired or market closed?) -- retrying at the next slot, today is "
+                         f"not lost (attempt {st['entry_attempts']}/{MAX_ENTRY_ATTEMPTS}).")
         _save_state(st)
         return
+    st["entered_on"] = str(today)
+    st["last_check"] = {"candidates": len(cands), "market_gap": mkt, "signals": [b["symbol"] for b in buys]}
     if not buys:
         lines.append(f"No trade today: {len(cands)} stocks had results, none opened 7%+ above the market (market gap {mkt:+.2%}) and kept rising.")
         _save_state(st)
         return
+    late = now.time() > LATE_AFTER                              # a retried entry: the gap is still 09:15 vs prev close, the price is later
     cap = float(db.get_account(ACCOUNT)["current_capital"])
     per = cap * S.LEVERAGE / len(buys)
     for b in buys:
@@ -97,9 +116,11 @@ def enter(db, broker, now: datetime, holidays: set[date], lookup, lines: list) -
             continue
         pid = f"POS_RG_{now:%Y%m%d}_{b['symbol']}"
         db.open_position(pid, b["symbol"], "long", qty, b["ltp"], 0.0, 0.0, b["ltp"], account_id=ACCOUNT, instrument_key=keys[b["symbol"]],
-                         strategy=NAME, state=json.dumps({"gap_vs_mkt": b["gap_vs_mkt"], "open": b["open"], "prev_close": b["prev_close"]}))
+                         strategy=NAME, state=json.dumps({"gap_vs_mkt": b["gap_vs_mkt"], "open": b["open"], "prev_close": b["prev_close"],
+                                                          "entry_slot": f"{now:%H:%M}", "late": late}))
         lines.append(f"BOUGHT {b['symbol']} {qty} @ {b['ltp']:,.2f} = {_inr(qty * b['ltp'])} (opened {b['gap_vs_mkt']:+.1%} vs market after results, "
-                     f"still rising at 09:30)")
+                     f"still rising at {now:%H:%M})"
+                     + ("  [DELAYED: the 09:30 quote fetch failed, so this is the 09:30 rule applied at a later price]" if late else ""))
     _save_state(st)
 
 

@@ -5,7 +5,7 @@ import unittest
 import numpy as np
 import pandas as pd
 
-from markets.commodity.costs import compute_mcx_costs, lot_units
+from markets.commodity.costs import compute_mcx_costs
 from markets.commodity.strategies.tf_daily.trend_carry import strategy as TC
 from markets.crypto.strategies.tf_5min.dip_reversal import strategy as DR
 

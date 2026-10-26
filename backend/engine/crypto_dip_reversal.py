@@ -30,6 +30,7 @@ from datetime import datetime, timedelta, timezone
 import pandas as pd
 import requests
 
+from core.atomic_io import write_json
 from core.paths import DB_DIR
 from engine.database import TradingDB
 from markets.crypto.strategies.tf_5min.dip_reversal import strategy as S
@@ -44,16 +45,26 @@ _log = logging.getLogger("crypto_dip_reversal")
 
 def _delta() -> DeltaDemoBroker | None:
     """A broker instance if real demo orders are switched on (DELTA_PLACE_REAL_ORDERS=true in .env) and keys are configured, else
-    None and every coin runs this engine's own simulated fill, fully sized by our own Rs1L ledger.
+    None and every coin runs this engine's own simulated fill, fully sized by our own Rs1L ledger. BOTH the .env flag AND all three
+    of engine/safety_gate.py's gates are required (2026-10-26) -- the flag alone no longer places an order anywhere.
 
     Off by default since 2026-10-22 (user: "try to place order in demo and get whatever we want and just create same paper trading
     system in our project") -- the demo account's seeded funds (~$138 margin) are far smaller than a RISK_PCT-sized position, so real
     orders were routinely clamped well below the size we actually mean to simulate (services/broker/delta_broker.py's
     place_market_order_fit_margin scales them down). A real fill on a WRONG size is less representative than a simulated fill at the
     RIGHT size, given Delta's own prices already track the real market closely (confirmed 2026-10-21). The order-placement code is
-    kept, tested and working (see git history, commits 9e18f31/9cab62e) -- flip DELTA_PLACE_REAL_ORDERS=true to use it again, e.g.
-    once the demo account has more margin or this moves to a real account."""
+    kept, tested and working (see git history, commits 9e18f31/9cab62e) -- flip DELTA_PLACE_REAL_ORDERS=true (and pass all
+    three safety gates) to use it again, e.g. once the demo account has more margin or this moves to a real account."""
     if str(os.environ.get("DELTA_PLACE_REAL_ORDERS", "false")).lower() not in ("1", "true", "yes"):
+        return None
+    # The .env flag alone is not enough (2026-10-26): the same three independent gates that protect the Upstox path
+    # (engine/safety_gate.py -- kill-switch constant, ALLOW_LIVE_TRADING, armed-state file for component 'delta') must agree
+    # before any code path is allowed to send an order to an exchange, demo or not. Without that, one careless .env edit put
+    # real orders on a venue with no second check.
+    from engine.safety_gate import live_trading_allowed
+    if not live_trading_allowed("delta"):
+        _log.warning("DELTA_PLACE_REAL_ORDERS is true but safety_gate's gates are not all satisfied for component 'delta' "
+                     "(see engine/safety_gate.py) -- trading every coin in simulation.")
         return None
     try:
         return DeltaDemoBroker()
@@ -66,7 +77,24 @@ ACCOUNT_ID = "CRYPTO_DIP_REVERSAL"
 STRATEGY_NAME = "dip_reversal"
 STATE_FILE = DB_DIR / "crypto_dip_reversal_state.json"
 INITIAL_CAPITAL_INR = 100000.0
+USDINR_FALLBACK = 92.5      # last resort only: used when the USD/INR reference feed is down, and every run that uses it says so
 MAX_LEVERAGE = 3.0
+
+# Portfolio-level ceilings (2026-10-26). MAX_LEVERAGE above is PER POSITION, and MAX_CONCURRENT (5) lets five of them run together, so
+# the real book could reach ~4.3x the account in notional with roughly 30% of the capital lost if every stop hit at once -- the "3x
+# leverage cap" only ever limited one trade. These two caps are what actually limit the book. Both are OFF (0) by default: switching them
+# on would change how the live paper record would have traded, and that is a risk decision for the user, not a silent default change.
+# Set them in .env to enable, e.g. CRYPTO_MAX_TOTAL_NOTIONAL_X=4.0 and/or CRYPTO_MAX_TOTAL_RISK_PCT=0.2.
+def _cap_from_env(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        _log.warning("%s=%r is not a number; using %s (off).", name, os.environ.get(name), default)
+        return default
+
+
+MAX_TOTAL_NOTIONAL_X = _cap_from_env("CRYPTO_MAX_TOTAL_NOTIONAL_X", 0.0)     # sum of open notional, as a multiple of the account
+MAX_TOTAL_RISK_PCT = _cap_from_env("CRYPTO_MAX_TOTAL_RISK_PCT", 0.0)         # loss if EVERY open position hit its stop, as a % of it
 
 
 def _inr(v: float) -> str:
@@ -74,24 +102,60 @@ def _inr(v: float) -> str:
     return f"{'-' if v < 0 else ''}Rs{s}"
 
 
-def load_state() -> dict:
+def portfolio_cap_block(cap: float, fx: float, open_pos: dict, pos_usd: float) -> str | None:
+    """Why one more position of `pos_usd` USDT notional must not be opened, or None when both portfolio caps allow it.
+
+    Both caps default to 0 (off), in which case this always returns None and trading is exactly as before. The stop is fixed at
+    S.STOPLOSS below entry and never trailed, so the loss if a position's stop is hit is S.STOPLOSS of its notional -- the risk cap is
+    therefore the honest all-stops-hit number, not a guess."""
+    if MAX_TOTAL_NOTIONAL_X <= 0 and MAX_TOTAL_RISK_PCT <= 0:
+        return None
+    open_usd = sum(float(p.get("pos_usd") or 0.0) for p in open_pos.values())
+    notional_inr = (open_usd + pos_usd) * fx
+    if MAX_TOTAL_NOTIONAL_X > 0 and notional_inr > MAX_TOTAL_NOTIONAL_X * cap:
+        return (f"the portfolio notional cap ({MAX_TOTAL_NOTIONAL_X:.1f}x the account = {_inr(MAX_TOTAL_NOTIONAL_X * cap)}) would be "
+                f"breached: open {_inr(open_usd * fx)} + this {_inr(pos_usd * fx)}")
+    risk_inr = S.STOPLOSS * notional_inr
+    if MAX_TOTAL_RISK_PCT > 0 and risk_inr > MAX_TOTAL_RISK_PCT * cap:
+        return (f"the portfolio risk cap ({MAX_TOTAL_RISK_PCT:.0%} of the account = {_inr(MAX_TOTAL_RISK_PCT * cap)} all stops hit) "
+                f"would be breached: open + this = {_inr(risk_inr)}")
+    return None
+
+
+def load_state(db: TradingDB | None = None) -> dict:
+    """The account ledger. A missing file (first run) starts at INITIAL_CAPITAL_INR; an UNREADABLE one must never silently reset
+    the account -- that once wiped real history and then overwrote the database's capital to match (2026-10-26). In that case the
+    capital is recovered from the database and `state_recovered` is set so the run says so out loud."""
     default = {"trading_capital": INITIAL_CAPITAL_INR, "open_positions": {}, "completed_trades_count": 0,
                "winning_trades_count": 0, "total_fees_paid": 0.0, "created_at": datetime.now(IST).isoformat()}
-    if STATE_FILE.exists():
+    if not STATE_FILE.exists():
+        return default
+    try:
+        data = json.loads(STATE_FILE.read_text())
+        if not isinstance(data, dict) or not isinstance(data.get("open_positions") or {}, dict):
+            raise ValueError("not a state object")
+        float(data.get("trading_capital"))
+        for k, v in default.items():
+            data.setdefault(k, v)
+        return data
+    except Exception as e:
+        cap = INITIAL_CAPITAL_INR
         try:
-            data = json.loads(STATE_FILE.read_text())
-            for k, v in default.items():
-                data.setdefault(k, v)
-            return data
-        except Exception as e:
-            _log.warning("Failed to parse %s (%s); recreating.", STATE_FILE, e)
-    return default
+            acc = db.get_account(ACCOUNT_ID) if db is not None else None
+            if acc and acc.get("current_capital"):
+                cap = float(acc["current_capital"])
+        except Exception:
+            pass
+        _log.error("State file %s is unreadable (%s); recovered capital %s from the database. Open positions (if any) could not be "
+                   "rebuilt -- check %s%s before trusting the next run.", STATE_FILE, e, _inr(cap), STATE_FILE, ".bak")
+        default["trading_capital"] = cap
+        default["state_recovered"] = True
+        return default
 
 
 def save_state(state: dict) -> None:
     state["updated_at"] = datetime.now(IST).isoformat()
-    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    STATE_FILE.write_text(json.dumps(state, indent=2))
+    write_json(STATE_FILE, state)          # temp file + fsync + atomic rename, previous version kept as .bak
 
 
 def init_account(db: TradingDB) -> None:
@@ -100,7 +164,7 @@ def init_account(db: TradingDB) -> None:
 
 
 def fetch_live_prices() -> dict:
-    out = {"prices": {}, "usdtinr": 92.5, "timestamp": datetime.now(IST).isoformat()}
+    out = {"prices": {}, "usdtinr": USDINR_FALLBACK, "fx_fallback": True, "timestamp": datetime.now(IST).isoformat()}
     for c in S.COINS:                                 # Delta India quotes/settles in USD, but balances are effectively INR via a fixed rate
         try:
             r = requests.get(f"https://api.india.delta.exchange/v2/tickers/{c}USD", timeout=10)
@@ -120,8 +184,12 @@ def fetch_live_prices() -> dict:
             rate = (r.json() or {}).get("rates", {}).get("INR")
             if rate:
                 out["usdtinr"] = float(rate)
+                out["fx_fallback"] = False
     except Exception as e:
         _log.warning("USD/INR reference rate fetch error: %s", e)
+    if out["fx_fallback"]:                             # never let the hardcoded rate pass as a live one
+        _log.warning("USD/INR reference feed unavailable; using the fallback rate %.2f -- rupee P&L in this run is approximate.",
+                     USDINR_FALLBACK)
     for c in S.COINS:                                 # fallback if Delta's own ticker failed for a coin
         if c not in out["prices"]:
             try:
@@ -240,12 +308,21 @@ def process_exits(db: TradingDB, state: dict, candles_map: dict, live_info: dict
         fee_usd = pos_usd * (S.TAKER + S.SLIP.get(coin, 0.00015) + fee_pct) + funding_usd
         net_usd = gross_usd - fee_usd
         net_inr, gross_inr, fee_inr = net_usd * fx, gross_usd * fx, fee_usd * fx
+        pos_id = pos["position_id"]
+        already = db.get_position(pos_id)
+        if already is not None and already.get("status") == "CLOSED":
+            # A previous run booked this exit in the database and then died before saving the state file, so the position is still
+            # listed here. Booking it again would add its PnL to the ledger twice and write a duplicate trade row -- drop it
+            # instead, before anything is credited.
+            _log.warning("%s was already closed in the database (%s); dropping it from the state without booking it again.",
+                         pos_id, already.get("exit_reason"))
+            del state["open_positions"][coin]
+            continue
         state["trading_capital"] += net_inr
         state["total_fees_paid"] += fee_inr
         state["completed_trades_count"] += 1
         if net_inr > 0:
             state["winning_trades_count"] += 1
-        pos_id = pos["position_id"]
         db.close_position(pos_id, px, why, gross_inr, net_inr, fee_inr)
         db.record_trade(position_id=pos_id, symbol=coin, direction="long", qty=pos["qty"], entry_price=entry_px, exit_price=px,
                          entry_dt=pos["entry_time"], exit_dt=datetime.now(IST).isoformat(), hold_minutes=hours * 60, exit_reason=why,
@@ -270,6 +347,7 @@ def process_entries(db: TradingDB, state: dict, candles_map: dict, live_info: di
         df = candles_map.get(coin)
         signals[coin] = df is not None and len(df) >= 41 and bool(S.entry_signal(df).iloc[-1])
     crowd = S.crowd_scale(sum(signals.values()))                  # many coins dipping at once = market-wide crash: shrink each new trade
+    vol_scale = S.current_vol_scale()                             # ONE read per run (cached on disk; rebuilding it costs ~17 s)
     for coin in S.COINS:
         if len(open_pos) >= S.MAX_CONCURRENT or coin in open_pos:
             continue
@@ -279,7 +357,7 @@ def process_entries(db: TradingDB, state: dict, candles_map: dict, live_info: di
         last = df.iloc[-1]
         entry_px = live_info["prices"].get(coin, float(last["close"]))     # live price for a fresher fill than the closed candle
         sl_px = entry_px * (1 - S.STOPLOSS)
-        risk_pct = S.RISK_PCT * S.current_vol_scale()           # dynamic: size up in a calmer-than-usual market, down in a wilder one
+        risk_pct = S.RISK_PCT * vol_scale                   # dynamic: size up in a calmer-than-usual market, down in a wilder one
         risk_inr = cap * risk_pct
         pos_usd = min((risk_inr / fx) / S.STOPLOSS, (cap * MAX_LEVERAGE) / fx) * crowd
         risk_inr *= crowd
@@ -288,6 +366,10 @@ def process_entries(db: TradingDB, state: dict, candles_map: dict, live_info: di
         if n_contracts < 1:
             lines.append(f"{coin}: signal, but one Delta contract ({cv} {coin}) is bigger than the position size -- skipped"); continue
         pos_usd = n_contracts * cv * entry_px
+        blocked = portfolio_cap_block(cap, fx, open_pos, pos_usd)        # checked before any order goes out; off unless the .env knobs set
+        if blocked:
+            lines.append(f"{coin}: signal, but {blocked} -- skipped")
+            continue
         intended_pos_usd = pos_usd
         qty = n_contracts * cv
 
@@ -330,15 +412,21 @@ def process_entries(db: TradingDB, state: dict, candles_map: dict, live_info: di
         clamp_note = (f" -- demo account's margin only covered {_inr(pos_usd * fx)} of the intended {_inr(intended_pos_usd * fx)}"
                        if real and pos_usd < intended_pos_usd * 0.999 else "")
         lines.append(f"ENTERED LONG {coin}: dip-reversal signal ({tag}){clamp_note}\nEntry {entry_px:,.4f} | Stop {sl_px:,.4f} | Target {open_pos[coin]['tp_price']:,.4f}\n"
-                      f"Size {_inr(pos_usd * fx)} | Risk {_inr(risk_inr)} ({risk_pct:.1%}, market vol scale {S.current_vol_scale():.2f}x)"
+                      f"Size {_inr(pos_usd * fx)} | Risk {_inr(risk_inr)} ({risk_pct:.1%}, market vol scale {vol_scale:.2f}x)"
                       + (f"\nCRASH-AWARE: {sum(signals.values())} coins dipping at once (market-wide) -- trade shrunk to {crowd:.0%} of normal size"
                          if crowd < 1 else ""))
 
 
 def run_iteration(db: TradingDB, send_fn=None) -> dict:
-    state = load_state()
+    state = load_state(db)
     live_info = fetch_live_prices()
     lines = []
+    if live_info.get("fx_fallback"):                 # said out loud, in the Telegram message, not only in the log
+        lines.append(f"⚠️ USD/INR reference feed unavailable -- using the fallback rate {USDINR_FALLBACK:.2f}; the rupee P&L of this "
+                     "run is approximate.")
+    if state.get("state_recovered"):
+        lines.append(f"⚠️ The state file was unreadable: capital recovered from the database as {_inr(state['trading_capital'])}. "
+                     f"Compare with {STATE_FILE.name}.bak (open positions were not rebuilt).")
     candles_map = {}
     coins_needed = set(S.COINS) | set(state.get("open_positions", {}))   # +any symbol with an open position, even if it's since
     for coin in coins_needed:                                            # been dropped from S.COINS (e.g. LINK, removed 2026-10-22)
@@ -347,7 +435,9 @@ def run_iteration(db: TradingDB, send_fn=None) -> dict:
         except Exception as e:
             _log.warning("Failed to fetch 5m candles for %s: %s", coin, e)
     if not candles_map:
-        lines.append("Binance 5m candle feed unavailable. Skipping iteration.")
+        lines.append("Binance 5m candle feed unavailable -- no position was checked and no entry was taken this run.")
+        if send_fn:                                   # a skipped run is news: without this the 5-minute engine could skip silently
+            send_fn("⚠️ <b>CRYPTO DIP-REVERSAL</b> -- the Binance 5m candle feed failed, so this run checked nothing.")
         return {"lines": lines, "state": state}
     broker = _delta()
     process_exits(db, state, candles_map, live_info, lines, broker)
@@ -366,7 +456,7 @@ def run_iteration(db: TradingDB, send_fn=None) -> dict:
 
 
 def print_status(db: TradingDB) -> None:
-    state = load_state()
+    state = load_state(db)
     wr = state["winning_trades_count"] / max(1, state["completed_trades_count"]) * 100
     print("=" * 70)
     print("CRYPTO DIP-REVERSAL STATUS (11-coin 5m perps)")

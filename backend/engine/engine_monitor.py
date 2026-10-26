@@ -28,7 +28,7 @@ CRYPTO_STATE = DB_DIR / "crypto_dip_reversal_state.json"
 CRYPTO_STALE_MIN = 15
 MCX_SLOTS = (dtime(9, 10), dtime(23, 40))          # hft-mcx-trend-carry.timer, IST, Mon-Fri
 MCX_GRACE_MIN = 20
-RG_SLOTS = (dtime(9, 30), dtime(15, 20))            # hft-results-gap.timer trading runs, IST, Mon-Fri
+RG_SLOTS = (dtime(9, 30), dtime(9, 40), dtime(15, 20))   # hft-results-gap.timer trading runs, IST, Mon-Fri (09:40 = buy retry)
 TOKEN_WINDOW_MIN = 30                               # check the Upstox login this long before each MCX slot
 REMIND_H = 6
 
@@ -36,6 +36,28 @@ REMIND_H = 6
 def _systemctl(*args: str) -> str:
     r = subprocess.run(["systemctl", "--user", *args], capture_output=True, text=True, timeout=20)
     return r.stdout.strip()
+
+
+def _journal(cmd: list[str]) -> str:
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=20).stdout
+
+
+def failed_runs(unit: str, since: datetime, run=None) -> int:
+    """How many starts of `unit` FAILED since `since`, from the journal (0 if the journal cannot be read).
+
+    `systemctl show` only reports the LAST exit, so a failed 09:30 run became invisible as soon as the 15:20 run succeeded
+    (2026-10-26). The journal keeps every invocation, so both are counted here."""
+    cmd = ["journalctl", "--user", "-u", unit, "--since", f"@{int(since.timestamp())}", "--no-pager", "-o", "cat"]
+    try:
+        text = (run or _journal)(cmd)
+    except Exception:
+        return 0                          # no journal (or no permission): never turn that into a false alarm
+    # systemd writes "<unit>: Failed with result 'exit-code'." -- the unit name comes first, so match anywhere in the line
+    return sum(1 for ln in str(text).splitlines() if "Failed with result" in ln and "success" not in ln)
+
+
+def _today_start(now: datetime) -> datetime:
+    return datetime.combine(now.date(), dtime(0, 0), IST)
 
 
 def unit_active(unit: str, sh=_systemctl) -> bool:
@@ -100,7 +122,7 @@ def next_mcx_slot(now: datetime) -> datetime:
     raise RuntimeError("no MCX slot in the next week")
 
 
-def problems(now: datetime, sh=_systemctl, crypto_state: Path = CRYPTO_STATE, token_ok=None) -> dict[str, str]:
+def problems(now: datetime, sh=_systemctl, crypto_state: Path = CRYPTO_STATE, token_ok=None, journal=None) -> dict[str, str]:
     """{problem key: plain-words message} for everything wrong right now; {} when all is fine."""
     out: dict[str, str] = {}
     # crypto
@@ -118,7 +140,7 @@ def problems(now: datetime, sh=_systemctl, crypto_state: Path = CRYPTO_STATE, to
         out["crypto_failed"] = f"Crypto engine's last run FAILED ({result}). Check: journalctl --user -u hft-crypto-dip-reversal.service -n 50"
     # MCX
     if not unit_active("hft-mcx-trend-carry.timer", sh):
-        out["mcx_timer"] = "MCX engine timer is OFF -- the monthly rebalance will not happen."
+        out["mcx_timer"] = "MCX engine timer is OFF -- the 2-weekly rebalance will not happen."
     slot = last_mcx_slot(now)
     if now - slot > timedelta(minutes=MCX_GRACE_MIN):
         when, result = last_run("hft-mcx-trend-carry.service", sh)
@@ -126,6 +148,9 @@ def problems(now: datetime, sh=_systemctl, crypto_state: Path = CRYPTO_STATE, to
             out["mcx_missed"] = f"MCX engine missed its {slot:%a %d %b %H:%M} IST run."
         elif result and result != "success":
             out["mcx_failed"] = f"MCX engine's {when:%a %H:%M} IST run FAILED ({result}). Check: journalctl --user -u hft-mcx-trend-carry.service -n 50"
+    n = failed_runs("hft-mcx-trend-carry.service", _today_start(now), run=journal)      # a failure earlier today is not masked by a
+    if n and "mcx_failed" not in out:                                                   # later successful run
+        out["mcx_failed"] = f"MCX engine had {n} failed run(s) today. Check: journalctl --user -u hft-mcx-trend-carry.service -n 50"
     # results_gap (equity intraday): its 09:30 buy and 15:20 sell runs
     if not unit_active("hft-results-gap.timer", sh):
         out["rg_timer"] = "Results-gap engine timer is OFF -- no results-day trades will be taken."
@@ -136,13 +161,21 @@ def problems(now: datetime, sh=_systemctl, crypto_state: Path = CRYPTO_STATE, to
             out["rg_missed"] = f"Results-gap engine missed its {slot:%a %d %b %H:%M} IST run."
         elif result and result != "success":
             out["rg_failed"] = f"Results-gap engine's {when:%a %H:%M} IST run FAILED ({result}). Check: journalctl --user -u hft-results-gap.service -n 50"
-    # results_gap got no usable prices at its 09:30 check today (2026-10-26: Upstox's OHLC quote had no previous close)
+    n = failed_runs("hft-results-gap.service", _today_start(now), run=journal)
+    if n and "rg_failed" not in out:
+        out["rg_failed"] = (f"Results-gap engine had {n} failed run(s) today -- the last run succeeding does not mean the morning one did. "
+                            "Check: journalctl --user -u hft-results-gap.service -n 30")
+    # results_gap got no usable prices at its 09:30 check today (2026-10-26: Upstox's OHLC quote had no previous close). The engine
+    # retries at 09:40 before it gives the day up, so alert only once that window has closed.
     try:
         rg = json.loads((crypto_state.parent / "results_gap_state.json").read_text())
         chk = rg.get("last_check") or {}
-        if rg.get("entered_on") == str(now.date()) and chk.get("market_gap") is None and now.time() >= dtime(9, 31):
-            out["rg_no_prices"] = "Results-gap got NO usable prices at 09:30 today -- it could not check any stock. Check: journalctl --user -u hft-results-gap.service -n 30"
-    except (OSError, ValueError):
+        attempted_today = rg.get("entry_date") == str(now.date()) or rg.get("entered_on") == str(now.date())
+        if attempted_today and chk.get("market_gap") is None and now.time() >= dtime(9, 45):
+            tries = int(rg.get("entry_attempts") or 1)
+            out["rg_no_prices"] = (f"Results-gap got NO usable prices today ({tries} attempt(s) since 09:30) -- it could not check any "
+                                   "stock. Check: journalctl --user -u hft-results-gap.service -n 30")
+    except (OSError, ValueError, TypeError):
         pass
     # Upstox login, shortly before an MCX run
     if next_mcx_slot(now) - now <= timedelta(minutes=TOKEN_WINDOW_MIN):
@@ -162,10 +195,10 @@ def _upstox_token_ok() -> bool:
 
 
 def check(now: datetime | None = None, *, sh=_systemctl, crypto_state: Path = CRYPTO_STATE, token_ok=None, notify=None,
-          state_path: Path = STATE_PATH, dry_run: bool = False) -> dict:
+          state_path: Path = STATE_PATH, dry_run: bool = False, journal=None) -> dict:
     """One pass: find problems, send new / reminder / fixed messages. Returns {"problems": {...}, "sent": [...]}."""
     now = now or datetime.now(IST)
-    found = problems(now, sh=sh, crypto_state=crypto_state, token_ok=token_ok)
+    found = problems(now, sh=sh, crypto_state=crypto_state, token_ok=token_ok, journal=journal)
     try:
         seen = json.loads(state_path.read_text())
     except (OSError, ValueError):
@@ -233,7 +266,7 @@ def engine_status(account: str, now: datetime | None = None, sh=_systemctl, cryp
         ok = on and not missed and result in ("", "success")
         nxt = next_mcx_slot(now) if on else None
         if not on:
-            text = "Engine is OFF -- the monthly rebalance will not happen"
+            text = "Engine is OFF -- the 2-weekly rebalance will not happen"
         elif not ok:
             text = f"Last run {'was missed' if missed else 'FAILED'} · next at {nxt:%a %H:%M} IST"
         else:

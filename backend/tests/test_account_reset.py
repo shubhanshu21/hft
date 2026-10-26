@@ -119,8 +119,15 @@ class TestAccountLock(unittest.TestCase):
 
 
 class TestResetEndpoint(unittest.TestCase):
+    TOKEN = "test-admin-token"
+
     def setUp(self):
         from engine.backtest_api import Handler
+        # POST /api/paper/reset is a destructive call: it needs X-API-Token == BACKTEST_ADMIN_TOKEN (test_backtest_api_admin.py
+        # covers the refusal paths). Here the token is configured and sent, so these two tests stay about reset semantics.
+        env = mock.patch.dict("os.environ", {"BACKTEST_ADMIN_TOKEN": self.TOKEN})
+        env.start()
+        self.addCleanup(env.stop)
         self.srv = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         threading.Thread(target=self.srv.serve_forever, daemon=True).start()
         self.url = f"http://127.0.0.1:{self.srv.server_address[1]}/api/paper/reset"
@@ -129,13 +136,22 @@ class TestResetEndpoint(unittest.TestCase):
         self.srv.shutdown()
         self.srv.server_close()
 
-    def post(self, body):
-        req = urllib.request.Request(self.url, data=json.dumps(body).encode(), method="POST", headers={"Content-Type": "application/json"})
+    def post(self, body, token=TOKEN):
+        headers = {"Content-Type": "application/json"}
+        if token:
+            headers["X-API-Token"] = token
+        req = urllib.request.Request(self.url, data=json.dumps(body).encode(), method="POST", headers=headers)
         try:
             with urllib.request.urlopen(req) as r:
                 return r.status, json.loads(r.read())
         except urllib.error.HTTPError as e:
             return e.code, json.loads(e.read())
+
+    def test_an_anonymous_reset_is_refused(self):
+        with mock.patch("engine.account_reset.reset_account") as m:
+            status, _ = self.post({"account": "MCX_TREND_CARRY", "confirm": "MCX_TREND_CARRY"}, token=None)
+        self.assertIn(status, (401, 403))
+        m.assert_not_called()
 
     def test_passes_account_and_confirmation_through(self):
         with mock.patch("engine.account_reset.reset_account", return_value={"account": "MCX_TREND_CARRY", "capital": 250000.0}) as m:

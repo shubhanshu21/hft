@@ -71,7 +71,6 @@ def overlays(strategy: str, market: str, result: dict) -> dict:
     elif strategy == "earnings_drift":
         from markets.equity.strategies.tf_daily.earnings_drift import strategy as ED
         ev = ED.results_events()
-        pos = {d: i for i, d in enumerate(days)}
         for s in syms:
             mk = []
             for d in ev.loc[ev["sym"] == s, "d"]:

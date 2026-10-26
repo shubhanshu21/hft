@@ -31,7 +31,6 @@ from core.paths import CACHE_DIR
 import json
 import logging
 from datetime import date, datetime
-from pathlib import Path
 
 import requests
 
@@ -91,9 +90,13 @@ def get_trading_holidays(force_refresh: bool = False) -> set[date]:
 
     holidays: set[date] = set()
     for entry in cached["data"]:
+        if not isinstance(entry, dict):
+            continue
         if entry.get("holiday_type") != "TRADING_HOLIDAY":
             continue
-        if not _RELEVANT_EXCHANGES.intersection(entry.get("closed_exchanges", [])):
+        # `or []`, not the default arg: the endpoint can send "closed_exchanges": null, and .get(k, []) returns that None,
+        # which used to raise TypeError here and (in the engines' try/except) silently switch holiday gating off for the day
+        if not _RELEVANT_EXCHANGES.intersection(entry.get("closed_exchanges") or []):
             continue
         try:
             holidays.add(date.fromisoformat(entry["date"]))
@@ -106,9 +109,13 @@ def _load_cache() -> dict | None:
     if not _CACHE_PATH.exists():
         return None
     try:
-        return json.loads(_CACHE_PATH.read_text())
+        obj = json.loads(_CACHE_PATH.read_text())
     except (json.JSONDecodeError, OSError):
         return None
+    # a half-written or hand-edited cache must read as "no cache" (re-fetch) rather than fail later in the day-gate
+    if not isinstance(obj, dict) or not isinstance(obj.get("data"), list) or not isinstance(obj.get("fetched_at"), str):
+        return None
+    return obj
 
 
 def _save_cache(data: list[dict]) -> None:

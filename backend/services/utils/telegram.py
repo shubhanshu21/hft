@@ -12,7 +12,6 @@ loop it's alerting from, so every send failure is logged and swallowed.
 from core.paths import BACKEND_ROOT
 import logging
 import os
-from pathlib import Path
 
 import requests
 from dotenv import load_dotenv
@@ -151,7 +150,7 @@ def alert_entry(sig: dict, capital: float, free: float | None = None) -> None:
         f"📥 <b>{'BUY' if long_ else 'SELL'} {sig['symbol']}</b> ({sig.get('strategy', '')})\n"
         f"{_size(sig['symbol'], qty, lot)} @ ₹{sig['entry_price']:,.2f}\n"
         f"Stop: ₹{sig['sl']:,.2f} (loss there ≈ ₹{inr(risk)}" + (f", {sig['risk_pct']:g}% risk)" if sig.get("risk_pct") else ")") + "\n"
-        f"Target: " + (f"₹{tp:,.2f}" if tp else "none, the strategy's exit rule decides") + "\n"
+        "Target: " + (f"₹{tp:,.2f}" if tp else "none, the strategy's exit rule decides") + "\n"
         f"{money}\n"
         f"Account: ₹{inr(capital)}" + (f" · free after this: ₹{inr(free)}" if free is not None else "")
     )

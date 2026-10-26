@@ -46,9 +46,6 @@ from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(BACKEND_ROOT))
 
-import pandas as pd
-
-from services.broker.feed_streamer import UpstoxFeedStreamer
 from services.broker.upstox_broker import UpstoxBroker, token_invalid_event
 from engine.database import TradingDB
 from markets.currency.costs import CURRENCY_SPECS
@@ -1418,7 +1415,6 @@ def main():
         f"/stop halts new entries and closes all open trades; /start resumes; /status shows the account."
     )
 
-    from engine.config import UpstoxConfig
     token_check_interval_sec = int(os.environ.get("TOKEN_CHECK_INTERVAL_MIN", "15")) * 60
     last_token_check = time.monotonic()
     token_retry_sec = int(os.environ.get("TOKEN_RETRY_SEC", "60"))

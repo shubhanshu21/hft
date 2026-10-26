@@ -1,5 +1,12 @@
 # markets/ -- market -> timeframe -> strategy
 
+**Current settings of the three strategies that run (2026-10-26)** -- the long rows below keep their full history, so read this first:
+
+- crypto `dip_reversal`: **RISK_PCT=6%** (scaled 0.6-1.8x by market volatility), crowd rule **off**, 15% target / 7% stop, max 5 open,
+  Rs1L, Delta demo orders **off**. The 8% figures in the row are the earlier setting, kept as history.
+- commodity `trend_carry`: Rs2.5L, 1.5x exposure, re-checked every 2 weeks (10 trading days).
+- equity `results_gap`: Rs1L, 3x notional, buy 09:30 / sell 15:20 (with a 09:40 buy retry).
+
 NSE equity and currency were removed entirely 2026-10-21 (user: "remove equity and currency because it does not giving any profits"):
 every strategy under `markets/equity/strategies/` and `markets/currency/strategies/`, their paper accounts (EQUITY_SWING,
 DRYRUN_ACCOUNT), `engine/equity_swing.py`, `hft-dryrun.service`, `hft-equity-swing.timer`, and the nightly jobs that only fed them
@@ -16,8 +23,8 @@ markets/
     strategies/
       tf_5min/                       strategies whose signal uses 5-minute bars
         <name>/                      one folder per strategy -- as many as you like per timeframe
-          strategy.py                the Strategy class (core/strategy.py), exposes STRATEGY -- found automatically
-          backtest.py                its backtest, reusing the same entry code
+          strategy.py                the strategy module; crypto/commodity expose backtest()/web_backtest(), which is what runs
+          backtest.py                (the Strategy class + registry below is the retired runners' mechanism, not these)
           ...                        anything else it needs (entry_signal.py, signal.py, proxy.py)
         <another name>/
       tf_15min/  tf_1hour/  tf_daily/
@@ -25,13 +32,15 @@ markets/
 ```
 
 Add a strategy: `python3 cli.py new-strategy --market <market> --timeframe 15min --name my_idea` creates
-`markets/<market>/strategies/tf_15min/my_idea/strategy.py` from a template (timeframes: `5min`, `15min`, `1hour`, `daily`). The engine
-discovers it by itself (`core/registry.py`, `MARKETS = ("currency", "equity")` -- unused now that both are removed, but still the
-mechanism a future daily-bar market strategy would use; commodity/crypto instead wire in their own `web_backtest()`/`backtest()`
-function directly, see `dip_reversal`/`trend_carry`). Names must be unique within a market, whatever the timeframe.
+`markets/<market>/strategies/tf_15min/my_idea/strategy.py` from a template (timeframes: `5min`, `15min`, `1hour`, `daily`). That template
+implements the `Strategy` contract in `core/strategy.py`, which only the RETIRED runners (`engine/live_dryrun.py`,
+`engine/live_trading.py`) discover through `core/registry.py` (`MARKETS = ("currency", "equity")` -- both removed). The three live engines
+wire their own strategy module in directly and have their own `web_backtest()`/`backtest()`, see `dip_reversal`/`trend_carry`/`results_gap`.
+Names must be unique within a market, whatever the timeframe.
 A test (`tests/test_strategy_framework.py`) fails if a strategy sits in a folder that does not match its timeframe (`timeframe`, or
-`signal_timeframe` when the signal uses other bars than the ones the runner fetches). Guide: `docs/ADDING_A_STRATEGY.md`. Project
-rule: a credible backtest (>= 15 trades) and a held-out test window before it is switched on, then paper trading.
+`signal_timeframe` when the signal uses other bars than the ones the runner fetches). There is no separate guide file: the contract is
+documented in `core/strategy.py`. Project rule: a credible backtest (>= 15 trades) and a held-out test window before it is switched on,
+then paper trading.
 
 ## Strategies (2026-10-15; paper trading only -- no real orders anywhere)
 
@@ -51,8 +60,8 @@ screened from ~60 public freqtrade strategies on our own coin data with real cos
 | crypto | ~~`crypto/strategies/tf_1hour/compounder_5lakh/`~~ | 1-hour trend/momentum on BTC/ETH/SOL perpetual futures, BTC EMA200+ADX regime gate, asymmetric 1.5x/3.8x ATR stop/target | REMOVED 2026-10-21, replaced by `dip_reversal` above (git history has it) |
 | crypto | ~~`crypto/strategies/tf_4hour/trend_breakout/`~~ and ~~`crypto/strategies/tf_daily/calm_coins/`~~ | 4-hour trend breakout; calm-market long-only rule on 5 coins | REMOVED 2026-10-20, replaced by `compounder_5lakh` then `dip_reversal` (git history has them) |
 | crypto | ~~`crypto/strategies/tf_1min/sr_sweep/`~~ | 1-minute S/R sweep-and-reclaim scalper (68% of trades hit a 0.5R target, -0.14% per trade after fees; even at Delta Exchange's free-close costs with real limit fills -0.04%) | REMOVED 2026-10-17 (git history has it) |
-| equity | `equity/strategies/tf_intraday/results_gap/` | intraday, long only: the morning after a stock's quarterly results, buy at 09:30 if it opened 7%+ above the market (median stock gap) and is still above its 09:15 open; sell at 15:20. Universe = the 414 stocks with 5-min history (var/archive/equity). Rs1L, 3x notional (user's choice; MIS allows 5x), real Upstox intraday costs + 10 bp slippage a side. Backtest Sep 2022 -> Oct 2026 (frozen/thin trades removed): Rs1L -> Rs11.6L, every year positive (+5/+41/+111/+198/+24%), worst fall -22%; 2x Rs5.4L (-15%); gaps 8/9/10% also positive in 2022-24 and 2025-26; 47 trades, 66% won; without the best 5 trades 3.9x. Shorting gap-downs, smaller gaps and stops failed. Results calendar: NSE board meetings fetched each morning (results_calendar.csv). | paper, own account `RESULTS_GAP` (Rs1L; `engine/results_gap.py`, also on the New backtest page as Equity (NSE intraday) / results_gap -- website run 2022-09 -> 2026-10-14 at 3x: Rs1L -> Rs12.06L, 41 trades, 71% won, worst -22%, every year positive (summary cached in var/cache/results_gap_days.pkl); `hft-results-gap.timer` Mon-Fri 08:50 calendar / 09:30:05 buy / 15:20:05 sell / 15:26:05 retry; first run 2026-10-26) |
+| equity | `equity/strategies/tf_intraday/results_gap/` | intraday, long only: the morning after a stock's quarterly results, buy at 09:30 if it opened 7%+ above the market (median stock gap) and is still above its 09:15 open; sell at 15:20. Universe = the 414 stocks with 5-min history (var/archive/equity). Rs1L, 3x notional (user's choice; MIS allows 5x), real Upstox intraday costs + 10 bp slippage a side. Backtest Sep 2022 -> Oct 2026 (frozen/thin trades removed): Rs1L -> Rs11.6L, every year positive (+5/+41/+111/+198/+24%), worst fall -22%; 2x Rs5.4L (-15%); gaps 8/9/10% also positive in 2022-24 and 2025-26; 47 trades, 66% won; without the best 5 trades 3.9x. Shorting gap-downs, smaller gaps and stops failed. Results calendar: NSE board meetings fetched each morning (results_calendar.csv). | paper, own account `RESULTS_GAP` (Rs1L; `engine/results_gap.py`, also on the New backtest page as Equity (NSE intraday) / results_gap -- website run 2022-09 -> 2026-10-14 at 3x: Rs1L -> Rs12.06L, 41 trades, 71% won, worst -22%, every year positive (summary cached in var/cache/results_gap_days.pkl); `hft-results-gap.timer` Mon-Fri 08:50 calendar / 09:30:05 buy / 09:40:05 buy retry / 15:20:05 sell / 15:26:05 retry; first run 2026-10-26) |
 | commodity | `strategies/tf_daily/trend_carry/` | **every 2 weeks (10 trading days) since 2026-10-25** (was month-end; day-by-day test at Rs2.5L, each speed started on 10 different days, medians: monthly 2023-24 Rs3.10L / 2025-26 Rs4.88L / 2023-26 Rs4.39L (Rs3.85-5.81L), 2-weekly Rs2.99L / Rs4.95L / Rs5.19L (Rs4.53-6.71L), weekly Rs2.74L / Rs5.03L / Rs5.11L; daily trading tripled fees; the start day swings results more than the speed does; a holding still in the top 3 is kept). Previously monthly: buy the 3 of 8 MCX commodities with the best rank(12-month trend) + rank(carry = near vs next contract) (ties to the stronger trend, fixed 2026-10-23 -- ties had gone to list order, which inflated earlier numbers; skewness and basis-momentum were tested as extra ranks and rejected on a fair re-test: trend+carry Rs2.5L 2023-26 +159% vs +skew +147%), nearest-lot rounding (2026-10-23), sized by 1/volatility, mini contracts, whole lots | paper, own account `MCX_TREND_CARRY` (**Rs2.5L since 2026-10-21**, 1.5x exposure; `engine/mcx_trend_carry.py`, `hft-mcx-trend-carry.timer` 09:10 / 23:40 IST); web backtest too. Capital check 2026-10-21 (user: "do we really need 5lakhs"): below ~Rs2-2.5L whole-lot minimums starve it of trades (Rs1L 2022-26 only made +9%); above ~Rs2.5L the % return barely changes with more capital (Rs2.5L-Rs8L all land near +145-180%) -- Rs5L wasn't a real requirement, just a round number. Reset to Rs2.5L (DB backed up first) |
 
-Tested and rejected (in the docs, `var/reports/` and git history): intraday and scalping ideas in every market
-(`docs/CURRENCY_RESEARCH.md`), currency daily rules, MCX commodity swing / trend / intraday research.
+Tested and rejected (`var/reports/` and git history -- there is no `docs/` folder in this repo): intraday and scalping ideas in every market,
+currency daily rules, MCX commodity swing / trend / intraday research.

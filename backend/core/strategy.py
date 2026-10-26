@@ -14,11 +14,19 @@ defines a Strategy subclass and exposes an instance called STRATEGY:
     STRATEGY = EquitySwing()
 
 then switch it on with  EQUITY_STRATEGIES=scalping,swing  in .env. Nothing else
-changes: the paper-trading runner (engine/live_dryrun.py) and the real-order
-runner (engine/live_trading.py) both discover it through core/registry.py and
-apply the SAME gates to it (kill switches, cooldowns, heat and margin caps,
-sector cap, drawdown-scaled sizing). A strategy only makes decisions; the runners
-own execution, so a strategy never touches the broker or the database.
+changes: the runner imports it through core/registry.py and applies its own gates
+(kill switches, cooldowns, heat and margin caps, sector cap, drawdown-scaled sizing).
+A strategy only makes decisions; the runner owns execution, so a strategy never
+touches the broker or the database.
+
+IMPORTANT (2026-10-26): the only runners that implement this contract are
+engine/live_dryrun.py and engine/live_trading.py, and both are RETIRED -- equity and
+currency were removed on 2026-10-21, so a strategy written this way is picked up by
+nothing that runs today. The three live engines (crypto_dip_reversal,
+mcx_trend_carry, results_gap) name their strategy module directly and carry their own
+sizing, gates and state; there is no shared-gate layer between them. The earlier
+version of this docstring claimed both runners applied the SAME gates -- they never
+shared code, and neither is running.
 """
 from __future__ import annotations
 
