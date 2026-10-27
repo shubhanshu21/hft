@@ -20,3 +20,10 @@ const WHY = { exit_signal: "price bounced back (exit signal)", stop: "stop-loss 
   monthly_rebalance: "monthly rebalance", "Monthly rebalance": "monthly rebalance", rebalance_dropped: "dropped from the top 3",
   rebalance_resize: "resized at the 2-weekly check", roll_before_expiry: "switched to the next contract", "Roll before expiry": "switched to the next contract" };
 export const whyText = (w) => (w == null ? "" : WHY[w] ?? String(w).replace(/_/g, " "));
+
+/** Amount + caption for an account card. The selected card shows the same live value as the big number below it (booked +
+ *  open trades); other cards only know their booked money, so they say "booked" while trades are open. */
+export const walletAmount = (a, selected, liveValue) => {
+  if (selected && liveValue != null) return { amount: liveValue, note: `${a.open} open` };
+  return { amount: a.booked, note: a.open ? `booked · ${a.open} open` : "0 open" };
+};

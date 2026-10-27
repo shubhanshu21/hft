@@ -11,7 +11,7 @@ import OpenTradeCard from "../components/paper/OpenTradeCard.jsx";
 import Pager from "../components/ui/Pager.jsx";
 import { usePaged } from "../hooks/usePaged.js";
 import { useTheme } from "../hooks/useTheme.js";
-import { inr, signed, tone, whyText } from "../lib/format.js";
+import { inr, signed, tone, whyText, walletAmount } from "../lib/format.js";
 
 const STRATEGY_LABEL = { trend_carry: "MCX trend + carry", dip_reversal: "Crypto dip-reversal", results_gap: "Results-day gap-up" };
 const when = (s) => (s ? String(s).replace("T", " ").slice(0, 16) : "-");
@@ -70,7 +70,7 @@ export default function PaperPage() {
                 <span className="t"><span className={`mkt-dot ${a.market_open ? "open" : "closed"}`} title={a.market_text} aria-label={a.market_text} />{a.label}</span>
                 <span className="s">{a.strategies}{a.market_text ? ` · ${a.market_text}` : ""}</span>
               </span>
-              <span className="wallet-amt">{inr(a.booked)}<small>{a.open} open</small></span>
+              {(() => { const w = walletAmount(a, a.id === d.account_id, value); return <span className="wallet-amt">{inr(w.amount)}<small>{w.note}</small></span>; })()}
             </button>
           ))}
         </div>

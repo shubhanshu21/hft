@@ -89,7 +89,7 @@
 .acct-tabs .wallet-ico{display:inline-grid;place-items:center;width:42px;height:42px;border-radius:13px;background:var(--grid);color:var(--fg-2);flex:none}
 .acct-tabs .wallet-txt{display:flex;flex-direction:column;gap:2px;min-width:0}
 .acct-tabs .wallet-amt{margin-left:auto;text-align:right;font-weight:700;font-size:1.0625rem;letter-spacing:-.01em}
-.acct-tabs .wallet-amt small{display:block;font-weight:500;font-size:.75rem;color:var(--muted)}
+.acct-tabs .wallet-amt small{display:block;font-weight:500;font-size:.75rem;color:var(--muted);white-space:nowrap}
 .acct-tabs button.on{background:linear-gradient(135deg,#0d2342,#1b56a0);border-color:transparent;color:#fff;box-shadow:0 12px 30px -14px rgba(13,40,84,.7)}
 .acct-tabs button.on .s,.acct-tabs button.on .wallet-amt small{color:rgba(226,236,250,.75)}
 .acct-tabs button.on .wallet-ico{background:rgba(255,255,255,.12);color:#fff}

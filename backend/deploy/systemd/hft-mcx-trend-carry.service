@@ -1,5 +1,5 @@
 [Unit]
-Description=MCX trend + carry paper trading (monthly rebalance, daily mark-to-market; paper only, no real orders)
+Description=MCX trend + carry paper trading (re-checked every 10 trading days, daily mark-to-market; paper only, no real orders)
 
 [Service]
 Type=oneshot
