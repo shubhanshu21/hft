@@ -14,3 +14,13 @@
 .static-value{font-family:var(--font-num);padding:8px 0;font-variant-numeric:tabular-nums}
 button.linkish{background:none;border:0;padding:0;color:var(--accent);text-decoration:underline;text-underline-offset:3px;cursor:pointer;font-size:inherit;min-height:0;box-shadow:none}
 button.linkish:hover:not(:disabled){background:none;color:var(--accent-hover)}
+/* 2026-10-29: market + strategy get room (no cut-off names), dates sit in their own row, the strategy story folds away */
+.form-grid:first-child{grid-template-columns:minmax(220px,1fr) minmax(260px,1.4fr)}
+.when-grid{margin-top:16px;grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}
+.date-read{font-weight:500;color:var(--fg-2)}
+.how{margin-top:14px;border:1px solid var(--line);border-radius:var(--radius-sm);padding:10px 14px;background:var(--panel-2)}
+.how summary{cursor:pointer;font-size:.875rem;font-weight:600;color:var(--fg-2)}
+.how .hint{margin-top:8px}
+.preset-row{margin-bottom:14px}
+.fees-box b{color:var(--fg)}
+@media (max-width:600px){.form-grid:first-child{grid-template-columns:minmax(0,1fr)}}

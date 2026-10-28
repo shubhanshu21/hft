@@ -6,6 +6,7 @@
     POST /api/backtests          start a run (JSON body; optional label)
     POST /api/backtests/<id>/label   rename a saved run (JSON body with label)
     GET  /api/paper              the paper-trading account (read-only): balance, open positions, trades, daily account value
+    GET  /api/overview           every paper account at once (the Today page): value, today's profit, open trades, engine status
     DELETE /api/backtests/<id>   delete one saved run;  DELETE /api/backtests  delete every saved run (the one running now is kept)
 
 It only reads archived candles and runs the strategy code; it never talks to Upstox, touches the paper-trading database or places an order.
@@ -119,7 +120,8 @@ def summaries() -> list[dict]:
             r = json.loads(f.read_text())
         except ValueError:
             continue
-        out.append({k: r.get(k) for k in ("id", "status", "created", "market", "strategy", "params", "error", "label")} | {"metrics": (r.get("result") or {}).get("metrics")})
+        out.append({k: r.get(k) for k in ("id", "status", "created", "market", "strategy", "params", "error", "label")}
+                   | {"metrics": (r.get("result") or {}).get("metrics"), "live": r.get("strategy") in ACCOUNT_STRATEGIES.values()})
     if _running:
         out = [r for r in out if r["id"] != _running["id"]] + [{k: _running.get(k) for k in ("id", "status", "created", "market", "strategy", "params", "error", "progress")} | {"metrics": None}]
     return sorted(out, key=lambda r: r["created"] or "", reverse=True)
@@ -456,6 +458,37 @@ def paper_summary(account: str = "CRYPTO_DIP_REVERSAL") -> dict:
                       "fees": round(sum(t["total_friction"] or 0 for t in trades))}}
 
 
+def overview(now: datetime | None = None, summary=None) -> dict:
+    """Every paper account at once, for the Today page. value = booked money + open profit (unpriced positions count 0);
+    today_pnl = profit after fees of trades sold today (IST) + open profit now. One account failing never hides the others."""
+    now = now or datetime.now(IST)
+    summary = summary or paper_summary
+    today = now.date().isoformat()
+    accounts, recent = [], []
+    for aid, label in PAPER_ACCOUNTS:
+        try:
+            s = summary(aid)
+        except Exception as e:                                     # a locked DB or a broker hiccup: show the account as unavailable
+            accounts.append({"id": aid, "label": label, "strategy": ACCOUNT_STRATEGIES.get(aid, ""), "error": f"unavailable ({type(e).__name__})"})
+            continue
+        acc, pos = s.get("account") or {}, s.get("positions") or []
+        tab = next((t for t in s.get("accounts") or [] if t["id"] == aid), {})
+        open_pnl = round(sum(p.get("profit_now") or 0 for p in pos), 2)
+        booked = float(acc.get("current_capital") or 0)
+        sold_today = sum(t.get("net_pnl") or 0 for t in s.get("trades") or [] if str(t.get("exit_dt") or "")[:10] == today)
+        accounts.append({"id": aid, "label": label, "strategy": ACCOUNT_STRATEGIES.get(aid, ""), "start": float(acc.get("initial_capital") or 0),
+                         "booked": booked, "open_pnl": open_pnl, "value": round(booked + open_pnl, 2), "today_pnl": round(sold_today + open_pnl, 2),
+                         "open_count": len(pos), "unpriced": sum(1 for p in pos if p.get("profit_now") is None),
+                         "open": [{"symbol": p["symbol"], "profit_now": p.get("profit_now"), "move_pct": p.get("move_pct")} for p in pos],
+                         "engine": s.get("engine") or {}, "market_open": tab.get("market_open"), "market_text": tab.get("market_text")})
+        recent += [t | {"account": aid, "account_label": label} for t in (s.get("trades") or [])[:12]]
+    ok = [a for a in accounts if "error" not in a]
+    totals = {"start": round(sum(a["start"] for a in ok), 2), "value": round(sum(a["value"] for a in ok), 2),
+              "today_pnl": round(sum(a["today_pnl"] for a in ok), 2), "open_count": sum(a["open_count"] for a in ok)}
+    recent.sort(key=lambda t: str(t.get("exit_dt") or ""), reverse=True)
+    return {"as_of": now.isoformat(timespec="seconds"), "accounts": accounts, "totals": totals, "recent": recent[:12]}
+
+
 def work(run: dict) -> None:
     global _running
     try:
@@ -561,6 +594,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, paper_summary(acct))
             except Exception as e:                                       # a locked or half-written DB must not break the page
                 return self._send(HTTPStatus.SERVICE_UNAVAILABLE, {"error": f"paper account unavailable: {type(e).__name__}"})
+        if path == "/api/overview":
+            return self._send(200, overview())
         m = re.fullmatch(r"/api/backtests/([0-9a-f]{12})", path)
         if m:
             live = _running if _running and _running["id"] == m.group(1) else None

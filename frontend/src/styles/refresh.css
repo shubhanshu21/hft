@@ -1,0 +1,32 @@
+/* 2026-10-29 refresh (light only, same layout patterns the user approved on 2026-10-24).
+   - Type: IBM Plex Sans for text with tabular figures for money, so rupee columns line up; Plex Mono stays for prices in tables.
+   - Hierarchy: the verdict card is the one raised element on a page; ordinary sections sit flat (border, no shadow) and no longer lift
+     on hover, so the eye goes to the number that matters first.
+   - Phone: compact header, scrollable tabs, no empty chart box, account cards that don't squeeze their text. */
+:root{--font-ui:"IBM Plex Sans","Segoe UI",system-ui,-apple-system,sans-serif;--shadow:none;--radius:12px}
+body{font-feature-settings:normal;letter-spacing:.002em}
+.v-big,.kpi-v,.stat .v,.wallet-amt,.lr-money b,.today-num b,.ctrl-summary b{font-variant-numeric:tabular-nums}
+.panel{box-shadow:none}
+.kpi:hover{transform:none;box-shadow:none}
+.acct-tabs button:not(.on):hover:not(:disabled){box-shadow:none}
+.lr-open .chip{border:1px solid var(--line);background:var(--panel-2);color:var(--fg-2)}
+h2{font-size:1rem}
+
+/* header: the brand line and the tabs share one row on desktop; on a phone the subtitle goes and the tabs scroll sideways */
+@media (max-width:640px){
+  .app-header{padding-block:8px;gap:8px}
+  .brand small{display:none}
+  .nav{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+  .nav::-webkit-scrollbar{display:none}
+  .nav a{flex:1 0 auto;text-align:center;padding:8px 12px;min-height:40px;display:inline-flex;align-items:center;justify-content:center}
+  .page{padding-block:16px 40px}
+  .wrap{gap:14px}
+  .verdict{border-radius:16px;padding:18px 16px 14px}
+  .v-big{font-size:2.5rem}
+  .paper-verdict .v-chart-empty{display:none}
+  .acct-tabs button{padding:12px 14px;gap:12px}
+  .acct-tabs .wallet-ico{width:36px;height:36px;border-radius:11px}
+  .acct-tabs .wallet-txt .s{display:none}
+  .stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .panel{padding:14px 14px}
+}

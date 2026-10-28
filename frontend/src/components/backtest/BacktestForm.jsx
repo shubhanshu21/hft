@@ -1,6 +1,7 @@
 import Icon from "../ui/Icon.jsx";
 import { useEffect, useMemo, useState } from "react";
 import Panel from "../ui/Panel.jsx";
+import { niceDate } from "../../lib/format.js";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const THIS_YEAR = new Date().getFullYear();
@@ -11,6 +12,12 @@ const SAVED_KEY = "lastBacktest";
 const loadSaved = () => { try { return JSON.parse(localStorage.getItem(SAVED_KEY) || "null"); } catch { return null; } };
 const isoDaysAgo = (n) => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
 const yearRange = (y) => ({ start: `${y}-01-01`, end: y === THIS_YEAR ? today() : `${y}-12-31` });
+// Only the chosen market's costs are shown (2026-10-29: all three markets' fee rules used to sit in one long paragraph).
+const FEES = {
+  commodity: "Brokerage, CTT, stamp duty, exchange charges, GST and half the buy-sell gap on every trade, real MCX prices including the cost of switching to the next contract; whole lots only.",
+  crypto: "Delta Exchange India: 0.05% taker fee + 18% GST and slippage on market orders, 0.02% maker fee + GST on limit take-profits, real funding payments; a stop that gaps is filled at the next price, not at the stop.",
+  equity: "Upstox: Rs30 per order, STT 0.025% on the sale, exchange, SEBI and stamp charges, GST, plus 0.1% slippage each way.",
+};
 const MARKET_LABEL = { commodity: "Commodity (MCX futures)", crypto: "Crypto (Delta Exchange India futures)", equity: "Equity (NSE intraday)" };
 
 export default function BacktestForm({ strategies, onSubmit, busy }) {
@@ -70,32 +77,38 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
             <select id="strategy" value={name} onChange={(e) => setName(e.target.value)}>
               {options.map((s) => <option key={s.name} value={s.name} disabled={!s.supported}>{s.name}{s.supported ? "" : ` (${s.timeframe}: not supported yet)`}</option>)}
             </select>
-            <span className="hint">{strategy?.summary}</span></div>
+            </div>
+        </div>
+        <div className="form-grid when-grid">
           <div className="field"><label htmlFor="year">Year</label>
             <select id="year" value={/^\d{4}$/.test(year) ? year : "custom"} onChange={(e) => pickYear(e.target.value)}>
               {YEARS.map((y) => <option key={y} value={y}>{y}{y === FIRST_YEAR ? " (data starts in September)" : y === THIS_YEAR ? " (so far)" : ""}</option>)}
               <option value="custom">Custom dates</option>
             </select>
-            <span className="hint">Picks 1 January to 31 December of that year. Strategies still read earlier candles to warm up.</span></div>
-          <div className="field"><label htmlFor="label">Name this run (optional)</label><input id="label" type="text" maxLength={60} placeholder="e.g. 2% risk, best 20 stocks" value={f.label} onChange={set("label")} /></div>
-          <div className="field"><label htmlFor="start">From</label><input id="start" type="date" value={f.start} onChange={setDate("start")} required /></div>
-          <div className="field"><label htmlFor="end">To</label><input id="end" type="date" value={f.end} onChange={setDate("end")} required /></div>
+            </div>
+          <div className="field"><label htmlFor="start">From</label><input id="start" type="date" value={f.start} onChange={setDate("start")} required /><span className="hint date-read">{niceDate(f.start)}</span></div>
+          <div className="field"><label htmlFor="end">To</label><input id="end" type="date" value={f.end} onChange={setDate("end")} required /><span className="hint date-read">{niceDate(f.end)}</span></div>
+          <div className="field"><label htmlFor="label">Name this run (optional)</label><input id="label" type="text" maxLength={60} placeholder="e.g. 5x, last 12 months" value={f.label} onChange={set("label")} /></div>
           <div className="field quick-dates"><span className="hint">Quick dates</span><div className="row-flex">
             <button type="button" className={`chip${year === String(THIS_YEAR) ? " on" : ""}`} onClick={() => pickYear(String(THIS_YEAR))}>This year</button>
             <button type="button" className={`chip${year === "12m" ? " on" : ""}`} onClick={() => quick(isoDaysAgo(365), today(), "12m")}>Last 12 months</button>
             <button type="button" className={`chip${year === "since" ? " on" : ""}`} onClick={() => quick(monthly ? "2023-01-01" : "2022-01-01", today(), "since")}>{monthly ? "Since 2023 (all)" : "Since 2022 (all)"}</button>
           </div></div>
         </div>
-        {strategy && monthly && (
+        {strategy && (
+          <details className="how">
+            <summary>How {strategy.name} works</summary>
+            {!monthly && !gap && !auto && !crypto && <p className="hint">{strategy.summary}</p>}
+        {monthly && (
           <p className="hint">Every 2 weeks (10 trading days) it ranks the chosen MCX commodities against each other on 12-month trend and carry (next contract cheaper), and holds the best 3 (with fewer than 6 chosen, the best half); a holding that stays in the top 3 is kept. Pick at least 2. History starts December 2021; the first trade is in January 2023 (it needs about a year of trend).</p>
         )}
-        {strategy && gap && (
+        {gap && (
           <p className="hint">Intraday, buys only: the morning after a company's quarterly results, it buys at 09:30 if the stock opened 7% or more above the
             market and is still above its 09:15 opening price, and sells everything at 15:20. It skips stocks that were frozen at 09:30 or had under Rs50 lakh
             traded then. Its own list of 414 liquid NSE stocks; 5-minute data from September 2022 to mid-October 2026. Real Upstox intraday costs + 0.1% slippage
             each way are always charged.</p>
         )}
-        {strategy && auto && !gap && (
+        {auto && !gap && (
           <p className="hint">This strategy chooses its own stocks: each day, the 200 most-traded NSE stocks of that day (about 4,250 checked, no fixed list).
             {strategy.name === "earnings_drift"
               ? " It buys a stock two days after quarterly results that beat the market by more than 4% on double volume, up to 5 at a time, and sells after 40 trading days. It buys only while half of those 200 stocks are above their 50-day average. Risk per trade does not apply."
@@ -104,8 +117,10 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
               : " Half the money buys quiet-day (NR7) breakouts, up to 5 stocks; half buys 55-day-high breakouts, up to 3 stocks. It buys only while at least half of those 200 stocks are above their 50-day average."}
             {" "}Daily data starts January 2022, so the first signals are in late 2022.</p>
         )}
-        {strategy && crypto && (
+        {crypto && (
           <p className="hint">5-minute dip-reversal on up to 11 coins' perpetual futures: buys a sharp one-sided dip (Bollinger-band squeeze or a slip under the lower band), exits at a 15% target, a 7% stop, or the price closing back above the middle band. 6% risk per trade -- worst fall seen was -75% on a continuously-compounding account (8% made only ~3-4% more for -88%); up to 5 positions open together. Real taker/maker fees + GST, slippage and funding included.</p>
+        )}
+          </details>
         )}
         {strategy && !auto && (
           <div className="field">
@@ -124,6 +139,12 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
       </Panel>
 
       <Panel title="Money, fees and slippage">
+        <div className="row-flex preset-row">
+          <button type="button" className="chip" onClick={() => { setF((x) => ({ ...x, capital: strategy?.default_capital ?? x.capital, exposure: strategy?.exposure ?? x.exposure,
+            risk_pct: strategy?.default_risk_pct ?? x.risk_pct })); const own = strategy?.default_symbols ?? []; setAll(!(own.length && own.length < (strategy?.symbols?.length ?? 0))); setChosen(own); }}>
+            Same as my paper account</button>
+          <span className="hint">Fills in the money, size and coins the live paper account uses.</span>
+        </div>
         <div className="form-grid">
           <div className="field"><label htmlFor="capital">Starting money (INR)</label><input id="capital" type="number" min="10000" max="1000000000" step="1" value={f.capital} onChange={set("capital")} /></div>
           {market === "equity" && !gap && (
@@ -151,8 +172,8 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
             <div className="field"><label htmlFor="exposure">Size (x the account)</label>
               <input id="exposure" type="number" min={strategy.exposure_min} max={strategy.exposure_max} step="0.5" value={f.exposure} onChange={set("exposure")} />
               <span className="hint">How much stock each morning buys, as a multiple of your money (Upstox intraday allows up to 5x), split across that
-                morning's buys. The paper account uses {strategy.exposure}x. Tested 2022-26: 1x worst fall -8%, 2x -15%, 3x -22%, 5x -35%.</span>
-              {+f.exposure > 3 && <span className="warn" role="alert">Above 3x a bad results day hurts a lot: at 5x the worst fall was -35%.</span>}</div>
+                morning's buys, never more than Upstox allows on that stock. The paper account uses {strategy.exposure}x. Tested 2022-26: 1x worst fall -8%, 2x -15%, 3x -22%, 4x -29%, 5x -35%.</span>
+              {+f.exposure >= 4 && <span className="warn" role="alert">At {f.exposure}x a bad results day hurts a lot: at 5x the worst single day was -27.6% and the worst fall -35%.</span>}</div>
           ) : monthly ? (
             <div className="field"><label htmlFor="exposure">Exposure (x the account)</label>
               <input id="exposure" type="number" min={strategy.exposure_min} max={strategy.exposure_max} step="0.25" value={f.exposure} onChange={set("exposure")} />
@@ -175,9 +196,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
           {!auto && <div className="field"><label htmlFor="maxpos">Most holdings at once</label><input id="maxpos" type="number" min="1" max="10" value={f.max_positions} onChange={set("max_positions")} /></div>}
           </>)}
         </div>
-        <p className="fees-box">
-          {"Every trade is charged the full real costs, and fees cannot be switched off. Commodity (MCX): brokerage, CTT, stamp duty, exchange charges, GST and a half-spread on every trade, real month-end MCX prices including the monthly contract-switch cost; whole lots only. Crypto (Delta Exchange India perpetual futures): taker fee 0.05% + 18% GST + slippage on market orders, maker fee 0.02% + GST on limit take-profits, real funding; stops that gap are filled at the next price, not at the stop. Equity (NSE intraday): Upstox Rs30 per order, STT 0.025% on the sale, exchange, SEBI and stamp charges, GST, plus 0.1% slippage each way."}
-        </p>
+        <p className="fees-box"><b>Real costs on every trade</b> (they cannot be switched off): {FEES[market] ?? "the strategy's own cost model."}</p>
       </Panel>
 
       <div className="run-cta"><button className="main" type="submit" disabled={busy || !strategy?.supported}><Icon name="play" size={16} /> {busy ? "Running..." : "Run backtest"}</button><span className="note">Takes a few seconds to a minute; the result replays day by day.</span></div>

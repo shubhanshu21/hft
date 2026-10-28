@@ -27,3 +27,10 @@ export const walletAmount = (a, selected, liveValue) => {
   if (selected && liveValue != null) return { amount: liveValue, note: `${a.open} open` };
   return { amount: a.booked, note: a.open ? `booked · ${a.open} open` : "0 open" };
 };
+
+/** "2026-10-28" -> "28 Oct 2026" (date inputs show the browser's format, often US month/day; this line says it plainly). */
+export const niceDate = (iso) => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso || "")) return "";
+  const d = new Date(`${iso}T00:00:00`);
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+};

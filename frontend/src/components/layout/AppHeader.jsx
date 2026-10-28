@@ -1,6 +1,6 @@
 import Icon from "../ui/Icon.jsx";
 
-const TABS = [["results", "Results"], ["paper", "Paper trading"], ["new", "New backtest"]];
+const TABS = [["today", "Today"], ["paper", "Paper trading"], ["results", "Results"], ["new", "New backtest"]];
 
 export default function AppHeader({ page }) {
   return (

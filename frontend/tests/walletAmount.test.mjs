@@ -15,3 +15,11 @@ test("other cards show booked money and say so while trades are open", () => {
 test("selected card falls back to booked before the value is known", () => {
   assert.equal(walletAmount({ booked: 250000, open: 1 }, true, null).amount, 250000);
 });
+
+import { niceDate } from "../src/lib/format.js";
+
+test("dates read the Indian way: day month year", () => {
+  assert.equal(niceDate("2026-10-28"), "28 Oct 2026");
+  assert.equal(niceDate(""), "");
+  assert.equal(niceDate("not a date"), "");
+});

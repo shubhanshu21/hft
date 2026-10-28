@@ -19,13 +19,17 @@ const qtyFmt = (q) => (q == null ? "-" : Number(q).toLocaleString("en-IN", { max
 const pxFmt = (p) => (p == null ? "-" : Number(p).toFixed(Math.abs(p) < 10 ? 4 : 2));   // small coin prices (DOGE 0.09) need more decimals
 
 /** The paper-trading account as it is now (read-only, refreshed every minute). No real orders are ever placed. */
-export default function PaperPage() {
+export default function PaperPage({ accountId }) {
   const colors = useTheme();
   const [d, setD] = useState(null);
   const [error, setError] = useState("");
   const [loadedAt, setLoadedAt] = useState(null);
-  const [account, setAccount] = useState(() => { try { return localStorage.getItem("paperAccount") || "CRYPTO_DIP_REVERSAL"; } catch { return "CRYPTO_DIP_REVERSAL"; } });
-  const pick = (id) => { setAccount(id); setD(null); try { localStorage.setItem("paperAccount", id); } catch { /* private window */ } };
+  const [account, setAccount] = useState(() => { try { return accountId || localStorage.getItem("paperAccount") || "CRYPTO_DIP_REVERSAL"; } catch { return accountId || "CRYPTO_DIP_REVERSAL"; } });
+  useEffect(() => { if (accountId && accountId !== account) pick(accountId); }, [accountId]);   // a link from the Today page (#/paper/<account>)
+  const pick = (id) => {
+    setAccount(id); setD(null);
+    try { localStorage.setItem("paperAccount", id); window.history.replaceState(null, "", `#/paper/${id}`); } catch { /* private window */ }
+  };
   const box = useRef(null);
   const tradePaged = usePaged(d?.trades ?? [], 15);
 

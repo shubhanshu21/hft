@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import ReplayView from "../components/replay/ReplayView.jsx";
 import { clearRuns, deleteRun, getRun, getSample, listRuns, listSamples, renameRun } from "../api/client.js";
 import { go } from "../hooks/useHashRoute.js";
+import { defaultRunKey, groupRuns } from "../lib/runs.js";
 
 const label = (r) => `${r.label ? `${r.label}: ` : ""}${r.strategy} on ${r.market}, ${r.params?.start} to ${r.params?.end}${r.metrics ? ` (${r.metrics.return_pct >= 0 ? "+" : ""}${r.metrics.return_pct}%)` : ""}`;
 
@@ -16,7 +17,7 @@ export default function ResultsPage({ runId }) {
   const refresh = () => listRuns().then((r) => setSaved(r.filter((x) => x.status === "done"))).catch(() => {});
   useEffect(() => { listSamples().then(setSamples).catch(() => {}); refresh(); }, [runId]);
 
-  const key = runId ?? (samples[0] ? `sample:${samples[0].file}` : saved[0] ? saved[0].id : "");
+  const key = defaultRunKey(runId, saved, samples);          // newest run of a live strategy, not an old example
   const current = saved.find((r) => r.id === key);
 
   useEffect(() => {
@@ -45,8 +46,11 @@ export default function ResultsPage({ runId }) {
       <div className="panel run-bar">
         <label htmlFor="run" className="note">Result</label>
         <select id="run" value={key} onChange={(e) => go(`results/${e.target.value}`)}>
-          {samples.map((s) => <option key={s.file} value={`sample:${s.file}`}>Example: {s.title}</option>)}
-          {saved.map((r) => <option key={r.id} value={r.id}>{label(r)}</option>)}
+          {groupRuns(saved, samples).map((g) => (
+            <optgroup key={g.label} label={g.label}>
+              {g.items.map((it) => <option key={it.key} value={it.key}>{it.run ? label(it.run) : `Example: ${it.sample.title}`}</option>)}
+            </optgroup>
+          ))}
         </select>
         <a href="#/new" className="run-new">+ New backtest</a>
         {current && (naming == null
