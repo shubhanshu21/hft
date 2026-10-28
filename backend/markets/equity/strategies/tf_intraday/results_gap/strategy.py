@@ -9,8 +9,11 @@ with NSE board-meeting results dates:
 Result (frozen-at-09:30 / too-thin trades removed): Rs1L -> Rs11.6L at 3x, every year positive (+5/+41/+111/+198/+24% 2022-26),
 worst fall -22%; 2x Rs5.4L (-15%), 1x Rs2.4L (-8%); gaps of 8/9/10% also positive in both 2022-24 and 2025-26; 47 trades, 66% won.
 Caveats: few trades (~15-20 a year); a handful of big days carry much of the profit (without the best 5: 3.9x); shorting gap-downs,
-smaller gaps and stops all failed. The user chose 3x (2026-10-24, "add 3x"), then 5x (2026-10-29, "35% fall is fine"):
-5x Rs1L -> Rs49.3L, worst fall -35%, worst day -27.6%. The engine caps each stock at Upstox's own MIS leverage.
+smaller gaps and stops all failed. The user chose 3x (2026-10-24, "add 3x"), 5x for a day (2026-10-29), then 3x again.
+2026-10-29 FAIRNESS FIX: the 414 are today's liquid names (hindsight); the rule lost -1.0%/trade on 130 results-day gap-ups outside them.
+It now trades every stock liquid AT THE TIME (>= Rs10 cr median turnover over the 20 days before; liquid_days.py / liquid_list): fair
+backtest 3x Rs1L -> Rs1.91L 2022-24 (19 trades), Rs2.27L 2025-26 (40), Rs4.40L Sep 2022 -> Oct 2026 (59, 36 won), worst fall -25%;
+5x 2.47L / 2.99L with -43%. Edge +0.8-1.4%/trade, not yet statistically proven (t ~1.3). The engine caps each stock at Upstox's MIS leverage.
 """
 from __future__ import annotations
 
@@ -28,11 +31,76 @@ SLIP = 0.0010                  # 10 bp a side (the backtest's conservative setti
 MIN_PRICE = 20.0
 CALENDAR = ARCHIVE_ROOT / "nse" / "results_calendar.csv"
 UNIVERSE_DIR = ARCHIVE_ROOT / "equity"
+BHAV_DIR = ARCHIVE_ROOT / "nse" / "bhav_eq"     # NSE's daily full bhavcopy, EQ series only (symbol, close, turnover), one file per day
+LIQUID_MIN = 10e7              # Rs10 crore median daily turnover ...
+LIQUID_DAYS = 20               # ... over the 20 trading days before the day (point in time: no hindsight)
 
 
-def universe() -> list[str]:
-    """The 414 stocks the rule was tested on (those with 5-minute history) -- live trading stays inside the tested list."""
+def market_panel() -> list[str]:
+    """The 414 stocks with 5-minute history. The market's gap each morning is their median (as in every backtest); until 2026-10-29
+    they were also the only stocks traded."""
     return sorted(os.path.basename(p).replace("_5minute.csv.gz", "") for p in glob.glob(str(UNIVERSE_DIR / "*_5minute.csv.gz")))
+
+
+def parse_bhav(text: str) -> pd.DataFrame:
+    """NSE sec_bhavdata_full -> EQ rows: SYMBOL, CLOSE, TURNOVER (rupees). Anything that is not a bhavcopy gives an empty frame."""
+    import io
+    try:
+        df = pd.read_csv(io.StringIO(text), skipinitialspace=True)
+        df.columns = [c.strip() for c in df.columns]
+        df = df[df["SERIES"].astype(str).str.strip() == "EQ"]
+        return pd.DataFrame({"SYMBOL": df["SYMBOL"].astype(str).str.strip(), "CLOSE": pd.to_numeric(df["CLOSE_PRICE"], errors="coerce"),
+                             "TURNOVER": pd.to_numeric(df["TURNOVER_LACS"], errors="coerce") * 1e5}).dropna().reset_index(drop=True)
+    except (ValueError, KeyError, pd.errors.ParserError):
+        return pd.DataFrame(columns=["SYMBOL", "CLOSE", "TURNOVER"])
+
+
+def refresh_bhavcopy(today: date | None = None, get=None, days: int = 35, root=None) -> int:
+    """Download the bhavcopies of the `days` calendar days before `today` that are not held yet (weekdays; a holiday 404s and is
+    remembered as <day>.none once it is a few days old). Returns the number of new files."""
+    import requests
+    from engine.research_data import NSE_API_HEADERS
+    root = root or BHAV_DIR
+    root.mkdir(parents=True, exist_ok=True)
+    get = get or (lambda url: requests.get(url, headers=NSE_API_HEADERS, timeout=30))
+    today = today or date.today()
+    new = 0
+    for k in range(days, 0, -1):
+        d = today - timedelta(days=k)
+        if d.weekday() >= 5 or (root / f"{d}.csv.gz").exists() or (root / f"{d}.none").exists():
+            continue
+        try:
+            r = get(f"https://archives.nseindia.com/products/content/sec_bhavdata_full_{d:%d%m%Y}.csv")
+        except Exception:
+            continue
+        df = parse_bhav(r.text) if r.status_code == 200 else pd.DataFrame()
+        if len(df):
+            df.to_csv(root / f"{d}.csv.gz", index=False)
+            new += 1
+        elif r.status_code == 404 and (today - d).days > 4:
+            (root / f"{d}.none").write_text("")
+    return new
+
+
+def liquid_list(asof: date, root=None) -> list[str]:
+    """EQ stocks whose median daily turnover over the LIQUID_DAYS trading days before `asof` is >= LIQUID_MIN (a day a stock did not
+    trade counts as zero) and whose last close is >= MIN_PRICE. Empty when fewer than LIQUID_DAYS days of files are held."""
+    root = root or BHAV_DIR
+    files = sorted(p for p in root.glob("*.csv.gz") if p.name[:10] < asof.isoformat())[-LIQUID_DAYS:]
+    if len(files) < LIQUID_DAYS:
+        return []
+    frames = [pd.read_csv(p).assign(day=p.name[:10]) for p in files]
+    x = pd.concat(frames)
+    turn = x.pivot_table(index="SYMBOL", columns="day", values="TURNOVER", aggfunc="sum").fillna(0.0)
+    last = x.sort_values("day").groupby("SYMBOL")["CLOSE"].last()
+    ok = turn.median(axis=1) >= LIQUID_MIN
+    return sorted(s for s in turn.index[ok] if last.get(s, 0) >= MIN_PRICE)
+
+
+def universe(asof: date | None = None) -> list[str]:
+    """Stocks results_gap may buy (2026-10-29): every liquid NSE stock at the time (see liquid_list). The fixed 414-stock list was
+    hindsight -- the same rule lost money on results-day gap-ups outside it -- so it is only the fallback when the bhavcopies are missing."""
+    return liquid_list(asof or date.today()) or market_panel()
 
 
 def costs(entry: float, exit_: float, qty: int) -> dict:
@@ -67,21 +135,21 @@ def refresh_calendar(today: date | None = None, get=None) -> int:
 
 
 def candidates(today: date, prev_trading_day: date, calendar: pd.DataFrame | None = None) -> list[str]:
-    """Stocks in the tested list whose results meeting fell on the previous trading day or any day since (incl. today)."""
+    """Stocks in today's universe whose results meeting fell on the previous trading day or any day since (incl. today)."""
     if calendar is None:
         calendar = pd.read_csv(CALENDAR) if CALENDAR.exists() else pd.DataFrame(columns=["bm_symbol", "bm_date"])
     d = pd.to_datetime(calendar["bm_date"], format="%d-%b-%Y", errors="coerce").dt.date
     hit = calendar[(d >= prev_trading_day) & (d <= today)]["bm_symbol"]
-    uni = set(universe())
+    uni = set(universe(today))
     return sorted({s for s in hit if s in uni})
 
 
-def signals(quotes: dict, cands: list[str]) -> tuple[list[dict], float | None]:
-    """quotes: {symbol: {"ltp", "prev_close", "today_open", "today_high", "today_low"}} for the whole universe (the market gap is their
-    median). Returns (buys, market_gap): a candidate buys when its gap vs the market >= GAP_MIN, the price now (09:30) is above the
+def signals(quotes: dict, cands: list[str], panel: set[str] | None = None) -> tuple[list[dict], float | None]:
+    """quotes: {symbol: {"ltp", "prev_close", "today_open", "today_high", "today_low"}}; the market gap is the median over `panel`
+    (market_panel(), as in the backtests) or over every quote when no panel is given. Returns (buys, market_gap): a candidate buys when its gap vs the market >= GAP_MIN, the price now (09:30) is above the
     09:15 open, and it is not frozen (high == low, e.g. locked at a price band)."""
-    gaps = [q["today_open"] / q["prev_close"] - 1 for q in quotes.values()
-            if q and q.get("today_open") and q.get("prev_close") and abs(q["today_open"] / q["prev_close"] - 1) < 0.25]
+    gaps = [q["today_open"] / q["prev_close"] - 1 for s, q in quotes.items()
+            if (panel is None or s in panel) and q and q.get("today_open") and q.get("prev_close") and abs(q["today_open"] / q["prev_close"] - 1) < 0.25]
     if len(gaps) < 20:
         return [], None
     mkt = float(pd.Series(gaps).median())
@@ -158,9 +226,13 @@ def _results_days() -> set[tuple[str, str]]:
 
 
 def backtest(capital: float = 100_000, start: str = "2022-09-01", end: str = "2100-01-01", leverage: float = LEVERAGE, progress=None,
-             days_df: pd.DataFrame | None = None, results: set | None = None) -> dict:
+             days_df: pd.DataFrame | None = None, results: set | None = None, universe: str = "liquid",
+             liquid_rows: pd.DataFrame | None = None) -> dict:
     """The website's replay shape: {days, equity, events, pos, bars, metrics, trades}. Capital split across each morning's signals,
-    notional = leverage x capital, compounding."""
+    notional = leverage x capital, compounding.
+    universe="liquid" (default, 2026-10-29): signals from every stock that was liquid at the time (liquid_days.py: >= LIQUID_MIN median
+    turnover over the 20 days before), as the live engine trades now; "list": only the 414 with 5-minute history (hindsight -- kept to
+    compare). Liquid mode needs the saved table; without it (or in unit tests with a hand-made days_df) it falls back to the list."""
     from core.backtester import metrics
     x = (days_df if days_df is not None else day_summary()).copy()
     x = x[x["prev_close"].notna() & (x["o915"] > 0)]
@@ -177,6 +249,14 @@ def backtest(capital: float = 100_000, start: str = "2022-09-01", end: str = "21
     sig = x[x["day"].isin(set(days)) & (x["xgap"] >= GAP_MIN) & (x["c925"] > x["o915"]) & (x["h930"] > x["l930"])
             & (x["v930"] >= MIN_0930_VALUE) & (x["o930"] >= MIN_PRICE)]
     sig = sig[[(s, d) in hit for s, d in zip(sig["sym"], sig["day"])]]
+    if universe == "liquid" and liquid_rows is None and days_df is None:
+        from markets.equity.strategies.tf_intraday.results_gap import liquid_days
+        liquid_rows = liquid_days.load()
+    liquid = universe == "liquid" and liquid_rows is not None
+    if liquid:                                    # results-day rows were selected when the table was built; same rule, plus liquidity
+        L = liquid_rows
+        sig = L[L["day"].isin(set(days)) & (L["xgap"] >= GAP_MIN) & (L["c925"] > L["o915"]) & (L["h930"] > L["l930"])
+                & (L["v930"] >= MIN_0930_VALUE) & (L["o930"] >= MIN_PRICE) & (L["turn20"].fillna(0) >= LIQUID_MIN)]
     by_day = {d: g for d, g in sig.groupby("day")}
     cap, equity, events, closed, trades = float(capital), [], [], [], []
     for k, d in enumerate(days):
@@ -213,8 +293,9 @@ def backtest(capital: float = 100_000, start: str = "2022-09-01", end: str = "21
                    for d in days]
     m = metrics(equity, capital, closed, len(days), 0)
     won = sum(t["won"] for t in trades)
+    who = (f"every NSE stock liquid at the time (>= Rs{LIQUID_MIN / 1e7:.0f} cr median daily turnover over the 20 days before)" if liquid
+           else f"the fixed list of {x['sym'].nunique()} stocks with 5-minute history (hindsight: today's liquid names -- expect less live)")
     m["note"] = (f"Results-day gap-up, {leverage:g}x the account per morning (split across that morning's buys), 09:30 -> 15:20, real Upstox "
-                 f"intraday costs + 10 bp slippage a side. {len(trades)} trades, {won} won. Data: 5-minute prices for {x['sym'].nunique()} stocks, "
-                 f"{all_days[0]} -> {all_days[-1]}.")
+                 f"intraday costs + 10 bp slippage a side. {len(trades)} trades, {won} won. Stocks: {who}. Days {all_days[0]} -> {all_days[-1]}.")
     return {"metrics": m, "equity": equity, "days": days, "events": events, "pos": [[] for _ in days], "bars": bars, "trades": trades,
             "overlays": {}, "unit": "stock"}

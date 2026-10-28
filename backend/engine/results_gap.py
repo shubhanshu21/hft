@@ -6,7 +6,9 @@
                                                 #   from 15:15    -> sell everything still open (idempotent; 15:26 retries)
     python3 -m engine.results_gap --status [--no-telegram]
 
-Account RESULTS_GAP, Rs1L, notional = RESULTS_GAP_LEVERAGE (default 3x; 5x since 2026-10-29) x the account, split equally across the
+Stocks: every NSE stock with >= Rs10 cr median daily turnover over the previous 20 days (S.universe, from NSE's bhavcopy, refreshed at
+08:50; 2026-10-29 -- the fixed 414-stock list was hindsight). Account RESULTS_GAP, Rs1L, notional = RESULTS_GAP_LEVERAGE (3x; it was 5x
+for one day on 2026-10-29) x the account, split equally across the
 morning's signals -- but never more than Upstox's own intraday leverage for that stock (stock_leverage: most get 5x, stocks on the
 exchanges' watch lists only 1x), so a paper buy is always one Upstox would really accept.
 Prices come from Upstox's live OHLC quote (09:15 open, previous close, last price). Rules and costs live in the strategy module.
@@ -98,10 +100,12 @@ def enter(db, broker, now: datetime, holidays: set[date], lookup, lines: list) -
         except Exception as e:                                      # an old calendar still covers yesterday's results
             lines.append(f"results calendar refresh failed ({type(e).__name__}); using the saved one")
     cands = S.candidates(today, prev_trading_day(today, holidays))
-    keys = _keys(S.universe(), lookup)
+    panel = set(S.market_panel())                                   # the market's gap is measured on the tested 414, as in the backtests
+    keys = _keys(sorted(set(S.universe(today)) | panel), lookup)
     raw = broker.get_quote_batch(list(keys.values())) or {}           # full quote: has the previous close (v3 OHLC does not, 2026-10-26)
     quotes = {s: raw.get(k) for s, k in keys.items()}
-    buys, mkt = S.signals(quotes, cands)
+    priced = {s for s in panel if quotes.get(s)}
+    buys, mkt = S.signals(quotes, cands, panel=priced if len(priced) >= 20 else None)
     if mkt is None:
         # NOT a finished day (2026-10-26): one failed quote fetch at 09:30 must not throw away the morning. Keep the day open so the
         # 09:40 slot can try again, and only mark it done -- out loud -- once the retry window has closed.
@@ -139,7 +143,7 @@ def enter(db, broker, now: datetime, holidays: set[date], lookup, lines: list) -
         pid = f"POS_RG_{now:%Y%m%d}_{b['symbol']}"
         db.open_position(pid, b["symbol"], "long", qty, b["ltp"], 0.0, 0.0, b["ltp"], account_id=ACCOUNT, instrument_key=keys[b["symbol"]],
                          strategy=NAME, state=json.dumps({"gap_vs_mkt": b["gap_vs_mkt"], "open": b["open"], "prev_close": b["prev_close"],
-                                                          "entry_slot": f"{now:%H:%M}", "late": late,
+                                                          "entry_slot": f"{now:%H:%M}", "entry_date": str(today), "late": late,
                                                           "leverage": lev, "upstox_leverage": allowed}))
         lines.append(f"BOUGHT {b['symbol']} {qty} @ {b['ltp']:,.2f} = {_inr(qty * b['ltp'])} (opened {b['gap_vs_mkt']:+.1%} vs market after results, "
                      f"still rising at {now:%H:%M})"
@@ -147,11 +151,45 @@ def enter(db, broker, now: datetime, holidays: set[date], lookup, lines: list) -
     _save_state(st)
 
 
+def entry_candle_open(broker, key: str, slot: str) -> float | None:
+    """Today's open of the 5-minute candle starting at `slot` (e.g. "09:30") -- the price the backtest assumes we bought at."""
+    get = getattr(broker, "get_intraday_candles", None)
+    if get is None or not key:
+        return None
+    try:
+        rows = get(key, "minutes", 5) or []
+    except Exception:
+        return None
+    for r in rows:
+        if str(r.get("timestamp", ""))[11:16] == slot and r.get("open"):
+            return float(r["open"])
+    return None
+
+
+def _record_fill(db, broker, p: dict, now: datetime, lines: list) -> None:
+    """Fill tracking (2026-10-29): how far our buy was from the entry candle's open. The backtest's profit depends on buying close to
+    that open (filling at the candle's high instead cut 2025-26 from Rs7.3L to Rs1.6L at 5x), so every sale says how we did."""
+    try:
+        st = json.loads(p.get("state") or "{}")
+    except ValueError:
+        return
+    if st.get("entry_date", str(p.get("entry_time", ""))[:10]) != str(now.date()):   # a missed exit sold another day: today's candles say nothing
+        return
+    o = entry_candle_open(broker, p.get("instrument_key"), st.get("entry_slot", "09:30"))
+    if not o:
+        return
+    pct = round((float(p["entry_price"]) / o - 1) * 100, 3)
+    db.update_position_stop(p["position_id"], float(p.get("current_stop") or 0), float(p.get("best_price") or p["entry_price"]), False,
+                            state_updates={"open_0930": o, "fill_vs_open_pct": pct})
+    lines.append(f"{p['symbol']}: bought {pct:+.2f}% vs the {st.get('entry_slot', '09:30')} open ({o:,.2f})")
+
+
 def _close(db, broker, p: dict, now: datetime, reason: str, lines: list) -> bool:
     px = (broker.get_ltp_batch([p["instrument_key"]]) or {}).get(p["instrument_key"]) if p.get("instrument_key") else None
     if not px:
         lines.append(f"{p['symbol']}: no live price -- kept open, will retry")
         return False
+    _record_fill(db, broker, p, now, lines)
     qty, entry = int(p["qty"]), float(p["entry_price"])
     c = S.costs(entry, px, qty)
     gross = (px - entry) * qty
@@ -182,7 +220,12 @@ def run(db, broker, now: datetime, holidays: set[date], lookup, send=print) -> l
         return ["market closed today"]
     if t < dtime(9, 25):
         n = S.refresh_calendar(now.date())
-        return [f"results calendar refreshed: {n} results meetings in the last/next 7 days"]
+        try:                                                          # yesterday's turnover for the liquid-stock list
+            b = S.refresh_bhavcopy(now.date())
+        except Exception as e:
+            b = f"failed ({type(e).__name__}; the list uses the files already held)"
+        return [f"results calendar refreshed: {n} results meetings in the last/next 7 days; NSE daily files added: {b}; "
+                f"{len(S.universe(now.date()))} liquid stocks today"]
     if t < dtime(15, 0):
         enter(db, broker, now, holidays, lookup, lines)
     elif t >= dtime(15, 15):

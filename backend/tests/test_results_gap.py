@@ -202,6 +202,43 @@ class TestUpstoxLeverageCap(TestEngine):
         self.assertIsNone(E.stock_leverage(b, "NSE_EQ|WIN", 0))
 
 
+class CandleBroker(FakeBroker):
+    """FakeBroker plus today's 5-minute candles (Upstox: newest first)."""
+    def __init__(self, q, candles, ltp=None):
+        super().__init__(q, ltp)
+        self.candles = candles
+    def get_intraday_candles(self, key, unit="minutes", interval=5):
+        return self.candles
+
+
+class TestFillTracking(TestEngine):
+    """2026-10-29: the backtest buys at the 09:30 candle's open; buying at that candle's high instead cut 2025-26 from Rs7.3L to Rs1.6L
+    at 5x. Every live sale now records how far our buy was from that open, so a costly fill shows up in days, not months."""
+
+    def candles(self, open_0930):
+        return [{"timestamp": "2026-10-26T15:20:00+05:30", "open": 114.0, "high": 115.5, "low": 113.8, "close": 115.0, "volume": 1},
+                {"timestamp": "2026-10-26T09:30:00+05:30", "open": open_0930, "high": 113.0, "low": 110.5, "close": 112.5, "volume": 1}]
+
+    def test_sale_records_buy_vs_0930_open(self):
+        E.run(self.db, FakeBroker(quotes(BIG)), self.at(9, 30), set(), self.lookup, send=None)
+        out = E.run(self.db, CandleBroker(quotes(BIG), self.candles(111.0), ltp={"WIN": 115.0}), self.at(15, 20), set(), self.lookup, send=None)
+        st = json.loads(self.db.get_position("POS_RG_20261026_WIN")["state"])
+        self.assertAlmostEqual(st["open_0930"], 111.0)
+        self.assertAlmostEqual(st["fill_vs_open_pct"], round((112.0 / 111.0 - 1) * 100, 3))     # bought at 112, candle opened at 111
+        self.assertTrue(any("vs the 09:30 open" in ln for ln in out))
+
+    def test_no_candles_still_sells(self):
+        E.run(self.db, FakeBroker(quotes(BIG)), self.at(9, 30), set(), self.lookup, send=None)
+        E.run(self.db, CandleBroker(quotes(BIG), None, ltp={"WIN": 115.0}), self.at(15, 20), set(), self.lookup, send=None)
+        self.assertEqual(self.db.get_open_positions(E.ACCOUNT), [])
+        self.assertNotIn("open_0930", json.loads(self.db.get_position("POS_RG_20261026_WIN")["state"]))
+
+    def test_fill_helper(self):
+        self.assertIsNone(E.entry_candle_open(FakeBroker({}), "NSE_EQ|WIN", "09:30"))
+        self.assertEqual(E.entry_candle_open(CandleBroker({}, self.candles(110.4)), "NSE_EQ|WIN", "09:30"), 110.4)
+        self.assertIsNone(E.entry_candle_open(CandleBroker({}, self.candles(110.4)), "NSE_EQ|WIN", "09:40"))
+
+
 class TestEnvLoadedBeforeTheStrategy(unittest.TestCase):
     def test_leverage_comes_from_dotenv(self):
         # 2026-10-29: the engine imported the strategy (which reads RESULTS_GAP_LEVERAGE) before loading .env, so the .env value was
@@ -268,6 +305,24 @@ class TestWebBacktest(unittest.TestCase):
     def test_dates_outside_the_data(self):
         with self.assertRaises(ValueError):
             S.backtest(100_000, "2030-01-01", "2030-02-01", days_df=self.frame(), results=set())
+
+    def liquid(self):
+        cols = ["sym", "day", "xgap", "o915", "c925", "o930", "h930", "l930", "v930", "c1520", "turn20"]
+        return pd.DataFrame([("WIN", "2026-01-06", 0.095, 110.0, 112.0, 112.0, 112.5, 111.5, 1e8, 118.0, 5e7),      # Rs5 cr a day: too thin now
+                             ("NEWCO", "2026-01-06", 0.09, 220.0, 224.0, 224.0, 225.0, 223.0, 2e8, 230.0, 2e8),   # outside the list, liquid
+                             ("DIPPED", "2026-01-06", 0.09, 220.0, 219.0, 219.0, 220.0, 218.0, 2e8, 230.0, 2e8)],  # below its 09:15 open at 09:30
+                            columns=cols)
+
+    def test_liquid_universe_trades_any_liquid_stock_and_skips_thin_ones(self):
+        # 2026-10-29: the fixed list was hindsight; the fair backtest trades whatever was liquid (>= Rs10 cr a day) at the time
+        r = S.backtest(100_000, "2026-01-05", "2026-01-07", leverage=3.0, days_df=self.frame(), results=set(), liquid_rows=self.liquid())
+        self.assertEqual([t["symbol"] for t in r["trades"]], ["NEWCO"])
+        self.assertIn("liquid", r["metrics"]["note"])
+
+    def test_list_mode_is_still_available(self):
+        res = {("WIN", "2026-01-05")}
+        r = S.backtest(100_000, "2026-01-05", "2026-01-07", days_df=self.frame(), results=res, liquid_rows=self.liquid(), universe="list")
+        self.assertEqual([t["symbol"] for t in r["trades"]], ["WIN"])
 
 
 class TestWebsiteCatalog(unittest.TestCase):

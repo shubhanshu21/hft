@@ -105,7 +105,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
         {gap && (
           <p className="hint">Intraday, buys only: the morning after a company's quarterly results, it buys at 09:30 if the stock opened 7% or more above the
             market and is still above its 09:15 opening price, and sells everything at 15:20. It skips stocks that were frozen at 09:30 or had under Rs50 lakh
-            traded then. Its own list of 414 liquid NSE stocks; 5-minute data from September 2022 to mid-October 2026. Real Upstox intraday costs + 0.1% slippage
+            traded then. Stocks: every NSE stock with at least Rs10 crore traded a day over the previous 20 days at the time (no hindsight list); data September 2022 to mid-October 2026. Real Upstox intraday costs + 0.1% slippage
             each way are always charged.</p>
         )}
         {auto && !gap && (
@@ -172,8 +172,8 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
             <div className="field"><label htmlFor="exposure">Size (x the account)</label>
               <input id="exposure" type="number" min={strategy.exposure_min} max={strategy.exposure_max} step="0.5" value={f.exposure} onChange={set("exposure")} />
               <span className="hint">How much stock each morning buys, as a multiple of your money (Upstox intraday allows up to 5x), split across that
-                morning's buys, never more than Upstox allows on that stock. The paper account uses {strategy.exposure}x. Tested 2022-26: 1x worst fall -8%, 2x -15%, 3x -22%, 4x -29%, 5x -35%.</span>
-              {+f.exposure >= 4 && <span className="warn" role="alert">At {f.exposure}x a bad results day hurts a lot: at 5x the worst single day was -27.6% and the worst fall -35%.</span>}</div>
+                morning's buys, never more than Upstox allows on that stock. The paper account uses {strategy.exposure}x. Fair test 2022-26 (liquid stocks at the time): 2x worst fall -17%, 3x -25%, 5x -43%.</span>
+              {+f.exposure >= 4 && <span className="warn" role="alert">At {f.exposure}x a bad results day hurts a lot: at 5x the worst single day was -36% and the worst fall -43%.</span>}</div>
           ) : monthly ? (
             <div className="field"><label htmlFor="exposure">Exposure (x the account)</label>
               <input id="exposure" type="number" min={strategy.exposure_min} max={strategy.exposure_max} step="0.25" value={f.exposure} onChange={set("exposure")} />
