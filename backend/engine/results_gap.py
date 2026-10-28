@@ -6,7 +6,9 @@
                                                 #   from 15:15    -> sell everything still open (idempotent; 15:26 retries)
     python3 -m engine.results_gap --status [--no-telegram]
 
-Account RESULTS_GAP, Rs1L, notional = RESULTS_GAP_LEVERAGE (default 3x) x the account, split equally across the morning's signals.
+Account RESULTS_GAP, Rs1L, notional = RESULTS_GAP_LEVERAGE (default 3x; 5x since 2026-10-29) x the account, split equally across the
+morning's signals -- but never more than Upstox's own intraday leverage for that stock (stock_leverage: most get 5x, stocks on the
+exchanges' watch lists only 1x), so a paper buy is always one Upstox would really accept.
 Prices come from Upstox's live OHLC quote (09:15 open, previous close, last price). Rules and costs live in the strategy module.
 
 2026-10-26: the 09:30 run used to mark the day as done BEFORE checking whether Upstox had returned usable quotes, so one failed quote
@@ -21,6 +23,7 @@ import json
 import sys
 from datetime import date, datetime, time as dtime, timedelta, timezone
 
+import engine.config  # noqa: F401  -- loads backend/.env FIRST: the strategy reads RESULTS_GAP_LEVERAGE when it is imported
 from core.atomic_io import read_json, write_json
 from core.paths import DB_DIR
 from markets.equity.strategies.tf_intraday.results_gap import strategy as S
@@ -67,6 +70,19 @@ def _keys(symbols: list[str], lookup) -> dict[str, str]:
     return out
 
 
+def stock_leverage(broker, key: str, price: float) -> float | None:
+    """Upstox's real intraday (MIS) leverage for this stock today: order value / margin from its margin calculator. None = unknown."""
+    get = getattr(broker, "get_required_margin", None)
+    if get is None or not price or price <= 0:
+        return None
+    qty = max(1, int(100_000 // price))
+    try:
+        margin = get(key, qty, "BUY", product="I")
+    except Exception:
+        return None
+    return round(qty * price / margin, 2) if margin and margin > 0 else None
+
+
 def enter(db, broker, now: datetime, holidays: set[date], lookup, lines: list) -> None:
     st = _state()
     today = now.date()
@@ -108,16 +124,23 @@ def enter(db, broker, now: datetime, holidays: set[date], lookup, lines: list) -
         return
     late = now.time() > LATE_AFTER                              # a retried entry: the gap is still 09:15 vs prev close, the price is later
     cap = float(db.get_account(ACCOUNT)["current_capital"])
-    per = cap * S.LEVERAGE / len(buys)
+    share = cap / len(buys)                                     # each signal's slice of the account
     for b in buys:
-        qty = int(per // b["ltp"])
+        allowed = stock_leverage(broker, keys[b["symbol"]], b["ltp"])
+        lev = S.LEVERAGE if allowed is None else min(S.LEVERAGE, allowed)
+        if allowed is None:
+            lines.append(f"{b['symbol']}: Upstox margin check unavailable -- sized at the configured {S.LEVERAGE:g}x")
+        elif allowed < S.LEVERAGE:
+            lines.append(f"{b['symbol']}: Upstox allows only {allowed:g}x on this stock -- sized at {lev:g}x, not {S.LEVERAGE:g}x")
+        qty = int(share * lev // b["ltp"])
         if qty < 1:
             lines.append(f"{b['symbol']}: one share costs more than its share of the money -- skipped")
             continue
         pid = f"POS_RG_{now:%Y%m%d}_{b['symbol']}"
         db.open_position(pid, b["symbol"], "long", qty, b["ltp"], 0.0, 0.0, b["ltp"], account_id=ACCOUNT, instrument_key=keys[b["symbol"]],
                          strategy=NAME, state=json.dumps({"gap_vs_mkt": b["gap_vs_mkt"], "open": b["open"], "prev_close": b["prev_close"],
-                                                          "entry_slot": f"{now:%H:%M}", "late": late}))
+                                                          "entry_slot": f"{now:%H:%M}", "late": late,
+                                                          "leverage": lev, "upstox_leverage": allowed}))
         lines.append(f"BOUGHT {b['symbol']} {qty} @ {b['ltp']:,.2f} = {_inr(qty * b['ltp'])} (opened {b['gap_vs_mkt']:+.1%} vs market after results, "
                      f"still rising at {now:%H:%M})"
                      + ("  [DELAYED: the 09:30 quote fetch failed, so this is the 09:30 rule applied at a later price]" if late else ""))
@@ -172,7 +195,6 @@ def run(db, broker, now: datetime, holidays: set[date], lookup, send=print) -> l
 
 
 def main(argv=None) -> int:
-    import engine.config  # noqa: F401  (loads backend/.env)
     from engine.account_reset import account_lock
     from engine.database import TradingDB
     ap = argparse.ArgumentParser()

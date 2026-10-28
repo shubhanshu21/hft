@@ -9,7 +9,8 @@ with NSE board-meeting results dates:
 Result (frozen-at-09:30 / too-thin trades removed): Rs1L -> Rs11.6L at 3x, every year positive (+5/+41/+111/+198/+24% 2022-26),
 worst fall -22%; 2x Rs5.4L (-15%), 1x Rs2.4L (-8%); gaps of 8/9/10% also positive in both 2022-24 and 2025-26; 47 trades, 66% won.
 Caveats: few trades (~15-20 a year); a handful of big days carry much of the profit (without the best 5: 3.9x); shorting gap-downs,
-smaller gaps and stops all failed. The user chose 3x (2026-10-24, "add 3x").
+smaller gaps and stops all failed. The user chose 3x (2026-10-24, "add 3x"), then 5x (2026-10-29, "35% fall is fine"):
+5x Rs1L -> Rs49.3L, worst fall -35%, worst day -27.6%. The engine caps each stock at Upstox's own MIS leverage.
 """
 from __future__ import annotations
 

@@ -155,6 +155,73 @@ class TestEngine(unittest.TestCase):
         self.assertEqual(E._state()["entry_attempts"], E.MAX_ENTRY_ATTEMPTS)
 
 
+class MarginBroker(FakeBroker):
+    """FakeBroker plus Upstox's margin calculator: `lev` = the intraday leverage Upstox gives each stock."""
+    def __init__(self, q, lev, ltp=None):
+        super().__init__(q, ltp)
+        self.lev = lev
+    def get_required_margin(self, key, qty, side, product="D"):
+        assert (side, product) == ("BUY", "I")
+        lev = self.lev.get(key.split("|")[1])
+        return None if lev is None else qty * float(self.q[key.split("|")[1]]["ltp"]) / lev
+
+
+class TestUpstoxLeverageCap(TestEngine):
+    """2026-10-29: 5x chosen, but Upstox gives some stocks only 1x (CEMPRO, PROTEAN on the day it was checked)."""
+
+    def run_at_0930(self, broker, lev=5.0):
+        with mock.patch.object(S, "LEVERAGE", lev):
+            out = E.run(self.db, broker, self.at(9, 30), set(), self.lookup, send=None)
+        return out, self.db.get_open_positions(E.ACCOUNT)
+
+    def test_full_leverage_when_upstox_allows_it(self):
+        _, pos = self.run_at_0930(MarginBroker(quotes(BIG), {"WIN": 5.0}))
+        self.assertEqual(int(pos[0]["qty"]), int(100_000 * 5 // 112.0))
+        self.assertEqual(json.loads(pos[0]["state"])["leverage"], 5.0)
+
+    def test_capped_at_upstox_limit(self):
+        out, pos = self.run_at_0930(MarginBroker(quotes(BIG), {"WIN": 1.0}))
+        self.assertEqual(int(pos[0]["qty"]), int(100_000 * 1 // 112.0))
+        self.assertTrue(any("allows only 1x" in ln for ln in out))
+        st = json.loads(pos[0]["state"])
+        self.assertEqual((st["leverage"], st["upstox_leverage"]), (1.0, 1.0))
+
+    def test_never_above_the_configured_leverage(self):
+        _, pos = self.run_at_0930(MarginBroker(quotes(BIG), {"WIN": 5.0}), lev=3.0)
+        self.assertEqual(int(pos[0]["qty"]), int(100_000 * 3 // 112.0))
+
+    def test_unknown_margin_falls_back_and_says_so(self):
+        out, pos = self.run_at_0930(MarginBroker(quotes(BIG), {}))
+        self.assertEqual(int(pos[0]["qty"]), int(100_000 * 5 // 112.0))
+        self.assertTrue(any("margin check unavailable" in ln for ln in out))
+
+    def test_stock_leverage_helper(self):
+        b = MarginBroker(quotes(BIG), {"WIN": 4.0})
+        self.assertEqual(E.stock_leverage(b, "NSE_EQ|WIN", 112.0), 4.0)
+        self.assertIsNone(E.stock_leverage(FakeBroker(quotes(BIG)), "NSE_EQ|WIN", 112.0))
+        self.assertIsNone(E.stock_leverage(b, "NSE_EQ|WIN", 0))
+
+
+class TestEnvLoadedBeforeTheStrategy(unittest.TestCase):
+    def test_leverage_comes_from_dotenv(self):
+        # 2026-10-29: the engine imported the strategy (which reads RESULTS_GAP_LEVERAGE) before loading .env, so the .env value was
+        # silently ignored and it always traded the 3x default. A fresh interpreter must see the value from the .env file.
+        import os
+        import subprocess
+        import sys
+        with tempfile.TemporaryDirectory() as d:
+            env_file = Path(d) / ".env"
+            env_file.write_text("RESULTS_GAP_LEVERAGE=4.5\n")
+            run = ("import dotenv, os\n"
+                   "_real = dotenv.load_dotenv\n"
+                   f"dotenv.load_dotenv = lambda *a, **k: _real({str(env_file)!r}, override=True)\n"
+                   "import engine.results_gap as E\n"
+                   "print(E.S.LEVERAGE)\n")
+            env = {k: v for k, v in os.environ.items() if k != "RESULTS_GAP_LEVERAGE"}
+            out = subprocess.run([sys.executable, "-c", run], capture_output=True, text=True, env=env, cwd=str(Path(__file__).parents[1]))
+        self.assertEqual(out.stdout.strip().splitlines()[-1], "4.5", out.stderr[-500:])
+
+
 class TestResetKnowsTheAccount(unittest.TestCase):
     def test_reset_registry(self):
         from engine.account_reset import ACCOUNTS
