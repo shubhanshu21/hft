@@ -97,6 +97,23 @@ def liquid_list(asof: date, root=None) -> list[str]:
     return sorted(s for s in turn.index[ok] if last.get(s, 0) >= MIN_PRICE)
 
 
+def runup20(sym: str, asof: date, root=None) -> float | None:
+    """The stock's rise over the 20 trading days before `asof` (last close / close 20 files earlier - 1), from the bhavcopy files.
+    Recorded on each live buy (2026-10-29) to check later whether big pre-results run-ups fade on the day (VESUVIUS, SCHNEIDER 2024)."""
+    root = root or BHAV_DIR
+    files = sorted(p for p in root.glob("*.csv.gz") if p.name[:10] < asof.isoformat())[-21:]
+    if len(files) < 21:
+        return None
+    closes = []
+    for p in (files[0], files[-1]):
+        df = pd.read_csv(p)
+        hit = df.loc[df["SYMBOL"] == sym, "CLOSE"]
+        if hit.empty:
+            return None
+        closes.append(float(hit.iloc[0]))
+    return closes[1] / closes[0] - 1 if closes[0] else None
+
+
 def universe(asof: date | None = None) -> list[str]:
     """Stocks results_gap may buy (2026-10-29): every liquid NSE stock at the time (see liquid_list). The fixed 414-stock list was
     hindsight -- the same rule lost money on results-day gap-ups outside it -- so it is only the fallback when the bhavcopies are missing."""

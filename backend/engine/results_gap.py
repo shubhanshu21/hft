@@ -36,7 +36,8 @@ INITIAL_CAPITAL = 100_000.0
 STATE = DB_DIR / "results_gap_state.json"
 RETRY_UNTIL = dtime(9, 45)             # no usable quotes by then -> give up on the day (09:40 is the retry slot in the timer)
 MAX_ENTRY_ATTEMPTS = 3                 # or after this many tries, whichever comes first
-LATE_AFTER = dtime(9, 35)              # an entry after this is a delayed entry, and the trade record says so
+LATE_AFTER = dtime(9, 35)
+NIFTY_KEY = "NSE_INDEX|Nifty 50"         # recorded at each buy: the market's 09:15 -> now move (2026-10-29, see enter())              # an entry after this is a delayed entry, and the trade record says so
 
 
 def _inr(v: float) -> str:
@@ -85,6 +86,14 @@ def stock_leverage(broker, key: str, price: float) -> float | None:
     return round(qty * price / margin, 2) if margin and margin > 0 else None
 
 
+def _runup(sym: str, today: date) -> float | None:
+    try:
+        r = S.runup20(sym, today)
+    except Exception:                                              # context only: a bad file must never block a buy
+        return None
+    return round(r, 4) if r is not None else None
+
+
 def enter(db, broker, now: datetime, holidays: set[date], lookup, lines: list) -> None:
     st = _state()
     today = now.date()
@@ -102,7 +111,7 @@ def enter(db, broker, now: datetime, holidays: set[date], lookup, lines: list) -
     cands = S.candidates(today, prev_trading_day(today, holidays))
     panel = set(S.market_panel())                                   # the market's gap is measured on the tested 414, as in the backtests
     keys = _keys(sorted(set(S.universe(today)) | panel), lookup)
-    raw = broker.get_quote_batch(list(keys.values())) or {}           # full quote: has the previous close (v3 OHLC does not, 2026-10-26)
+    raw = broker.get_quote_batch(list(keys.values()) + [NIFTY_KEY]) or {}   # full quote: has the previous close (v3 OHLC does not, 2026-10-26)
     quotes = {s: raw.get(k) for s, k in keys.items()}
     priced = {s for s in panel if quotes.get(s)}
     buys, mkt = S.signals(quotes, cands, panel=priced if len(priced) >= 20 else None)
@@ -127,6 +136,12 @@ def enter(db, broker, now: datetime, holidays: set[date], lookup, lines: list) -
         _save_state(st)
         return
     late = now.time() > LATE_AFTER                              # a retried entry: the gap is still 09:15 vs prev close, the price is later
+    # Context recorded on every buy, NOT a filter (2026-10-29): in the fair 2022-26 test, buys on mornings when Nifty fell 09:15->09:30
+    # averaged +2.0%/trade vs -0.5% when it rose (t 2.4, one of ~15 filters tried, unstable to the cut-off -> unproven). Live trades decide.
+    nq = raw.get(NIFTY_KEY) or {}
+    mkt15 = round(nq["ltp"] / nq["today_open"] - 1, 5) if nq.get("ltp") and nq.get("today_open") else None
+    if mkt15 is not None:
+        lines.append(f"Nifty 09:15->now {mkt15:+.2%} (buys on falling mornings did better in the backtest; recorded, not used)")
     cap = float(db.get_account(ACCOUNT)["current_capital"])
     share = cap / len(buys)                                     # each signal's slice of the account
     for b in buys:
@@ -144,6 +159,7 @@ def enter(db, broker, now: datetime, holidays: set[date], lookup, lines: list) -
         db.open_position(pid, b["symbol"], "long", qty, b["ltp"], 0.0, 0.0, b["ltp"], account_id=ACCOUNT, instrument_key=keys[b["symbol"]],
                          strategy=NAME, state=json.dumps({"gap_vs_mkt": b["gap_vs_mkt"], "open": b["open"], "prev_close": b["prev_close"],
                                                           "entry_slot": f"{now:%H:%M}", "entry_date": str(today), "late": late,
+                                                          "mkt_first15": mkt15, "runup20": _runup(b["symbol"], today),
                                                           "leverage": lev, "upstox_leverage": allowed}))
         lines.append(f"BOUGHT {b['symbol']} {qty} @ {b['ltp']:,.2f} = {_inr(qty * b['ltp'])} (opened {b['gap_vs_mkt']:+.1%} vs market after results, "
                      f"still rising at {now:%H:%M})"
