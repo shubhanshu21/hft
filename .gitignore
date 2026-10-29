@@ -105,3 +105,6 @@ Thumbs.db
 
 # lib/ above is for Python build output; the React app keeps its helpers in frontend/src/lib
 !frontend/src/lib/
+
+# graphify knowledge graph (local, rebuilt with `graphify update .`)
+graphify-out/
