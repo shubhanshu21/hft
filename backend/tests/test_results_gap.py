@@ -94,7 +94,8 @@ class TestEngine(unittest.TestCase):
         cal = self.tmp / "cal.csv"
         pd.DataFrame({"bm_symbol": ["WIN", "FLAT"], "bm_date": ["23-Oct-2026", "23-Oct-2026"], "bm_purpose": ["Financial Results"] * 2}).to_csv(cal, index=False)
         for p in (mock.patch.object(E, "STATE", self.tmp / "state.json"), mock.patch.object(S, "CALENDAR", cal),
-                  mock.patch.object(S, "universe", return_value=UNI), mock.patch.object(S, "refresh_calendar", return_value=2)):
+                  mock.patch.object(S, "universe", return_value=UNI), mock.patch.object(S, "refresh_calendar", return_value=2),
+                  mock.patch.object(E.ED, "STATE", self.tmp / "ed_state.json"), mock.patch.object(E.ED, "plan", return_value=[])):   # earnings_drift: own tests
             p.start(); self.addCleanup(p.stop)
         self.lookup = lambda s: f"NSE_EQ|{s}"
         cal.touch()

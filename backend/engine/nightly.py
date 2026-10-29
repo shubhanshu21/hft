@@ -25,6 +25,8 @@ STEP_TIMEOUT_S = 45 * 60
 STEPS = [                            # (name, argv, exit codes that count as success)
     ("mcx data", [PY, "-m", "markets.commodity.data", "--topup"], {0}),          # nearest-contract MCX candles (research, depth studies)
     ("mcx futures eod", [PY, "-m", "markets.commodity.futures_eod"], {0}),      # every expiry, daily: commodity trend_carry signals and backtests
+    ("all nse daily", [PY, "-m", "markets.equity.all_daily", "--max-minutes", "25"], {0}),   # equity/earnings_drift: liquid pool + holdings, then the rest oldest-first
+    ("results dates", [PY, "-m", "markets.equity.results_dates"], {0}),          # equity/earnings_drift: NSE results board meetings, all equities
     ("research data", [PY, "-m", "engine.research_data", "all", "--max-minutes", "40"], {0}),     # 1-minute stocks/indexes, futures/options OI, NSE participant OI;
                                                                                                 # stops inside STEP_TIMEOUT_S and resumes next night (a 2026-10-09 first backfill was killed at 45 min)
     ("commodity daily series", [PY, "-m", "markets.commodity.daily_series"], {0}),     # daily gold / crude series for research (runs after "mcx data")

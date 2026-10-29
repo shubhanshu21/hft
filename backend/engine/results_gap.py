@@ -28,6 +28,7 @@ from datetime import date, datetime, time as dtime, timedelta, timezone
 import engine.config  # noqa: F401  -- loads backend/.env FIRST: the strategy reads RESULTS_GAP_LEVERAGE when it is imported
 from core.atomic_io import read_json, write_json
 from core.paths import DB_DIR
+from engine import earnings_drift as ED
 from markets.equity.strategies.tf_intraday.results_gap import strategy as S
 
 IST = timezone(timedelta(hours=5, minutes=30))
@@ -51,6 +52,16 @@ def _state() -> dict:
 def _save_state(st: dict) -> None:
     st["updated_at"] = datetime.now(IST).isoformat()
     write_json(STATE, st, indent=1)        # atomic: a crash mid-write must not leave a truncated state file
+
+
+def free_cash(db) -> float:
+    """The account's booked money minus what earnings_drift's delivery holdings lock up (they share this account since 2026-10-29)."""
+    return float(db.get_account(ACCOUNT)["current_capital"]) - ED.locked_cash(db)
+
+
+def _own(db) -> list[dict]:
+    """This strategy's open positions only -- earnings_drift's swing holdings in the same account are never sold here."""
+    return [p for p in db.get_open_positions(ACCOUNT) if p.get("strategy") == NAME]
 
 
 def prev_trading_day(d: date, holidays: set[date]) -> date:
@@ -110,7 +121,7 @@ def enter(db, broker, now: datetime, holidays: set[date], lookup, lines: list) -
         return
     if st.get("entry_date") != str(today):                     # a new day: the attempt counter starts over
         st["entry_date"], st["entry_attempts"] = str(today), 0
-    for p in db.get_open_positions(ACCOUNT):                       # a sale the engine missed (e.g. a failed 15:20 run): sell it now --
+    for p in _own(db):                                             # a sale the engine missed (e.g. a failed 15:20 run): sell it now --
         if _entry_day(p) < str(today):                              # but never this morning's own buys (a retry after a crash, 2026-10-29)
             _close(db, broker, p, now, "missed_exit", lines)
     if not S.CALENDAR.exists() or datetime.fromtimestamp(S.CALENDAR.stat().st_mtime, IST).date() != today:
@@ -152,7 +163,7 @@ def enter(db, broker, now: datetime, holidays: set[date], lookup, lines: list) -
     mkt15 = round(nq["ltp"] / nq["today_open"] - 1, 5) if nq.get("ltp") and nq.get("today_open") else None
     if mkt15 is not None:
         lines.append(f"Nifty 09:15->now {mkt15:+.2%} (buys on falling mornings did better in the backtest; recorded, not used)")
-    cap = float(db.get_account(ACCOUNT)["current_capital"])
+    cap = free_cash(db)                                         # not the cash earnings_drift's holdings lock up
     share = cap / len(buys)                                     # each signal's slice of the account
     held = {p["symbol"] for p in db.get_open_positions(ACCOUNT)}
     for b in buys:
@@ -233,7 +244,7 @@ def _close(db, broker, p: dict, now: datetime, reason: str, lines: list) -> bool
 
 
 def exit_all(db, broker, now: datetime, lines: list) -> None:
-    for p in db.get_open_positions(ACCOUNT):
+    for p in _own(db):
         _close(db, broker, p, now, "end_of_day", lines)
     st = _state()
     st["exited_on"] = str(now.date())
@@ -262,7 +273,17 @@ def run(db, broker, now: datetime, holidays: set[date], lookup, send=print) -> l
         msg = f"results {n if n.startswith('calendar') else 'calendar refreshed: ' + n}; NSE daily files added: {b}; {who}"
         if not liquid and send:                                       # quietly trading the hindsight list would undo the fairness fix
             send("📈 <b>RESULTS GAP</b>\n" + msg)
-        return [msg]
+        try:                                                          # earnings_drift's orders for today's open (same account)
+            ed = ED.plan(db, now.date(), holidays)
+        except Exception as e:
+            ed = [f"earnings drift: plan FAILED ({type(e).__name__}: {e!s:.100}) -- no swing orders today"]
+        if ed and send:
+            send("📈 <b>EARNINGS DRIFT</b>\n" + "\n".join(ed))
+        return [msg, *ed]
+    try:                                           # earnings_drift's opening fills first: results_gap sizes from the cash left
+        ED.fill(db, broker, now, lookup, lines)
+    except Exception as e:
+        lines.append(f"earnings drift: fill FAILED ({type(e).__name__}: {e!s:.100}) -- retried at the next run")
     if t < dtime(15, 0):
         enter(db, broker, now, holidays, lookup, lines)
     elif t >= dtime(15, 15):

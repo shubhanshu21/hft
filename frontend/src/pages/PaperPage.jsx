@@ -11,11 +11,11 @@ import { useCountUp } from "../hooks/useCountUp.js";
 import { inr, signed, tone, whyText } from "../lib/format.js";
 import { ACCOUNT_COLOR, ACCOUNT_SHORT } from "../lib/overview.js";
 
-const STRATEGY_LABEL = { trend_carry: "MCX trend + carry", dip_reversal: "Crypto dip-reversal", results_gap: "Results-day gap-up" };
+const STRATEGY_LABEL = { trend_carry: "MCX trend + carry", dip_reversal: "Crypto dip-reversal", results_gap: "Results-day gap-up", earnings_drift: "Earnings drift (swing)" };
 const ABOUT = {
   CRYPTO_DIP_REVERSAL: "Buys a sharp dip on 11 coins' perpetual futures, 5 seconds after every 5-minute candle closes. Exits at +15%, -7%, the middle band or after 24 hours.",
   MCX_TREND_CARRY: "Holds the best 3 of 8 MCX commodities on trend and carry, re-checked every 10 trading days at 09:10 or 23:40 IST.",
-  RESULTS_GAP: "At 09:30 it buys liquid stocks that opened 7%+ above the market after results and kept rising, and sells them at 15:20.",
+  RESULTS_GAP: "Two strategies share this account. Results gap: at 09:30 it buys liquid stocks that opened 7%+ above the market after results and kept rising, and sells them at 15:20. Earnings drift: buys at the open stocks whose results jumped 4%+ vs the market on 2x volume, and sells them at the open 40 trading days later.",
 };
 const when = (s) => (s ? new Date(s).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" }) : "-");
 const qtyFmt = (q) => (q == null ? "-" : Number(q).toLocaleString("en-IN", { maximumFractionDigits: 4 }));

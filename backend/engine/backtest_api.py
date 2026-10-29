@@ -72,6 +72,16 @@ def universe(market: str) -> list[str]:
     return list(NIFTY50_SYMBOLS) if market == "equity" else CURRENCY
 
 
+def _rg_range() -> dict:
+    """First and last results day in results_gap's saved 5-minute table (the Backtest page shows what data a strategy runs on)."""
+    try:
+        from markets.equity.strategies.tf_intraday.results_gap import liquid_days
+        d = liquid_days.load()["day"]
+        return {"from": str(d.min())[:10], "to": str(d.max())[:10]}
+    except Exception:
+        return {"from": None, "to": None}
+
+
 def catalog() -> list[dict]:
     from markets.commodity.strategies.tf_daily.trend_carry import strategy as tc
     mcx = {"market": "commodity", "name": "trend_carry", "timeframe": "1 days", "supported": True, "symbols": sorted(set(tc.TRADE.values())),
@@ -81,7 +91,13 @@ def catalog() -> list[dict]:
     from markets.equity.strategies.tf_intraday.results_gap import strategy as rg
     results_gap = {"market": "equity", "name": "results_gap", "timeframe": "5 minutes", "supported": True, "symbols": [], "auto_universe": True,
                    "summary": "equity / results_gap -- intraday: buy results-day gap-ups (7%+ above the market, still rising at 09:30), sell at 15:20.",
-                   "intraday": True, "default_risk_pct": None, "exposure": rg.LEVERAGE, "exposure_min": 1.0, "exposure_max": 5.0, "default_capital": 100_000}
+                   "intraday": True, "default_risk_pct": None, "exposure": rg.LEVERAGE, "exposure_min": 1.0, "exposure_max": 5.0, "default_capital": 100_000,
+                   "data": {"text": "5-minute candles of every liquid NSE stock on its results day (09:15-09:30 for the buy, 15:20 for the sale)", **_rg_range()}}
+    from markets.equity.strategies.tf_daily.earnings_drift import strategy as ed
+    earnings_drift = {"market": "equity", "name": "earnings_drift", "timeframe": "1 days", "supported": True, "symbols": [], "auto_universe": True,
+                      "summary": "equity / earnings_drift -- swing: buy stocks whose results jumped 4%+ vs the market on 2x volume, sell 40 trading days later.",
+                      "intraday": False, "default_risk_pct": None, "default_capital": ed.SLEEVE_CAPITAL,
+                      "data": {"text": "daily candles of every NSE stock (about 4,250), refreshed nightly; NSE results dates", **ed.data_range()}}
     from markets.crypto.strategies.tf_5min.dip_reversal import strategy as dr
     dip_reversal = {"market": "crypto", "name": "dip_reversal", "timeframe": "5 minutes", "supported": True, "symbols": dr.available(), "crypto": True, "scalp": True,
                      "default_symbols": list(dr.COINS), "summary": (dr.__doc__ or "").strip().split("\n")[0], "intraday": True, "default_risk_pct": dr.RISK_PCT * 100,
@@ -90,7 +106,7 @@ def catalog() -> list[dict]:
              "summary": (s.__doc__ or "").strip().split("\n")[0], "intraday": s.intraday,
              "default_risk_pct": getattr(s, "default_risk_pct", None),
              "default_symbols": [x for x in (getattr(s, "universe", None) or universe(m)) if s.trades(x)]}     # what its paper trading uses
-            for (m, n), s in sorted(registry.discover().items())] + [mcx, dip_reversal, results_gap]
+            for (m, n), s in sorted(registry.discover().items())] + [mcx, dip_reversal, results_gap, earnings_drift]
 
 
 def prune() -> None:
@@ -121,7 +137,7 @@ def summaries() -> list[dict]:
         except ValueError:
             continue
         out.append({k: r.get(k) for k in ("id", "status", "created", "market", "strategy", "params", "error", "label")}
-                   | {"metrics": (r.get("result") or {}).get("metrics"), "live": r.get("strategy") in ACCOUNT_STRATEGIES.values()})
+                   | {"metrics": (r.get("result") or {}).get("metrics"), "live": r.get("strategy") in LIVE_STRATEGIES})
     if _running:
         out = [r for r in out if r["id"] != _running["id"]] + [{k: _running.get(k) for k in ("id", "status", "created", "market", "strategy", "params", "error", "progress")} | {"metrics": None}]
     return sorted(out, key=lambda r: r["created"] or "", reverse=True)
@@ -173,7 +189,7 @@ def validate(body: dict) -> dict:
                 raise ValueError("Dates must look like 2024-01-31")
             p[key] = body[key]
         return {"market": market, "strategy": name, "params": p}
-    if known[(market, name)].get("auto_universe"):              # breakout_pair picks from the day's 200 most-traded NSE stocks itself
+    if known[(market, name)].get("auto_universe"):              # earnings_drift picks from the day's 200 most-traded NSE stocks itself
         p = {"symbols": [], "leverage": 1.0, "pyramid_pct": None, "max_positions": 8.0}
         for key in ("capital", "slippage_bp", "risk_pct"):
             lo, hi = LIMITS[key]
@@ -319,8 +335,9 @@ def _value_position(p: dict, live: dict) -> None:
         p["net_if_sold"] = p["fees_if_sold"] = None
 
 
-PAPER_ACCOUNTS = [("MCX_TREND_CARRY", "MCX trend + carry"), ("CRYPTO_DIP_REVERSAL", "Crypto dip-reversal"), ("RESULTS_GAP", "Results-day gap-up")]
-ACCOUNT_STRATEGIES = {"MCX_TREND_CARRY": "trend_carry", "CRYPTO_DIP_REVERSAL": "dip_reversal", "RESULTS_GAP": "results_gap"}
+PAPER_ACCOUNTS = [("MCX_TREND_CARRY", "MCX trend + carry"), ("CRYPTO_DIP_REVERSAL", "Crypto dip-reversal"), ("RESULTS_GAP", "Results gap + earnings drift")]
+ACCOUNT_STRATEGIES = {"MCX_TREND_CARRY": "trend_carry", "CRYPTO_DIP_REVERSAL": "dip_reversal", "RESULTS_GAP": "results_gap, earnings_drift"}
+LIVE_STRATEGIES = {n.strip() for v in ACCOUNT_STRATEGIES.values() for n in v.split(",")}      # RESULTS_GAP runs two (2026-10-29)
 
 
 MARKET_HOURS = {"MCX_TREND_CARRY": ("09:00", None, "MCX")}
@@ -367,22 +384,28 @@ def _value_mcx(p: dict, live: dict) -> None:
 
 
 def _value_results_gap(p: dict, live: dict) -> None:
-    """An open results_gap position: NSE shares bought intraday (MIS, 5x margin), 'if sold now' with the strategy's own Upstox cost model."""
+    """An open RESULTS_GAP position, 'if sold now' with its strategy's own Upstox cost model: results_gap = shares bought intraday (MIS,
+    margin = cost / Upstox leverage); earnings_drift (same account since 2026-10-29) = delivery, the full cost is blocked."""
+    from markets.equity.strategies.tf_daily.earnings_drift import strategy as ED
     from markets.equity.strategies.tf_intraday.results_gap import strategy as RG
+    swing = p.get("strategy") == ED.NAME
     try:                                                           # margin = what Upstox blocks for THIS stock (1x stocks: everything)
-        lev = max(1.0, float(json.loads(p.get("state") or "{}").get("upstox_leverage") or 5.0))
+        st = json.loads(p.get("state") or "{}")
+        lev = 1.0 if swing else max(1.0, float(st.get("upstox_leverage") or 5.0))
     except (ValueError, TypeError):
-        lev = 5.0
+        st, lev = {}, 1.0 if swing else 5.0
     p.pop("state", None)
     q = live.get(p.get("instrument_key")) or {}
     price = q.get("ltp")
-    p.update(market="equity", lot_size=1, units=p["qty"], size_text=f"{int(p['qty'])} shares · sold at 15:20 today", price_now=price,
+    size = (f"{int(p['qty'])} shares · swing, sold after {ED.HOLD_DAYS} trading days (bought {st.get('entry_date', '?')})" if swing
+            else f"{int(p['qty'])} shares · sold at 15:20 today")
+    p.update(market="equity", lot_size=1, units=p["qty"], size_text=size, price_now=price,
              price_source="live" if price else None, price_time=q.get("trade_time"), bid=q.get("bid"), ask=q.get("ask"),
              checked_at=datetime.now(IST).isoformat(timespec="seconds") if q else None, margin_used=round(p["entry_price"] * p["qty"] / lev, 2), risk_to_stop=None)
     p.pop("instrument_key", None)
     if price is None:
         p.update(profit_now=None, fees_if_sold=None, net_if_sold=None, move_pct=None); return
-    c = RG.costs(p["entry_price"], price, int(p["qty"]))
+    c = (ED.delivery_costs if swing else RG.costs)(p["entry_price"], price, int(p["qty"]))
     gross = (price - p["entry_price"]) * p["qty"]
     p.update(profit_now=round(gross, 2), net_if_sold=round(gross - c["total"], 2), fees_if_sold=c["total"], move_pct=round((price / p["entry_price"] - 1) * 100, 3))
 
@@ -513,6 +536,12 @@ def work(run: dict) -> None:
             from markets.equity.strategies.tf_intraday.results_gap import strategy as rg
             try:
                 run["result"] = rg.backtest(p["capital"], p["start"], p["end"], leverage=p["leverage"], progress=progress)
+            except ValueError as e:
+                raise BacktestError(str(e))
+        elif run["strategy"] == "earnings_drift":                 # equity swing: ranks the day's 200 most-traded NSE stocks itself
+            from markets.equity.strategies.tf_daily.earnings_drift import strategy as ed
+            try:
+                run["result"] = ed.web_backtest(p["capital"], p["start"], p["end"], slippage_bp=p["slippage_bp"], progress=progress)
             except ValueError as e:
                 raise BacktestError(str(e))
         elif run["market"] == "commodity":                        # trend_carry: every 2 weeks, all 8 commodities ranked together, its own backtest

@@ -18,7 +18,11 @@ const FEES = {
   crypto: "Delta Exchange India: 0.05% taker fee + 18% GST and slippage on market orders, 0.02% maker fee + GST on limit take-profits, real funding payments; a stop that gaps is filled at the next price, not at the stop.",
   equity: "Upstox: Rs30 per order, STT 0.025% on the sale, exchange, SEBI and stamp charges, GST, plus 0.1% slippage each way.",
 };
-const MARKET_LABEL = { commodity: "Commodity (MCX futures)", crypto: "Crypto (Delta Exchange India futures)", equity: "Equity (NSE intraday)" };
+// Equity holds two kinds of strategy (2026-10-29): intraday on 5-minute data and swing on daily data, so costs follow the strategy.
+const STRATEGY_FEES = {
+  earnings_drift: "Upstox delivery: brokerage up to Rs30 per order, STT 0.1% on the buy and the sale, stamp duty, exchange and SEBI charges, Rs20 DP charge on each sale, GST, plus the slippage you set.",
+};
+const MARKET_LABEL = { commodity: "Commodity (MCX futures)", crypto: "Crypto (Delta Exchange India futures)", equity: "Equity (NSE)" };
 
 export default function BacktestForm({ strategies, onSubmit, busy }) {
   const markets = useMemo(() => [...new Set(strategies.map((s) => s.market))], [strategies]);
@@ -39,6 +43,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
   const gap = strategy?.name === "results_gap";      // equity intraday: its own 414-stock list, size 1-5x
   const scalp = !!strategy?.scalp;                   // a crypto scalper (dip_reversal): coins chosen, no leverage box (risk-based sizing, leverage barely matters)
   const auto = !!strategy?.auto_universe;            // equity/breakout_pair: picks from the day's 200 most-traded NSE stocks itself, fixed 5 + 3 holdings
+  const since = strategy?.data?.from ?? (monthly ? "2023-01-01" : "2022-01-01");   // where this strategy's own data starts
   const [all, setAll] = useState(true);
   const [chosen, setChosen] = useState([]);
   const [f, setF] = useState({ ...(saved?.start && saved?.end ? { start: saved.start, end: saved.end } : yearRange(THIS_YEAR)), capital: 100000, slippage_bp: 5, risk_pct: 2, max_positions: 3, leverage: 1, label: "", exposure: 1.5, tax: "business" });
@@ -77,6 +82,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
             <select id="strategy" value={name} onChange={(e) => setName(e.target.value)}>
               {options.map((s) => <option key={s.name} value={s.name} disabled={!s.supported}>{s.name}{s.supported ? "" : ` (${s.timeframe}: not supported yet)`}</option>)}
             </select>
+            {strategy?.data && <span className="hint">Data: {strategy.data.text}{strategy.data.from && `, ${niceDate(strategy.data.from)} to ${niceDate(strategy.data.to)}`}.</span>}
             </div>
         </div>
         <div className="form-grid when-grid">
@@ -92,7 +98,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
           <div className="field quick-dates"><span className="hint">Quick dates</span><div className="row-flex">
             <button type="button" className={`chip${year === String(THIS_YEAR) ? " on" : ""}`} onClick={() => pickYear(String(THIS_YEAR))}>This year</button>
             <button type="button" className={`chip${year === "12m" ? " on" : ""}`} onClick={() => quick(isoDaysAgo(365), today(), "12m")}>Last 12 months</button>
-            <button type="button" className={`chip${year === "since" ? " on" : ""}`} onClick={() => quick(monthly ? "2023-01-01" : "2022-01-01", today(), "since")}>{monthly ? "Since 2023 (all)" : "Since 2022 (all)"}</button>
+            <button type="button" className={`chip${year === "since" ? " on" : ""}`} onClick={() => quick(since, today(), "since")}>Since {since.slice(0, 4)} (all)</button>
           </div></div>
         </div>
         {strategy && (
@@ -111,7 +117,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
         {auto && !gap && (
           <p className="hint">This strategy chooses its own stocks: each day, the 200 most-traded NSE stocks of that day (about 4,250 checked, no fixed list).
             {strategy.name === "earnings_drift"
-              ? " It buys a stock two days after quarterly results that beat the market by more than 4% on double volume, up to 5 at a time, and sells after 40 trading days. It buys only while half of those 200 stocks are above their 50-day average. Risk per trade does not apply."
+              ? " Swing, daily data: it buys a stock at the open two days after quarterly results that beat the market by more than 4% on double volume, up to 5 at a time (a fifth of the money each), and sells at the open after 40 trading days, with no stop. It buys only while half of those 200 stocks are above their 50-day average. Its paper trading shares the Rs1 lakh equity account with results_gap."
               : strategy.name === "momentum_portfolio"
               ? " It holds the 15 with the best 6-month return / volatility, bought at the first open of the test and re-ranked after each quarter end (a holding stays while in the top 30). Risk per trade does not apply."
               : " Half the money buys quiet-day (NR7) breakouts, up to 5 stocks; half buys 55-day-high breakouts, up to 3 stocks. It buys only while at least half of those 200 stocks are above their 50-day average."}
@@ -185,7 +191,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
                   leverage (~8x) that one month lost about 85% of the account.
                 </span>
               )}</div>
-          ) : (<>
+          ) : auto ? null : (<>
           <div className="field"><label htmlFor="risk">Risk per trade (% of account)</label><input id="risk" type="number" min="0.1" max="10" step="0.1" value={f.risk_pct} onChange={set("risk_pct")} />
             {+f.risk_pct > safeRisk && (
               <span className="warn" role="alert">
@@ -196,7 +202,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
           {!auto && <div className="field"><label htmlFor="maxpos">Most holdings at once</label><input id="maxpos" type="number" min="1" max="10" value={f.max_positions} onChange={set("max_positions")} /></div>}
           </>)}
         </div>
-        <p className="fees-box"><b>Real costs on every trade</b> (they cannot be switched off): {FEES[market] ?? "the strategy's own cost model."}</p>
+        <p className="fees-box"><b>Real costs on every trade</b> (they cannot be switched off): {STRATEGY_FEES[strategy?.name] ?? FEES[market] ?? "the strategy's own cost model."}</p>
       </Panel>
 
       <div className="run-cta"><button className="main" type="submit" disabled={busy || !strategy?.supported}><Icon name="play" size={16} /> {busy ? "Running..." : "Run backtest"}</button><span className="note">Takes a few seconds to a minute; the result replays day by day.</span></div>

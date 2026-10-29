@@ -8,7 +8,7 @@ import { useOverview } from "../hooks/useOverview.js";
 import Sparkline from "../components/ui/Sparkline.jsx";
 import Pane from "../components/ui/Pane.jsx";
 
-const WHAT = { MCX_TREND_CARRY: "Commodity futures", CRYPTO_DIP_REVERSAL: "Perpetual futures", RESULTS_GAP: "NSE intraday" };
+const WHAT = { MCX_TREND_CARRY: "Commodity futures", CRYPTO_DIP_REVERSAL: "Perpetual futures", RESULTS_GAP: "NSE intraday + swing" };
 const when = (s) => (s ? new Date(s).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" }) : "-");
 
 /** Desk (2026-10-29 layout redesign): a headline strip, then a dense grid -- value chart, allocation, open positions, engine schedule,
