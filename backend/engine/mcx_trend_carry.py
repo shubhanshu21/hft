@@ -17,7 +17,7 @@ import argparse
 import json
 import os
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pandas as pd
 
@@ -45,6 +45,13 @@ def _state() -> dict:
 def _save_state(st: dict) -> None:
     write_json(STATE, st, indent=1)        # atomic: a crash mid-write must not leave a truncated state file
 
+
+def due_to_roll(expiry, today: date, roll_days: int) -> bool:
+    """True when the held contract expires within `roll_days` days. Plain dates: pd.Timedelta(days=n) raises numpy's 'generic unit'
+    DeprecationWarning on this pandas/numpy, which a later numpy turns into an error (2026-10-29 review)."""
+    if not expiry:
+        return False
+    return (pd.Timestamp(expiry).date() - today).days <= roll_days
 
 def needs_rebalance(st: dict, signal_day: pd.Timestamp, days: list, open_pos: list, known_ids: set) -> bool:
     """True when a re-check is due: S.REBALANCE_DAYS trading days since the last one (S.rebalance_due) -- or the account was reset.
@@ -153,7 +160,7 @@ def run(broker, db, now: datetime, report: bool = True, send=None) -> dict:
     else:
         for p in open_pos:                                           # roll a contract about to expire into the next one, same lots
             stt = json.loads(p.get("state") or "{}")
-            if stt.get("expiry") and pd.Timestamp(stt["expiry"]) - pd.Timestamp(now.date()) <= pd.Timedelta(days=ROLL_DAYS):
+            if due_to_roll(stt.get("expiry"), now.date(), ROLL_DAYS):
                 c = contract_for(stt["signal"], now.date() + timedelta(days=ROLL_DAYS + 1), contracts)
                 if c is not None and close(p, "roll_before_expiry"):
                     buy(stt["signal"], stt.get("weight", 0.0), c, lots=p["qty"])

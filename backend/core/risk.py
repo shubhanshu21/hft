@@ -1,5 +1,5 @@
-"""Portfolio-level entry gates shared by the paper runner (engine/live_dryrun.py) and the real-order
-runner (engine/live_trading.py).
+"""Portfolio-level entry gates written for the old paper runner (engine/live_dryrun.py) and real-order
+runner (engine/live_trading.py) -- both removed 2026-10-29; kept because core/ code and tests still use these gates.
 
 These used to be hand-copied into each runner, and the copies drifted: the real-order runner had no
 margin cap and no heat cap on equity entries. Keeping them in ONE place means every strategy on

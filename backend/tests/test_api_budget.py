@@ -1,14 +1,10 @@
 """Upstox's documented limits (standard APIs: 50/s, 500/min, 2,000 per 30 min) must be respected: metered centrally, budgeted, and no calls for closed markets."""
 import os
-import tempfile
 import unittest
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
-from types import SimpleNamespace
+from datetime import timedelta, timezone
 from unittest.mock import patch
 
 from engine import api_budget
-from engine.live_dryrun import DryRunner
 from services.broker import upstox_broker as ub
 
 IST = timezone(timedelta(hours=5, minutes=30))
@@ -67,48 +63,6 @@ class TestBudget(unittest.TestCase):
         for kind in ("essential", "entry", "sampling"):
             self.assertFalse(api_budget.allow(kind, api_budget.LIMIT_30MIN, 0), kind)
             self.assertFalse(api_budget.allow(kind, 0, api_budget.LIMIT_MIN), kind)
-
-
-class TestScanOrderAndUsage(unittest.TestCase):
-    def _runner(self, symbols, offset=0):
-        r = SimpleNamespace(symbols=symbols, _equity_offset=offset, _last_throttle_log=None)
-        r._scan_order = lambda: DryRunner._scan_order(r)
-        return r
-
-    SYMS = ["USDINR", "EURINR", "GBPINR", "RELIANCE", "TCS", "SBIN", "ITC"]
-
-    def test_currency_always_comes_first_and_equity_rotates(self):
-        self.assertEqual(DryRunner._scan_order(self._runner(self.SYMS, 0)), self.SYMS)
-        order = DryRunner._scan_order(self._runner(self.SYMS, 2))
-        self.assertEqual(order[:3], ["USDINR", "EURINR", "GBPINR"])
-        self.assertEqual(order[3:], ["SBIN", "ITC", "RELIANCE", "TCS"])                 # a different equity start each throttled pass
-        self.assertEqual(sorted(order), sorted(self.SYMS))                              # nothing lost, nothing duplicated
-
-    def test_a_throttled_pass_advances_the_rotation_and_writes_the_usage_file(self):
-        r = self._runner(self.SYMS)
-        tmp = Path(tempfile.mkdtemp())
-        with patch("engine.live_dryrun.DB_DIR", tmp), patch.object(api_budget, "snapshot", return_value={"used_30min": 1650, "limit_30min": 2000, "used_1min": 90, "limit_1min": 500}):
-            DryRunner._note_api_usage(r, datetime(2026, 9, 25, 12, 0, tzinfo=IST), throttled=3)
-        self.assertGreater(r._equity_offset, 0)
-        import json
-        data = json.loads((tmp / "api_usage.json").read_text())
-        self.assertEqual((data["used_30min"], data["throttled_last_scan"]), (1650, 3))
-
-    def test_no_throttling_leaves_the_rotation_alone(self):
-        r = self._runner(self.SYMS)
-        with patch("engine.live_dryrun.DB_DIR", Path(tempfile.mkdtemp())):
-            DryRunner._note_api_usage(r, datetime(2026, 9, 25, 12, 0, tzinfo=IST), throttled=0)
-        self.assertEqual(r._equity_offset, 0)
-
-
-class TestNoCallsForClosedMarkets(unittest.TestCase):
-    def test_a_closed_market_never_fetches_candles(self):
-        """After 15:30 the loop used to fetch candles for all 49 equity names on every scan just to reject them (tens of thousands of calls a day)."""
-        fetched = []
-        strat = SimpleNamespace(market="equity", in_session=lambda now: False, blocked=lambda f: False)
-        r = SimpleNamespace(_candles=lambda *a: fetched.append(a) or [], _gate_flags=lambda: {})
-        self.assertFalse(DryRunner._try_enter(r, strat, "RELIANCE", datetime(2026, 9, 25, 20, 0, tzinfo=IST), []))
-        self.assertEqual(fetched, [])
 
 
 if __name__ == "__main__":

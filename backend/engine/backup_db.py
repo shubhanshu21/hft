@@ -16,6 +16,7 @@ the next morning, not the day it is needed. A restore first saves the current DB
 """
 from __future__ import annotations
 
+import os
 import argparse
 import sqlite3
 import subprocess
@@ -75,6 +76,7 @@ def backup_once(db_path: Path = DB_PATH, backup_dir: Path = BACKUP_DIR, kind: st
     else:
         dest = backup_dir / f"{kind}_{now.strftime('%Y%m%d_%H%M%S')}.db"
     _snapshot(db_path, dest)
+    os.chmod(dest, 0o600)                       # trade history: readable by this user only (2026-10-29 review)
     log.info("Backed up %s -> %s (%.1f KB)", db_path, dest, dest.stat().st_size / 1024)
     if kind == "daily":
         _prune(backup_dir, f"{label}_[0-9]*.db" if label else "paper_trading_*.db", KEEP_DAILY)

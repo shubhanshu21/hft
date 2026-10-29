@@ -20,7 +20,7 @@ A strategy only makes decisions; the runner owns execution, so a strategy never
 touches the broker or the database.
 
 IMPORTANT (2026-10-26): the only runners that implement this contract are
-engine/live_dryrun.py and engine/live_trading.py, and both are RETIRED -- equity and
+engine/live_dryrun.py and engine/live_trading.py, and both were REMOVED (2026-10-29) -- equity and
 currency were removed on 2026-10-21, so a strategy written this way is picked up by
 nothing that runs today. The three live engines (crypto_dip_reversal,
 mcx_trend_carry, results_gap) name their strategy module directly and carry their own

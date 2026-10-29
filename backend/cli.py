@@ -44,25 +44,6 @@ sys.path.insert(0, str(Path(__file__).parent))
 from engine.database import TradingDB
 
 
-def cmd_dryrun(args):
-    # Delegate to live_dryrun runner
-    import subprocess
-    cmd = [
-        str(_venv_py if _venv_py.exists() else "python3"),
-        "-m", "engine.live_dryrun",
-        "--capital", str(args.capital),
-        "--risk-pct", str(args.risk_pct),
-        "--leverage", str(args.leverage),
-        "--interval", str(args.interval),
-    ]
-    if args.symbols:
-        cmd.extend(["--symbols"] + args.symbols)
-    if args.direction:
-        cmd.extend(["--direction", args.direction])
-
-    subprocess.run(cmd, cwd=Path(__file__).parent)
-
-
 def cmd_report(args):
     db = TradingDB(args.db)
     db.print_dashboard(args.account)
@@ -76,7 +57,7 @@ def cmd_new_strategy(args):
         sys.exit(f"error: {exc}")
     print(f"Created {path.relative_to(Path(__file__).parent)}\n"
           f"Fill in entry() / manage() / costs(), then switch it on with {args.market.upper()}_STRATEGIES=scalping,{args.name} in .env.\n"
-          f"Contract: core/strategy.py. Note it is only run by the RETIRED runners (engine/live_dryrun.py, engine/live_trading.py) --"
+          f"Contract: core/strategy.py. Note no running engine uses this contract (the old runners were removed 2026-10-29) --"
           f" the three live engines name their strategy module directly (see markets/README.md).")
 
 
@@ -120,25 +101,6 @@ def cmd_restore_db(args):
 def main():
     parser = argparse.ArgumentParser(description="Multi-Asset Quantitative Trading Framework Master CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
-
-    # Dryrun Subcommand -- defaults come from backend/.env (DRYRUN_* / TRADING_*
-    # vars) so `python3 cli.py dryrun` needs no flags at all; passing a flag
-    # still overrides the .env value for that one run.
-    p_dr = subparsers.add_parser("dryrun", help="Run live paper-trading dryrun (NSE currency + equity removed 2026-10-21; nothing left to trade)")
-    p_dr.add_argument("--symbols", nargs="+", default=_env("DRYRUN_SYMBOLS", "").split() or None,
-                       help="Symbols to watch")
-    p_dr.add_argument("--capital", type=float, default=float(_env("TRADING_CAPITAL", "100000.0")),
-                       help="Paper capital in INR")
-    p_dr.add_argument("--risk-pct", type=float, default=float(_env("DRYRUN_RISK_PCT", "5.0")),
-                       help="Risk %% per trade")
-    p_dr.add_argument("--leverage", type=float,
-                       default=float(_env("DRYRUN_LEVERAGE", "") or _env("INTRADAY_LEVERAGE", "4.0")),
-                       help="Margin leverage")
-    p_dr.add_argument("--interval", type=int, default=int(_env("DRYRUN_INTERVAL", "30")),
-                       help="Scan interval seconds")
-    p_dr.add_argument("--direction", choices=["both", "long", "short"],
-                       default=_env("TRADING_DIRECTION", "both"))
-    p_dr.set_defaults(func=cmd_dryrun)
 
     # Report Subcommand
     p_rep = subparsers.add_parser("report", help="View SQLite PnL & trade performance dashboard")

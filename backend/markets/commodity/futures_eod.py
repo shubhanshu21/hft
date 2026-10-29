@@ -75,6 +75,12 @@ def active_contracts(master: Path | None = None) -> pd.DataFrame:
     return m[["symbol", "expiry", "instrument_key", "tradingsymbol"]].reset_index(drop=True)
 
 
+def rows_frame(rows: list[dict]) -> pd.DataFrame:
+    """New Upstox rows as a frame with a float `oi` column (Upstox gives none): an all-None object column makes pd.concat raise pandas'
+    FutureWarning about all-NA entries, a behaviour change in a coming pandas (2026-10-29 review)."""
+    return pd.DataFrame(rows, columns=COLS).astype({"oi": "float64"})
+
+
 def topup(broker, today: date | None = None) -> int:
     """Append every active contract's daily candles newer than what is archived. Returns rows added."""
     today = today or date.today()
@@ -86,7 +92,7 @@ def topup(broker, today: date | None = None) -> int:
     new = []
     for c in active_contracts().itertuples():
         # a contract seen before continues after its last Upstox day; a new one is backfilled as far as Upstox has it (bhavcopy rows win on overlap)
-        start = last[(c.symbol, c.expiry)] + pd.Timedelta(days=1) if (c.symbol, c.expiry) in last else pd.Timestamp(today - timedelta(days=400))
+        start = last[(c.symbol, c.expiry)] + timedelta(days=1) if (c.symbol, c.expiry) in last else pd.Timestamp(today - timedelta(days=400))
         if start.date() > today:
             continue
         candles = broker.get_historical_candles(c.instrument_key, "days", 1, today.isoformat(), start.date().isoformat()) or []
@@ -96,7 +102,7 @@ def topup(broker, today: date | None = None) -> int:
                 new.append({"date": d, "symbol": c.symbol, "expiry": c.expiry, "open": k["open"], "high": k["high"], "low": k["low"],
                             "close": k["close"], "volume": k["volume"], "oi": None, "source": "upstox"})
     if new:
-        df = pd.concat([df, pd.DataFrame(new, columns=COLS)], ignore_index=True)
+        df = pd.concat([df.astype({"oi": "float64"}), rows_frame(new)], ignore_index=True)
     df = df.drop_duplicates(["date", "symbol", "expiry"], keep="first").sort_values(["date", "symbol", "expiry"])
     OUT.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(OUT, index=False, date_format="%Y-%m-%d")

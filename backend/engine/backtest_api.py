@@ -369,12 +369,16 @@ def _value_mcx(p: dict, live: dict) -> None:
 def _value_results_gap(p: dict, live: dict) -> None:
     """An open results_gap position: NSE shares bought intraday (MIS, 5x margin), 'if sold now' with the strategy's own Upstox cost model."""
     from markets.equity.strategies.tf_intraday.results_gap import strategy as RG
+    try:                                                           # margin = what Upstox blocks for THIS stock (1x stocks: everything)
+        lev = max(1.0, float(json.loads(p.get("state") or "{}").get("upstox_leverage") or 5.0))
+    except (ValueError, TypeError):
+        lev = 5.0
     p.pop("state", None)
     q = live.get(p.get("instrument_key")) or {}
     price = q.get("ltp")
     p.update(market="equity", lot_size=1, units=p["qty"], size_text=f"{int(p['qty'])} shares · sold at 15:20 today", price_now=price,
              price_source="live" if price else None, price_time=q.get("trade_time"), bid=q.get("bid"), ask=q.get("ask"),
-             checked_at=datetime.now(IST).isoformat(timespec="seconds") if q else None, margin_used=round(p["entry_price"] * p["qty"] / 5, 2), risk_to_stop=None)
+             checked_at=datetime.now(IST).isoformat(timespec="seconds") if q else None, margin_used=round(p["entry_price"] * p["qty"] / lev, 2), risk_to_stop=None)
     p.pop("instrument_key", None)
     if price is None:
         p.update(profit_now=None, fees_if_sold=None, net_if_sold=None, move_pct=None); return
@@ -579,7 +583,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):                # the browser left before the answer: nothing to do (2026-10-29)
+            pass
 
     def do_GET(self) -> None:                                      # noqa: N802
         path = urlparse(self.path).path.rstrip("/")

@@ -35,6 +35,10 @@
 
 ---
 
+> **2026-10-29:** the old 24/7 dry-run daemon (`engine/live_dryrun.py`, `cli.py dryrun`) and the real-order runner (`engine/live_trading.py`)
+> were removed (git history has them). The three paper engines that run now are described in `CLAUDE.md` and `backend/markets/README.md`;
+> several sections below still describe the removed intraday scalpers and are kept only as history.
+
 ## Table of Contents
 
 1. [Framework Overview](#framework-overview)
@@ -87,8 +91,6 @@ backend/
 ├── .env / .env.example / requirements.txt
 │
 ├── engine/                           # What runs: runners + plumbing
-│   ├── live_dryrun.py                # RETIRED 24/7 intraday paper daemon (kept, nothing left for it to trade)
-│   ├── live_trading.py               # Real-order engine -- gated by the multi-layer safety switch
 │   ├── safety_gate.py                # Layered live-trading kill switch (source constant + .env flag + armed-state file)
 │   ├── database.py                   # SQLite persistence: accounts, orders, positions, trades, snapshots
 │   ├── config.py                     # Upstox credentials/token handling
@@ -326,31 +328,6 @@ python3 cli.py backtest                                                  # every
 python3 cli.py backtest --symbols CRUDEOILM GOLDM --from 2026-08-17 --to 2026-09-17
 ```
 
-### 2. `cli.py dryrun` — Live paper-trading (delegates to `engine/live_dryrun.py`)
-
-```bash
-python3 cli.py dryrun [--symbols SYM [SYM ...]]
-                       [--capital N] [--risk-pct N] [--leverage N]
-                       [--interval N] [--direction {both,long,short}]
-```
-Always trades MCX commodities + NSE currency together in one daemon (`CRUDEOILM`/`GOLDM`/`USDINR`/`EURINR`/`GBPINR` by default) — each symbol's own session window (MCX 09:00–23:30 IST, currency 09:00–17:00 IST) is handled automatically per-symbol inside the daemon.
-
-| Flag | Meaning |
-|---|---|
-| `--symbols` | Override the default watchlist. |
-| `--interval` | Scan interval, seconds. |
-| `--direction` | Restrict to `long` or `short` only, or `both`. |
-
-```bash
-# Examples
-python3 cli.py dryrun                                    # everything from .env — this is what the systemd service runs
-python3 cli.py dryrun --interval 30
-python3 cli.py dryrun --direction long
-python3 cli.py dryrun --report                            # dashboard + equity curve chart, no trading
-```
-
-This process is a **24/7 daemon**, not a one-shot script: it waits out nights/weekends/holidays and rolls into the next trading day on its own rather than exiting, so it should be run under the systemd service (below), not `nohup`.
-
 ### 3. `cli.py report` / `cli.py reset-db`
 
 ```bash
@@ -365,31 +342,6 @@ python3 cli.py arm-live-trading --component {upstox,ALL} --confirm "I UNDERSTAND
 python3 cli.py disarm-live-trading [--component {upstox,ALL}]
 ```
 Arming the state file is only **one** of three independent gates — `engine.safety_gate.KILL_SWITCH_ENGAGED` must also be hand-edited to `False` in source (and redeployed), and `ALLOW_LIVE_TRADING=true` must be set in `.env`. All three must agree before any broker call is allowed to place a real order; a caller requesting `dry_run=True` is always honored regardless of gate state. See `engine/safety_gate.py`.
-
-### 5. `engine/live_dryrun.py` directly (what `cli.py dryrun` calls under the hood)
-
-Useful when you need a flag `cli.py dryrun` doesn't expose yet (`--long-only`, `--db`, `--account`, `--token`):
-
-```bash
-python3 -m engine.live_dryrun [--token TOKEN] [--capital N] [--risk-pct N] [--leverage N]
-                        [--symbols SYM [SYM ...]] [--db PATH] [--account ID]
-                        [--long-only] [--direction {both,long,short}]
-                        [--interval N] [--report] [--reset-db]
-```
-| Flag | Meaning |
-|---|---|
-| `--token` | Explicit Upstox access token (otherwise loaded from config/cache/`.env`/auto-login, in that order). |
-| `--long-only` | Skip all short setups regardless of `--direction`. |
-| `--db` / `--account` | Point at a specific SQLite file / account ID — useful for running multiple independent paper accounts side by side (each gets its own [process lock](#safety-features-dry-run)). |
-| `--report` | Print the dashboard and save the equity curve chart, then exit — no trading. |
-| `--reset-db` | Wipe and reinitialize the DB before starting. |
-
-```bash
-# Examples
-python3 -m engine.live_dryrun --capital 100000 --risk-pct 4.0 --leverage 5.0 --interval 30
-python3 -m engine.live_dryrun --report --account DRYRUN_ACCOUNT
-python3 -m engine.live_dryrun --reset-db --capital 100000
-```
 
 ### 6. Backtest scripts directly (`markets/commodity/strategies/tf_5min/scalping/backtest.py`, `markets/currency/strategies/tf_5min/scalping/backtest.py`, `markets/equity/strategies/tf_5min/scalping/backtest.py`)
 
