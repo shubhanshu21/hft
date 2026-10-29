@@ -53,6 +53,9 @@ class TestStrategy(unittest.TestCase):
         self.assertAlmostEqual(c["total"], fee + slip, places=2)
         self.assertGreater(c["stt"], 0)
 
+    def test_holds_up_to_ten_stocks(self):
+        self.assertEqual(S.K, 10)                       # 2026-10-29 research: 10 x 1/10 beat 5 x 1/5 on 2022-24 and in the shared account
+
     def test_trading_days_held(self):
         self.assertEqual(S.trading_days_held(date(2026, 10, 23), date(2026, 10, 26), set()), 1)              # Fri -> Mon
         self.assertEqual(S.trading_days_held(date(2026, 10, 23), date(2026, 10, 27), {date(2026, 10, 26)}), 1)  # Mon a holiday
@@ -119,12 +122,12 @@ class TestEngine(Base):
         self.assertAlmostEqual(float(self.db.get_account(E.ACCOUNT)["current_capital"]), cap0 + 2000 - S.delivery_costs(100.0, 120.0, 100)["total"], places=2)
 
     def test_buy_limited_to_free_cash(self):
-        self.hold("A", 900, 100.0, "2026-10-20")                                 # Rs90k of the Rs1L already in stocks
+        self.hold("A", 950, 100.0, "2026-10-20")                                 # Rs95k of the Rs1L already in stocks
         with mock.patch.object(E, "_indicators", return_value=make_ind()):
             E.plan(self.db, self.at(8, 50).date(), set())
         E.fill(self.db, Broker({"GOOD": 100.0}), self.at(9, 30), self.lookup, [])
         good = [p for p in self.db.get_open_positions(E.ACCOUNT) if p["symbol"] == "GOOD"][0]
-        self.assertEqual(good["qty"], 100)                                       # Rs10k free, not the Rs20k slot
+        self.assertEqual(good["qty"], 50)                                        # Rs5k free, not the Rs10k slot
 
     def test_no_open_price_drops_the_buy_after_the_retry_window(self):
         with mock.patch.object(E, "_indicators", return_value=make_ind()):

@@ -6,10 +6,17 @@ Rules (research 2026-10-16, unchanged since):
   * reaction = the stock's return from the close before the meeting day to the close of the day after it, minus the average stock's;
   * buy when the reaction is above +4% and the two days' traded value is at least 2x its 50-day average, at the open two days after the
     meeting (the reaction is known by then), strongest reaction first, only while >= 50% of the 200 stocks are above their 50-day average;
-  * up to 5 stocks, 1/5 of the strategy's money each; sell at the open after 40 trading days. NO stop: stops cut the drift short
+  * up to 10 stocks, 1/10 of the strategy's money each (5 x 1/5 until 2026-10-29); sell at the open after 40 trading days. NO stop: stops cut the drift short
     (Rs1L -> Rs0.86-0.93L with a 2.5-ATR stop, against Rs1.95L without).
 Re-test 2026-10-29 (same rules, data to 2026-10-19): Rs1L -> Rs1.95L since Oct 2022 (+18%/yr, worst fall -16%, 65 trades, 75% won),
 2022-24 +20%/yr, 2025-26 +16%/yr, every year positive (2026 +7%). Not proven: four years, few trades.
+10 stocks instead of 5 (2026-10-29, user "yes"; scratchpad ed/grid.py, 729 versions picked on Oct 2022-Dec 2024, judged on 2025-26):
+tuning the thresholds / hold / weak-market rule was luck (2022-24 rank vs 2025-26 rank: -0.09), so they stay; holding 10 at 1/10 each
+spreads one results season's buys (2026: all 5 places filled on 5-9 Feb and all 5 lost). Fresh 1 Jan starts, 5 -> 10 stocks: 2023
++19 -> +32%, 2024 +16 -> +14%, 2025 +20 -> +17%, 2026 -1% (fall -18%) -> +5% (-15%); Oct 2022 -> Oct 2026 Rs1.95L -> Rs2.04L, worst fall
+-16% both, 125 trades. Best of the near versions on 2022-24 (return / worst fall), 8 stocks similar. Shared with results_gap on Rs1L:
+Rs6.19L -> Rs7.28L since Oct 2022 (fall -23%), from 1 Jan 2026 Rs1.03L -> Rs1.15L (-18% -> -14%). Buying half-size in weak markets
+instead of skipping smoothed the strategy alone but cut the shared account (Rs5.47L): it ties up cash results_gap uses better.
 
 Paper (2026-10-29, user: "add this strategy and use same equity 1 lakh account"): it shares the RESULTS_GAP account with the intraday
 results_gap strategy (engine/earnings_drift.py). Its money is SLEEVE_CAPITAL plus its own closed trades; a buy is also capped by the
@@ -33,7 +40,7 @@ NAME = "earnings_drift"
 EVENTS_FILE = ARCHIVE_ROOT / "nse" / "board_meetings_all.csv.gz"
 DATA_DIR = ARCHIVE_ROOT / "equity_all"            # every NSE equity, daily (markets/equity/all_daily.py, nightly)
 MIN_REACTION, MIN_VOL_SURGE = 0.04, 2.0
-K, HOLD_DAYS = 5, 40
+K, HOLD_DAYS = 10, 40          # 10 stocks since 2026-10-29 (was 5): see the docstring
 MIN_BREADTH_PCT = 50.0
 SLEEVE_CAPITAL = 100_000.0
 UNIVERSE, LIQ_DAYS, MIN_HISTORY, MIN_PRICE = 200, 126, 125, 20.0      # the day's 200 most-traded stocks (126-day median traded value)

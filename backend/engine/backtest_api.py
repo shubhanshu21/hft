@@ -95,7 +95,7 @@ def catalog() -> list[dict]:
                    "data": {"text": "5-minute candles of every liquid NSE stock on its results day (09:15-09:30 for the buy, 15:20 for the sale)", **_rg_range()}}
     from markets.equity.strategies.tf_daily.earnings_drift import strategy as ed
     earnings_drift = {"market": "equity", "name": "earnings_drift", "timeframe": "1 days", "supported": True, "symbols": [], "auto_universe": True,
-                      "summary": "equity / earnings_drift -- swing: buy stocks whose results jumped 4%+ vs the market on 2x volume, sell 40 trading days later.",
+                      "summary": "equity / earnings_drift -- swing: buy stocks whose results jumped 4%+ vs the market on 2x volume, up to 10 at a time, sell 40 trading days later.",
                       "intraday": False, "default_risk_pct": None, "default_capital": ed.SLEEVE_CAPITAL,
                       "data": {"text": "daily candles of every NSE stock (about 4,250), refreshed nightly; NSE results dates", **ed.data_range()}}
     from markets.crypto.strategies.tf_5min.dip_reversal import strategy as dr

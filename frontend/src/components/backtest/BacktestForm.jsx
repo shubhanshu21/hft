@@ -117,7 +117,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
         {auto && !gap && (
           <p className="hint">This strategy chooses its own stocks: each day, the 200 most-traded NSE stocks of that day (about 4,250 checked, no fixed list).
             {strategy.name === "earnings_drift"
-              ? " Swing, daily data: it buys a stock at the open two days after quarterly results that beat the market by more than 4% on double volume, up to 5 at a time (a fifth of the money each), and sells at the open after 40 trading days, with no stop. It buys only while half of those 200 stocks are above their 50-day average. Its paper trading shares the Rs1 lakh equity account with results_gap."
+              ? " Swing, daily data: it buys a stock at the open two days after quarterly results that beat the market by more than 4% on double volume, up to 10 at a time (a tenth of the money each), and sells at the open after 40 trading days, with no stop. It buys only while half of those 200 stocks are above their 50-day average. Its paper trading shares the Rs1 lakh equity account with results_gap."
               : strategy.name === "momentum_portfolio"
               ? " It holds the 15 with the best 6-month return / volatility, bought at the first open of the test and re-ranked after each quarter end (a holding stays while in the top 30). Risk per trade does not apply."
               : " Half the money buys quiet-day (NR7) breakouts, up to 5 stocks; half buys 55-day-high breakouts, up to 3 stocks. It buys only while at least half of those 200 stocks are above their 50-day average."}
