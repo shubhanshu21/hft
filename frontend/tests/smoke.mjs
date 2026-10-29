@@ -5,11 +5,11 @@ import { chromium } from "playwright-core";
 
 const BASE = process.argv[2] || "https://127.0.0.1/";
 const PAGES = [
-  ["today", ["All 3 paper accounts", "Accounts", "Latest trades"]],
-  ["paper/RESULTS_GAP", ["Paper trading", "Results-day gap-up", "Closed trades"]],
-  ["paper/MCX_TREND_CARRY", ["MCX trend + carry", "Open trades"]],
-  ["results", ["Result", "Where the money went"]],
-  ["new", ["What to test", "Money, fees and slippage", "Run backtest"]],
+  ["today", ["Total value", "Portfolio value", "Open positions", "Engine schedule", "Latest fills", "Paper accounts"]],
+  ["paper/RESULTS_GAP", ["Results-day gap-up", "Account value", "Open positions", "Closed trades"]],
+  ["paper/MCX_TREND_CARRY", ["MCX trend + carry", "Account value", "Engine"]],
+  ["results", ["Saved results", "Where the money went"]],
+  ["new", ["Backtest builder", "What to test", "Money, fees and slippage", "Run backtest"]],
 ];
 const SIZES = [["desktop", 1440, 900], ["phone", 390, 844]];
 
@@ -35,6 +35,38 @@ for (const [size, width, height] of SIZES) {
   }
   await ctx.close();
 }
+// Ctrl+K quick search: type an account name, press Enter, land on that account
+{
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, ignoreHTTPSErrors: true });
+  const page = await ctx.newPage();
+  await page.goto(`${BASE}#/today`); await page.waitForLoadState("networkidle");
+  await page.keyboard.press("Control+k");
+  await page.waitForSelector(".pal input", { timeout: 5000 }).catch(() => failures.push("Ctrl+K did not open the search"));
+  await page.keyboard.type("gap"); await page.keyboard.press("Enter"); await page.waitForTimeout(800);
+  const hash = await page.evaluate(() => location.hash);
+  if (hash !== "#/paper/RESULTS_GAP") failures.push(`Ctrl+K "gap" + Enter went to ${hash}, expected #/paper/RESULTS_GAP`);
+  console.log(`${hash === "#/paper/RESULTS_GAP" ? "ok" : "…"} Ctrl+K search`);
+  await ctx.close();
+}
+// Sidebar collapse: the fold button shrinks it, the choice survives a reload, "[" expands it again
+{
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, ignoreHTTPSErrors: true });
+  const page = await ctx.newPage();
+  await page.goto(`${BASE}#/new`); await page.waitForLoadState("networkidle");
+  await page.click(".rail-fold");
+  const width = async () => page.evaluate(() => document.querySelector(".rail").getBoundingClientRect().width);
+  await page.waitForTimeout(400);
+  const narrow = await width();
+  await page.reload(); await page.waitForLoadState("networkidle"); await page.waitForTimeout(300);
+  const after = await width();
+  if (process.env.SHOT) await page.screenshot({ path: process.env.SHOT });
+  await page.keyboard.press("["); await page.waitForTimeout(400);
+  const wide = await width();
+  const ok = narrow < 100 && after < 100 && wide > 200;
+  if (!ok) failures.push(`sidebar collapse: ${narrow}px after the click, ${after}px after reload, ${wide}px after "["`);
+  console.log(`${ok ? "ok" : "…"} sidebar collapse (${Math.round(narrow)} -> reload ${Math.round(after)} -> "[" ${Math.round(wide)}px)`);
+  await ctx.close();
+}
 await browser.close();
 if (failures.length) { console.error(`\n${failures.length} problem(s):\n- ${failures.join("\n- ")}`); process.exit(1); }
-console.log(`\nAll ${PAGES.length * SIZES.length} page checks passed`);
+console.log(`\nAll ${PAGES.length * SIZES.length} page checks + the search and sidebar checks passed`);

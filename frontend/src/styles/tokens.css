@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap");
 
 /* Design tokens (2026-10-24 redesign). Every page reads colour, radius, shadow and spacing from here, so light and dark mode swap in
    one place. Chart colours (accent / gain / loss) were run through the dataviz palette validator in both modes (CVD, lightness band,
