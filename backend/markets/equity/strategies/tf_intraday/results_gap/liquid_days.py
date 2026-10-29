@@ -16,8 +16,8 @@ import pandas as pd
 
 from core.paths import ARCHIVE_ROOT
 
-PATH = ARCHIVE_ROOT / "nse" / "results_gap_liquid_days.pkl"
-COLS = ["sym", "day", "xgap", "o915", "c925", "o930", "h930", "l930", "v930", "c1520", "turn20"]
+PATH = ARCHIVE_ROOT / "nse" / "results_gap_liquid_days_v2.pkl"      # v2 (2026-10-29): + v_pre / moved_pre (09:15-09:30 only, no look-ahead)
+COLS = ["sym", "day", "xgap", "o915", "c925", "o930", "h930", "l930", "v930", "c1520", "turn20", "v_pre", "moved_pre"]
 
 
 def turnover20(sym: str, day: str) -> float | None:
@@ -37,7 +37,9 @@ def _summarise_extra(bars: pd.DataFrame) -> dict | None:
     if not {"09:15", "09:25", "09:30", "15:20"} <= set(b.index):
         return None
     r = b.loc["09:30"]
-    return {"o915": float(b.at["09:15", "open"]), "c925": float(b.at["09:25", "close"]), "o930": float(r["open"]), "h930": float(r["high"]),
+    pre = b.loc[[h for h in ("09:15", "09:20", "09:25") if h in b.index]]
+    return {"v_pre": float((pre["close"] * pre["volume"]).sum()), "moved_pre": bool(pre["high"].max() > pre["low"].min()),
+            "o915": float(b.at["09:15", "open"]), "c925": float(b.at["09:25", "close"]), "o930": float(r["open"]), "h930": float(r["high"]),
             "l930": float(r["low"]), "v930": float(r["open"] * r["volume"]), "c1520": float(b.at["15:20", "close"])}
 
 

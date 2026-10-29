@@ -86,6 +86,15 @@ def stock_leverage(broker, key: str, price: float) -> float | None:
     return round(qty * price / margin, 2) if margin and margin > 0 else None
 
 
+def _entry_day(p: dict) -> str:
+    """The trading day a position was bought ("YYYY-MM-DD"): the engine's own entry_date, else the entry timestamp's date."""
+    try:
+        st = json.loads(p.get("state") or "{}")
+    except ValueError:
+        st = {}
+    return st.get("entry_date") or str(p.get("entry_time", ""))[:10]
+
+
 def _runup(sym: str, today: date) -> float | None:
     try:
         r = S.runup20(sym, today)
@@ -101,8 +110,9 @@ def enter(db, broker, now: datetime, holidays: set[date], lookup, lines: list) -
         return
     if st.get("entry_date") != str(today):                     # a new day: the attempt counter starts over
         st["entry_date"], st["entry_attempts"] = str(today), 0
-    for p in db.get_open_positions(ACCOUNT):                       # a sale the engine missed (e.g. a failed 15:20 run): sell it now
-        _close(db, broker, p, now, "missed_exit", lines)
+    for p in db.get_open_positions(ACCOUNT):                       # a sale the engine missed (e.g. a failed 15:20 run): sell it now --
+        if _entry_day(p) < str(today):                              # but never this morning's own buys (a retry after a crash, 2026-10-29)
+            _close(db, broker, p, now, "missed_exit", lines)
     if not S.CALENDAR.exists() or datetime.fromtimestamp(S.CALENDAR.stat().st_mtime, IST).date() != today:
         try:
             S.refresh_calendar(today)
@@ -144,7 +154,10 @@ def enter(db, broker, now: datetime, holidays: set[date], lookup, lines: list) -
         lines.append(f"Nifty 09:15->now {mkt15:+.2%} (buys on falling mornings did better in the backtest; recorded, not used)")
     cap = float(db.get_account(ACCOUNT)["current_capital"])
     share = cap / len(buys)                                     # each signal's slice of the account
+    held = {p["symbol"] for p in db.get_open_positions(ACCOUNT)}
     for b in buys:
+        if b["symbol"] in held:                                     # already bought this morning before a crash: don't buy it twice
+            continue
         allowed = stock_leverage(broker, keys[b["symbol"]], b["ltp"])
         lev = S.LEVERAGE if allowed is None else min(S.LEVERAGE, allowed)
         if allowed is None:
@@ -235,13 +248,21 @@ def run(db, broker, now: datetime, holidays: set[date], lookup, send=print) -> l
     if now.weekday() >= 5 or now.date() in holidays:
         return ["market closed today"]
     if t < dtime(9, 25):
-        n = S.refresh_calendar(now.date())
+        try:                                       # an NSE outage here must not fail the run (09:30 refreshes the calendar again)
+            n = f"{S.refresh_calendar(now.date())} results meetings in the last/next 7 days"
+        except Exception as e:
+            n = f"calendar refresh failed ({type(e).__name__}; 09:30 tries again)"
         try:                                                          # yesterday's turnover for the liquid-stock list
             b = S.refresh_bhavcopy(now.date())
         except Exception as e:
             b = f"failed ({type(e).__name__}; the list uses the files already held)"
-        return [f"results calendar refreshed: {n} results meetings in the last/next 7 days; NSE daily files added: {b}; "
-                f"{len(S.universe(now.date()))} liquid stocks today"]
+        liquid = S.liquid_list(now.date())
+        who = (f"{len(liquid)} liquid stocks today" if liquid else
+               f"FALLBACK: no liquid-stock list (too few NSE daily files), trading the fixed {len(S.market_panel())}-stock list today")
+        msg = f"results {n if n.startswith('calendar') else 'calendar refreshed: ' + n}; NSE daily files added: {b}; {who}"
+        if not liquid and send:                                       # quietly trading the hindsight list would undo the fairness fix
+            send("📈 <b>RESULTS GAP</b>\n" + msg)
+        return [msg]
     if t < dtime(15, 0):
         enter(db, broker, now, holidays, lookup, lines)
     elif t >= dtime(15, 15):

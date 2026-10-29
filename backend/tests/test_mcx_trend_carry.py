@@ -21,9 +21,15 @@ CONTRACTS = pd.DataFrame({"symbol": ["GOLDTEN", "SILVERMIC"], "expiry": pd.to_da
                           "instrument_key": ["MCX_FO|GOLDTEN", "MCX_FO|SILVERMIC"], "tradingsymbol": ["GOLDTEN26DECFUT", "SILVERMIC26NOVFUT"]})
 
 
+PRICES = {"MCX_FO|GOLDTEN": 12_000.0, "MCX_FO|SILVERMIC": 150_000.0}
+
+
 class FakeBroker:
+    def __init__(self, prices=None):
+        self.prices = dict(PRICES if prices is None else prices)
+
     def get_ltp_batch(self, keys):
-        return {"MCX_FO|GOLDTEN": 12_000.0, "MCX_FO|SILVERMIC": 150_000.0}
+        return {k: v for k, v in self.prices.items() if k in keys}
 
 
 class TestNeedsRebalance(unittest.TestCase):
@@ -69,8 +75,14 @@ class TestRun(unittest.TestCase):
             p.start()
             self.addCleanup(p.stop)
 
-    def run_once(self, now=NOW):
-        return M.run(FakeBroker(), self.db, now, report=False, send=lambda m: None)
+    def run_once(self, now=NOW, prices=None):
+        return M.run(FakeBroker(prices), self.db, now, report=False, send=lambda m: None)
+
+    def due_again(self):
+        st = json.loads(M.STATE.read_text()); st["rebalanced_on"] = str(DAYS[-11].date()); M.STATE.write_text(json.dumps(st))
+
+    def gold(self):
+        return [p for p in self.db.get_open_positions(M.ACCOUNT) if p["symbol"].startswith("GOLD")]
 
     def test_reset_account_buys_the_current_signal(self):
         M.STATE.write_text(json.dumps({"reset_at": "2026-10-24T20:16:20+05:30"}))      # the live state after the 2026-10-24 reset
@@ -108,7 +120,7 @@ class TestRun(unittest.TestCase):
         self.assertNotIn("SILVERMIC26NOVFUT", held)
         reasons = {t["symbol"]: t["exit_reason"] for t in self.db.get_trades(account_id=M.ACCOUNT)}
         self.assertEqual(reasons["SILVERMIC26NOVFUT"], "rebalance_dropped")
-        self.assertEqual(reasons["GOLDTEN26DECFUT"], "rebalance_resize")             # gold's weight went 60% -> 100%: more lots
+        self.assertNotIn("GOLDTEN26DECFUT", reasons)          # gold's weight went 60% -> 100%: lots ADDED, nothing sold (2026-10-29)
 
     def test_wiping_the_positions_triggers_a_new_rebalance(self):
         self.run_once()
@@ -131,3 +143,53 @@ class TestPositionIds(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+
+class TestRebalanceLikeTheBacktest(TestRun):
+    """2026-10-29 code review: the live re-check must trade like trend_carry.backtest -- resize by the difference, size from the
+    marked-to-market account value, and never sell a holding before the contract it moves into has a price."""
+
+    def test_a_bigger_share_buys_only_the_extra_lots(self):
+        self.run_once()
+        before = sum(int(p["qty"]) for p in self.gold())
+        self.due_again(); self.w = {"GOLDM": 0.9, "SILVERM": 0.1}
+        self.run_once()
+        self.assertGreater(sum(int(p["qty"]) for p in self.gold()), before)
+        self.assertNotIn("GOLDTEN26DECFUT", {t["symbol"] for t in self.db.get_trades(account_id=M.ACCOUNT)})
+
+    def test_a_smaller_share_sells_only_the_difference(self):
+        self.w = {"GOLDM": 0.9, "SILVERM": 0.1}
+        self.run_once()
+        before = sum(int(p["qty"]) for p in self.gold())
+        self.due_again(); self.w = {"GOLDM": 0.3, "SILVERM": 0.7}
+        self.run_once()
+        after = sum(int(p["qty"]) for p in self.gold())
+        sold = [t for t in self.db.get_trades(account_id=M.ACCOUNT) if t["symbol"] == "GOLDTEN26DECFUT"]
+        self.assertTrue(0 < after < before)
+        self.assertEqual(sum(t["qty"] for t in sold), before - after)            # fees on the lots sold only
+        self.assertEqual({t["exit_reason"] for t in sold}, {"rebalance_resize"})
+
+    def test_sizing_uses_the_account_value_with_open_profit(self):
+        self.run_once()
+        seen = []
+        real = M.S.lots_for
+        self.due_again()
+        with mock.patch.object(M.S, "lots_for", side_effect=lambda cap, *a, **k: seen.append(cap) or real(cap, *a, **k)):
+            self.run_once(prices={"MCX_FO|GOLDTEN": 13_000.0, "MCX_FO|SILVERMIC": 150_000.0})     # gold up: open profit
+        g = self.gold()
+        open_profit = sum((13_000.0 - p["entry_price"]) * p["qty"] * json.loads(p["state"])["lot_units"] for p in g)
+        self.assertGreater(open_profit, 0)
+        self.assertAlmostEqual(seen[0], 250_000 + open_profit, delta=1)
+
+    def test_no_price_for_the_next_contract_keeps_the_old_one(self):
+        self.run_once()
+        roll_day = datetime(2026, 11, 27, 9, 10, tzinfo=M.IST)            # SILVERMIC expires 30 Nov: inside the 3-day roll window
+        nxt = pd.DataFrame({"symbol": ["SILVERMIC"], "expiry": pd.to_datetime(["2027-02-26"]), "instrument_key": ["MCX_FO|SILVERMIC_FEB"],
+                            "tradingsymbol": ["SILVERMIC27FEBFUT"]})
+        with mock.patch.object(M.futures_eod, "active_contracts", return_value=pd.concat([CONTRACTS, nxt], ignore_index=True)), \
+             mock.patch.object(M, "needs_rebalance", return_value=False):
+            self.run_once(now=roll_day, prices=PRICES)                     # no price at all for the February contract
+        held = {p["symbol"] for p in self.db.get_open_positions(M.ACCOUNT)}
+        self.assertIn("SILVERMIC26NOVFUT", held)                          # not sold into nothing
+        self.assertEqual([t for t in self.db.get_trades(account_id=M.ACCOUNT) if t["symbol"] == "SILVERMIC26NOVFUT"], [])

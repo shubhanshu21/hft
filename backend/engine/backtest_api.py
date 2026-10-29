@@ -404,7 +404,8 @@ def _value_crypto(p: dict, live: dict) -> None:
     qty = float(p["qty"])
     d = 1 if p["direction"] == "long" else -1
     gross = (price - entry) * qty * d * fx
-    fee = (price + entry) * qty * 0.0002 * fx
+    from markets.crypto.strategies.tf_5min.dip_reversal import strategy as DR   # same (taker + slippage) a side the engine books on a
+    fee = entry * qty * 2 * (DR.TAKER + DR.SLIP.get(p["symbol"], 0.00015)) * fx   # market exit (2026-10-29); funding only known at the close
     net = gross - fee
     p.update(profit_now=round(gross, 2), net_if_sold=round(net, 2), fees_if_sold=round(fee, 2), move_pct=round((price / entry - 1) * 100 * d, 3),
              pretax_if_sold=round(net, 2))

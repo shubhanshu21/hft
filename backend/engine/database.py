@@ -301,6 +301,23 @@ class TradingDB:
                     state.update(state_updates)
                     conn.execute("UPDATE positions SET state = ? WHERE position_id = ? AND status = 'OPEN'", (json.dumps(state), position_id))
 
+    def set_position_qty(self, position_id: str, qty: float, entry_price: Optional[float] = None, state_updates: Optional[dict] = None) -> None:
+        """Resize an OPEN position in place (2026-10-29: MCX trend_carry adds or trims lots like its backtest instead of selling everything
+        and buying back). `entry_price` (optional) becomes the new average price; `state_updates` is merged into the JSON state."""
+        import json
+        now_str = datetime.now(IST).isoformat()
+        with self._get_conn() as conn:
+            row = conn.execute("SELECT state FROM positions WHERE position_id = ? AND status = 'OPEN'", (position_id,)).fetchone()
+            if row is None:
+                raise ValueError(f"no open position {position_id}")
+            state = json.loads(row[0]) if row[0] else {}
+            state.update(state_updates or {})
+            if entry_price is None:
+                conn.execute("UPDATE positions SET qty = ?, state = ?, updated_at = ? WHERE position_id = ?", (qty, json.dumps(state), now_str, position_id))
+            else:
+                conn.execute("UPDATE positions SET qty = ?, entry_price = ?, state = ?, updated_at = ? WHERE position_id = ?",
+                             (qty, entry_price, json.dumps(state), now_str, position_id))
+
     def get_open_positions(self, account_id: str = "DRYRUN_ACCOUNT") -> List[dict]:
         with self._get_conn() as conn:
             rows = conn.execute(

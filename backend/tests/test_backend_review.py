@@ -81,3 +81,14 @@ class TestBackupsArePrivate(unittest.TestCase):
             sqlite3.connect(db).close()
             out = backup_db.backup_once(db, Path(d) / "b", kind="hourly")
             self.assertEqual(stat.S_IMODE(os.stat(out).st_mode), 0o600)
+
+
+class TestCryptoIfSoldNow(unittest.TestCase):
+    def test_fees_match_what_the_engine_books_on_a_market_exit(self):
+        # 2026-10-29 review: the page used a flat 0.02% a side; the engine books (taker + slippage) on the buy AND on a market sell
+        from markets.crypto.strategies.tf_5min.dip_reversal import strategy as DR
+        p = {"symbol": "SOL", "qty": 10.0, "entry_price": 100.0, "direction": "long", "current_stop": 93.0, "state": "{}"}
+        A._value_crypto(p, {"crypto": {"prices": {"SOL": 110.0}, "usdtinr": 90.0, "timestamp": "t"}})
+        per_side = DR.TAKER + DR.SLIP.get("SOL", 0.00015)
+        self.assertAlmostEqual(p["fees_if_sold"], round(100.0 * 10 * 2 * per_side * 90.0, 2))
+        self.assertAlmostEqual(p["net_if_sold"], round((110.0 - 100.0) * 10 * 90.0 - p["fees_if_sold"], 2))

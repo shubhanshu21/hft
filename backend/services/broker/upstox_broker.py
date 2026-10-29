@@ -747,6 +747,8 @@ class UpstoxBroker(BaseBroker):
                             "today_open": o.open if o else None,
                             "today_high": o.high if o else None,
                             "today_low": o.low if o else None,
+                            # money traded since the open (results_gap's thin-stock rule at 09:30, 2026-10-29); None when Upstox omits it
+                            "value_traded": (q.volume * q.average_price) if getattr(q, "volume", None) and getattr(q, "average_price", None) else None,
                         }
                     break
                 except ApiException as exc:

@@ -81,6 +81,7 @@ def run(broker, db, now: datetime, report: bool = True, send=None) -> dict:
     db.init_account(ACCOUNT, name="MCX trend + carry", capital=capital0, leverage=exposure, risk_pct=0.0)
     acc = db.get_account(ACCOUNT)
     capital = float(acc["current_capital"])
+    val = None                                  # marked-to-market account value, set at a rebalance (sizing like the backtest)
     st = _state()
     table = futures_eod.load()
     sig_rows = table[table["symbol"].isin(S.SIGNALS)] if len(table) else table
@@ -108,12 +109,48 @@ def run(broker, db, now: datetime, report: bool = True, send=None) -> dict:
         lines.append(f"• SOLD {p['symbol']} {p['qty']} lot(s) {p['entry_price']:,.2f} → {px:,.2f}: {'+' if c['net'] >= 0 else ''}{_inr(c['net'])} after fees")
         return True
 
+    def trim(p, lots, reason):
+        """Sell `lots` of an open position (all of it when lots >= its size), booking fees on those lots only."""
+        nonlocal capital
+        have = int(p["qty"])
+        if lots >= have:
+            return close(p, reason)
+        px = ltp.get(p["instrument_key"])
+        if not px:
+            lines.append(f"• {p['symbol']}: no live price, kept {have} lot(s)")
+            return False
+        stt = json.loads(p.get("state") or "{}")
+        c = compute_mcx_costs(stt.get("family", p["symbol"]), "long", p["entry_price"], px, lots)
+        capital += c["net"]
+        hold = (now - datetime.fromisoformat(p["entry_time"])).total_seconds() / 60
+        db.record_trade(p["position_id"], p["symbol"], "long", lots, p["entry_price"], px, p["entry_time"], now_s, hold, reason, c["gross"], c,
+                        c["net"], capital, account_id=ACCOUNT, strategy=NAME)
+        left = have - lots
+        db.set_position_qty(p["position_id"], left, state_updates={"margin_used": round(float(stt.get("margin_used") or 0) * left / have, 2)})
+        lines.append(f"• SOLD {lots} of {have} lot(s) {p['symbol']} {p['entry_price']:,.2f} → {px:,.2f}: {'+' if c['net'] >= 0 else ''}{_inr(c['net'])} after fees")
+        return True
+
+    def add(p, signal, lots):
+        """Buy `lots` more of the contract already held, averaging the entry price (one row per commodity, like the backtest)."""
+        px = ltp.get(p["instrument_key"])
+        if not px:
+            lines.append(f"• {p['symbol']}: no live price, not added to")
+            return False
+        have = int(p["qty"])
+        stt = json.loads(p.get("state") or "{}")
+        lot_val = px * lot_units(S.TRADE[signal])
+        avg = (p["entry_price"] * have + px * lots) / (have + lots)
+        db.set_position_qty(p["position_id"], have + lots, entry_price=avg,
+                            state_updates={"margin_used": round(float(stt.get("margin_used") or 0) + lots * lot_val * S.MARGIN_PCT[signal], 2)})
+        lines.append(f"• ADDED {lots} lot(s) {p['symbol']} @ {px:,.2f} = {_inr(lots * lot_val)} (now {have + lots})")
+        return True
+
     def buy(signal, weight, contract, lots=None):
         px = ltp.get(contract["instrument_key"])
         if not px:
             lines.append(f"• {S.TRADE[signal]}: no live price, skipped")
             return None
-        lots = lots if lots is not None else S.lots_for(capital, exposure, weight, px, signal)
+        lots = lots if lots is not None else S.lots_for(val if val is not None else capital, exposure, weight, px, signal)
         lot_val = px * lot_units(S.TRADE[signal])
         if lots < 1:
             lines.append(f"• {S.TRADE[signal]} (weight {weight:.0%}): one lot is {_inr(lot_val)}, more than its share -- kept in cash")
@@ -138,20 +175,36 @@ def run(broker, db, now: datetime, report: bool = True, send=None) -> dict:
             for sig, p in held.items():                               # sell what dropped out of the top 3
                 if sig not in w:
                     ok = close(p, "rebalance_dropped") and ok
+            kept = [p for sig, p in held.items() if sig in w]
+            # size from the marked-to-market account value, like the backtest's `val` (2026-10-29; a holding with no price counts at cost)
+            val = capital + sum(((ltp.get(p["instrument_key"]) or p["entry_price"]) - p["entry_price"]) * int(p["qty"])
+                                * json.loads(p.get("state") or "{}").get("lot_units", 1) for p in kept)
             for sig, wt in sorted(w.items(), key=lambda x: -x[1]):
                 c = contract_for(sig, now.date(), contracts)
                 if c is None:
                     lines.append(f"• {S.TRADE[sig]}: no contract alive past the next few days, skipped")
                     continue
                 px = ltp.get(c["instrument_key"])
-                want = S.lots_for(capital, exposure, wt, px, sig) if px else None
                 p = held.get(sig)
-                if p is not None and want is not None and p["instrument_key"] == c["instrument_key"] and int(p["qty"]) == want:
-                    lines.append(f"• KEPT {p['symbol']} {p['qty']} lot(s) (still in the top {S.TOP_N}, weight {wt:.0%})")
+                if not px:                                            # never sell a holding into a contract we cannot price (2026-10-29)
+                    lines.append(f"• {S.TRADE[sig]}: no live price for {c['tradingsymbol']}, " + (f"kept {p['symbol']}" if p is not None else "skipped"))
+                    ok = False
                     continue
-                if p is not None:
-                    ok = close(p, "rebalance_resize") and ok
-                buy(sig, wt, c)
+                want = S.lots_for(val, exposure, wt, px, sig)
+                if p is not None and p["instrument_key"] == c["instrument_key"]:
+                    have = int(p["qty"])
+                    if want == have:
+                        lines.append(f"• KEPT {p['symbol']} {have} lot(s) (still in the top {S.TOP_N}, weight {wt:.0%})")
+                    elif want < have:                                 # trim the difference only (backtest: "smaller share")
+                        ok = trim(p, have - want, "rebalance_resize") and ok
+                    else:                                             # add the difference only
+                        ok = add(p, sig, want - have) and ok
+                    continue
+                if p is not None:                                     # held in an older contract: move to the current one
+                    if not close(p, "rebalance_next_contract"):
+                        ok = False
+                        continue
+                buy(sig, wt, c, lots=want)
             if ok:
                 st["rebalanced_on"] = str(signal_day.date())
                 st["opened"] = [p["position_id"] for p in db.get_open_positions(ACCOUNT)]
@@ -162,6 +215,9 @@ def run(broker, db, now: datetime, report: bool = True, send=None) -> dict:
             stt = json.loads(p.get("state") or "{}")
             if due_to_roll(stt.get("expiry"), now.date(), ROLL_DAYS):
                 c = contract_for(stt["signal"], now.date() + timedelta(days=ROLL_DAYS + 1), contracts)
+                if c is not None and not ltp.get(c["instrument_key"]):   # no price for the next contract: keep the old one, retry next run
+                    lines.append(f"• {p['symbol']}: roll due but no live price for {c['tradingsymbol']} yet, kept")
+                    continue
                 if c is not None and close(p, "roll_before_expiry"):
                     buy(stt["signal"], stt.get("weight", 0.0), c, lots=p["qty"])
                     did = "roll"

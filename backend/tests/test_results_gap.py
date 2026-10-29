@@ -45,6 +45,18 @@ class TestSignals(unittest.TestCase):
         self.assertEqual(S.signals({"WIN": BIG["WIN"]}, ["WIN"]), ([], None))
 
 
+class TestPointInTimeFilters(unittest.TestCase):
+    """2026-10-29 review: live signals() must apply the backtest's thin-stock rule -- at least MIN_PRE_VALUE traded 09:15-09:30."""
+    def test_thin_stock_is_skipped_live(self):
+        thin = dict(BIG["WIN"], value_traded=S.MIN_PRE_VALUE - 1)
+        busy = dict(BIG["WIN"], value_traded=S.MIN_PRE_VALUE)
+        self.assertEqual(S.signals(quotes({"WIN": thin}), ["WIN"])[0], [])
+        self.assertEqual([b["symbol"] for b in S.signals(quotes({"WIN": busy}), ["WIN"])[0]], ["WIN"])
+
+    def test_unknown_volume_does_not_block(self):
+        self.assertEqual([b["symbol"] for b in S.signals(quotes({"WIN": dict(BIG["WIN"])}), ["WIN"])[0]], ["WIN"])
+
+
 class TestCalendar(unittest.TestCase):
     def test_candidates_since_previous_trading_day(self):
         cal = pd.DataFrame({"bm_symbol": ["WIN", "S01", "S02", "NOTINLIST"], "bm_date": ["23-Oct-2026", "25-Oct-2026", "22-Oct-2026", "24-Oct-2026"]})
@@ -166,6 +178,37 @@ class MarginBroker(FakeBroker):
         return None if lev is None else qty * float(self.q[key.split("|")[1]]["ltp"]) / lev
 
 
+class TestReviewFixes(TestEngine):
+    """2026-10-29 code review of engine/results_gap.py."""
+
+    def test_retry_after_a_crash_keeps_this_mornings_buys(self):
+        # 09:30 bought WIN, then crashed before saving "entered_on": the 09:40 retry must not sell today's buy as a "missed exit"
+        # nor buy WIN a second time
+        E.run(self.db, FakeBroker(quotes(BIG)), self.at(9, 30), set(), self.lookup, send=None)
+        st = E._state(); st.pop("entered_on"); E._save_state(st)
+        E.run(self.db, FakeBroker(quotes(BIG), ltp={"WIN": 113.0}), self.at(9, 40), set(), self.lookup, send=None)
+        pos = self.db.get_open_positions(E.ACCOUNT)
+        self.assertEqual([p["symbol"] for p in pos], ["WIN"])
+        self.assertEqual(self.db.get_trades(account_id=E.ACCOUNT), [])
+
+    def test_yesterdays_leftover_is_still_sold(self):
+        E.run(self.db, FakeBroker(quotes(BIG)), self.at(9, 30), set(), self.lookup, send=None)
+        E.run(self.db, FakeBroker(quotes({}), ltp={"WIN": 111.0}), self.at(9, 30, day=27), set(), self.lookup, send=None)
+        self.assertEqual(self.db.get_trades(account_id=E.ACCOUNT)[0]["exit_reason"], "missed_exit")
+
+    def test_calendar_outage_at_0850_is_not_a_crash(self):
+        with mock.patch.object(S, "refresh_calendar", side_effect=OSError("nse down")), mock.patch.object(S, "refresh_bhavcopy", return_value=0):
+            out = E.run(self.db, FakeBroker({}), self.at(8, 50), set(), self.lookup, send=None)
+        self.assertIn("calendar refresh failed", out[0])
+
+    def test_fallback_to_the_old_list_is_reported(self):
+        with mock.patch.object(S, "refresh_bhavcopy", return_value=0), mock.patch.object(S, "liquid_list", return_value=[]):
+            sent = []
+            out = E.run(self.db, FakeBroker({}), self.at(8, 50), set(), self.lookup, send=sent.append)
+        self.assertIn("FALLBACK", out[0])
+        self.assertEqual(len(sent), 1)                                   # and it reaches Telegram, not just the log
+
+
 class TestUpstoxLeverageCap(TestEngine):
     """2026-10-29: 5x chosen, but Upstox gives some stocks only 1x (CEMPRO, PROTEAN on the day it was checked)."""
 
@@ -283,10 +326,18 @@ class TestWebBacktest(unittest.TestCase):
         # LOCK: same gap but frozen at 09:30 (high == low) -> skipped; THIN: too little traded -> skipped
         rows.append(("LOCK", "2026-01-06", 110.0, 112.0, 112.0, 112.0, 112.0, 1e8, 118.0, 118.0, 119, 109, 100.0))
         rows.append(("THIN", "2026-01-06", 110.0, 112.0, 112.0, 112.5, 111.5, 1e5, 118.0, 118.0, 119, 109, 100.0))
-        return pd.DataFrame(rows, columns=["sym", "day", "o915", "c925", "o930", "h930", "l930", "v930", "c1520", "close", "hi", "lo", "prev_close"])
+        # 2026-10-29: the thin/frozen tests look only at 09:15-09:30 (v_pre, moved_pre); the 09:30 candle itself ends at 09:35, after the buy.
+        # LATEBUSY: thin before 09:30, busy only in the 09:30 candle (the old look-ahead filter would have kept it) -> skipped.
+        # LATEMOVE: frozen until 09:30, moves only afterwards -> skipped.
+        rows.append(("LATEBUSY", "2026-01-06", 110.0, 112.0, 112.0, 112.5, 111.5, 9e8, 118.0, 118.0, 119, 109, 100.0))
+        rows.append(("LATEMOVE", "2026-01-06", 110.0, 112.0, 112.0, 112.5, 111.5, 1e8, 118.0, 118.0, 119, 109, 100.0))
+        df = pd.DataFrame(rows, columns=["sym", "day", "o915", "c925", "o930", "h930", "l930", "v930", "c1520", "close", "hi", "lo", "prev_close"])
+        df["v_pre"] = df["v930"].where(~df["sym"].isin(["LATEBUSY"]), 1e5)
+        df["moved_pre"] = ~df["sym"].isin(["LOCK", "LATEMOVE"])
+        return df
 
     def test_one_trade_with_real_costs_and_replay_shape(self):
-        res = {("WIN", "2026-01-05"), ("LOCK", "2026-01-05"), ("THIN", "2026-01-05")}
+        res = {("WIN", "2026-01-05"), ("LOCK", "2026-01-05"), ("THIN", "2026-01-05"), ("LATEBUSY", "2026-01-05"), ("LATEMOVE", "2026-01-05")}
         r = S.backtest(100_000, "2026-01-05", "2026-01-07", leverage=3.0, days_df=self.frame(), results=res)
         self.assertEqual([t["symbol"] for t in r["trades"]], ["WIN"])
         qty = int(300_000 // 112.0)
@@ -307,10 +358,10 @@ class TestWebBacktest(unittest.TestCase):
             S.backtest(100_000, "2030-01-01", "2030-02-01", days_df=self.frame(), results=set())
 
     def liquid(self):
-        cols = ["sym", "day", "xgap", "o915", "c925", "o930", "h930", "l930", "v930", "c1520", "turn20"]
-        return pd.DataFrame([("WIN", "2026-01-06", 0.095, 110.0, 112.0, 112.0, 112.5, 111.5, 1e8, 118.0, 5e7),      # Rs5 cr a day: too thin now
-                             ("NEWCO", "2026-01-06", 0.09, 220.0, 224.0, 224.0, 225.0, 223.0, 2e8, 230.0, 2e8),   # outside the list, liquid
-                             ("DIPPED", "2026-01-06", 0.09, 220.0, 219.0, 219.0, 220.0, 218.0, 2e8, 230.0, 2e8)],  # below its 09:15 open at 09:30
+        cols = ["sym", "day", "xgap", "o915", "c925", "o930", "h930", "l930", "v930", "c1520", "turn20", "v_pre", "moved_pre"]
+        return pd.DataFrame([("WIN", "2026-01-06", 0.095, 110.0, 112.0, 112.0, 112.5, 111.5, 1e8, 118.0, 5e7, 1e8, True),      # Rs5 cr a day: too thin now
+                             ("NEWCO", "2026-01-06", 0.09, 220.0, 224.0, 224.0, 225.0, 223.0, 2e8, 230.0, 2e8, 2e8, True),   # outside the list, liquid
+                             ("DIPPED", "2026-01-06", 0.09, 220.0, 219.0, 219.0, 220.0, 218.0, 2e8, 230.0, 2e8, 2e8, True)],  # below its 09:15 open at 09:30
                             columns=cols)
 
     def test_liquid_universe_trades_any_liquid_stock_and_skips_thin_ones(self):
@@ -345,8 +396,17 @@ class TestQuoteBatchPrevClose(unittest.TestCase):
         b._market_quote = mock.Mock(); b._market_quote.get_full_market_quote.return_value = resp
         return b
 
-    def q(self, key, ltp, chg, o=100.0):
-        return mock.Mock(instrument_token=key, last_price=ltp, net_change=chg, ohlc=mock.Mock(open=o, high=o + 2, low=o - 2))
+    def q(self, key, ltp, chg, o=100.0, volume=None, avg=None):
+        return mock.Mock(instrument_token=key, last_price=ltp, net_change=chg, ohlc=mock.Mock(open=o, high=o + 2, low=o - 2), volume=volume, average_price=avg)
+
+    def test_traded_value_so_far(self):
+        # 2026-10-29: the live engine needs the money traded since 09:15 to apply the backtest's thin-stock rule at 09:30
+        b = self.broker({"NSE_EQ:A": self.q("NSE_EQ|A", 975.0, -22.1, 990.0, volume=50000, avg=980.0),
+                         "NSE_EQ:B": self.q("NSE_EQ|B", 100.0, 1.0, 99.0, volume=None, avg=None)})
+        with mock.patch("services.broker.upstox_broker._circuit_is_open", return_value=False):
+            out = b.get_quote_batch(["NSE_EQ|A", "NSE_EQ|B"])
+        self.assertEqual(out["NSE_EQ|A"]["value_traded"], 50000 * 980.0)
+        self.assertIsNone(out["NSE_EQ|B"]["value_traded"])
 
     def test_prev_close_from_net_change(self):
         b = self.broker({"NSE_EQ:A": self.q("NSE_EQ|A", 975.0, -22.1, 990.0)})

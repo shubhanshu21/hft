@@ -177,7 +177,8 @@ def signals(quotes: dict, cands: list[str], panel: set[str] | None = None) -> tu
             continue
         xgap = q["today_open"] / q["prev_close"] - 1 - mkt
         frozen = q.get("today_high") is not None and q.get("today_low") is not None and q["today_high"] == q["today_low"]
-        if xgap >= GAP_MIN and q["ltp"] > q["today_open"] and not frozen:
+        thin = q.get("value_traded") is not None and q["value_traded"] < MIN_PRE_VALUE     # same Rs50 lakh rule as the backtest (2026-10-29)
+        if xgap >= GAP_MIN and q["ltp"] > q["today_open"] and not frozen and not thin:
             out.append({"symbol": s, "gap_vs_mkt": round(xgap, 4), "open": q["today_open"], "ltp": q["ltp"], "prev_close": q["prev_close"]})
     return out, mkt
 
@@ -185,12 +186,15 @@ def signals(quotes: dict, cands: list[str], panel: set[str] | None = None) -> tu
 # ---------------------------------------------------------------------------------------------------------------------------------------
 # Website backtest (2026-10-24): the same rules on the 5-minute archive, summarised once per stock-day into a cache so a run takes seconds.
 # ---------------------------------------------------------------------------------------------------------------------------------------
-MIN_0930_VALUE = 50e5          # Rs50 lakh traded in the 09:30 5-minute bar, else too thin to fill the order (the research dropped SHAILY)
+MIN_PRE_VALUE = 50e5           # Rs50 lakh traded 09:15-09:30, else too thin to fill the order (the research dropped SHAILY)
+# 2026-10-29 review: this and the "frozen" test used to read the 09:30 candle, which ends at 09:35 -- after the 09:30 buy (look-ahead) --
+# and the live engine applied neither. Both now look only at 09:15-09:30 (v_pre, moved_pre), the same facts the live quote has at 09:30.
+# On the fair liquid universe the change keeps 5 more trades: Rs1L -> Rs5.73L 2022-26 at 3x (was 4.40L), +1.04%/trade.
 
 
 def _cache_path():
     from core.paths import CACHE_DIR
-    return CACHE_DIR / "results_gap_days.pkl"
+    return CACHE_DIR / "results_gap_days_v2.pkl"            # v2 (2026-10-29): adds v_pre / moved_pre
 
 
 def _summarise(path: str) -> pd.DataFrame | None:
@@ -206,9 +210,11 @@ def _summarise(path: str) -> pd.DataFrame | None:
         if not {"09:15", "09:25", "09:30", "15:20"} <= set(g.index):
             continue
         b = g.loc["09:30"]
+        pre = g.loc[["09:15", "09:20", "09:25"]] if {"09:20"} <= set(g.index) else g.loc[["09:15", "09:25"]]
         rows.append((sym, day, float(g.at["09:15", "open"]), float(g.at["09:25", "close"]), float(b["open"]), float(b["high"]), float(b["low"]),
-                     float(b["open"] * b["volume"]), float(g.at["15:20", "close"]), float(g["close"].iloc[-1]), float(g["high"].max()), float(g["low"].min())))
-    x = pd.DataFrame(rows, columns=["sym", "day", "o915", "c925", "o930", "h930", "l930", "v930", "c1520", "close", "hi", "lo"])
+                     float(b["open"] * b["volume"]), float(g.at["15:20", "close"]), float(g["close"].iloc[-1]), float(g["high"].max()), float(g["low"].min()),
+                     float((pre["close"] * pre["volume"]).sum()), bool(pre["high"].max() > pre["low"].min())))
+    x = pd.DataFrame(rows, columns=["sym", "day", "o915", "c925", "o930", "h930", "l930", "v930", "c1520", "close", "hi", "lo", "v_pre", "moved_pre"])
     x["prev_close"] = x["close"].shift(1)
     return x
 
@@ -263,8 +269,8 @@ def backtest(capital: float = 100_000, start: str = "2022-09-01", end: str = "21
     days = [d for d in all_days if start <= d <= end]
     if not days:
         raise ValueError("No trading days with 5-minute data in the chosen dates (the archive starts 2022-09-01)")
-    sig = x[x["day"].isin(set(days)) & (x["xgap"] >= GAP_MIN) & (x["c925"] > x["o915"]) & (x["h930"] > x["l930"])
-            & (x["v930"] >= MIN_0930_VALUE) & (x["o930"] >= MIN_PRICE)]
+    sig = x[x["day"].isin(set(days)) & (x["xgap"] >= GAP_MIN) & (x["c925"] > x["o915"]) & x["moved_pre"].astype(bool)
+            & (x["v_pre"] >= MIN_PRE_VALUE) & (x["o930"] >= MIN_PRICE)]
     sig = sig[[(s, d) in hit for s, d in zip(sig["sym"], sig["day"])]]
     if universe == "liquid" and liquid_rows is None and days_df is None:
         from markets.equity.strategies.tf_intraday.results_gap import liquid_days
@@ -272,8 +278,8 @@ def backtest(capital: float = 100_000, start: str = "2022-09-01", end: str = "21
     liquid = universe == "liquid" and liquid_rows is not None
     if liquid:                                    # results-day rows were selected when the table was built; same rule, plus liquidity
         L = liquid_rows
-        sig = L[L["day"].isin(set(days)) & (L["xgap"] >= GAP_MIN) & (L["c925"] > L["o915"]) & (L["h930"] > L["l930"])
-                & (L["v930"] >= MIN_0930_VALUE) & (L["o930"] >= MIN_PRICE) & (L["turn20"].fillna(0) >= LIQUID_MIN)]
+        sig = L[L["day"].isin(set(days)) & (L["xgap"] >= GAP_MIN) & (L["c925"] > L["o915"]) & L["moved_pre"].astype(bool)
+                & (L["v_pre"] >= MIN_PRE_VALUE) & (L["o930"] >= MIN_PRICE) & (L["turn20"].fillna(0) >= LIQUID_MIN)]
     by_day = {d: g for d, g in sig.groupby("day")}
     cap, equity, events, closed, trades = float(capital), [], [], [], []
     for k, d in enumerate(days):
