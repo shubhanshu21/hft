@@ -313,8 +313,9 @@ def main(argv=None) -> int:
     from services.utils.market_holidays import get_trading_holidays
     try:
         holidays = get_trading_holidays()
-    except Exception:
+    except Exception as e:                       # say so: without the list, holidays count as trading days (earnings_drift sells early)
         holidays = set()
+        print(f"WARNING: NSE holiday list unavailable ({type(e).__name__}) -- treating every weekday as a trading day")
     with account_lock(ACCOUNT):
         out = run(db, _get_broker(), datetime.now(IST), holidays, get_instrument_key, send=print if a.no_telegram else telegram.send)
     print("\n".join(out) if out else "nothing to do at this time")

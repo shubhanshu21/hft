@@ -8,7 +8,7 @@ API (Connection.backup()), not a file copy, so the snapshot is consistent even w
     python3 -m engine.backup_db                    # daily snapshot  (keeps KEEP_DAILY)
     python3 -m engine.backup_db --hourly           # hourly snapshot (keeps KEEP_HOURLY), run by hft-db-backup.timer
     python3 -m engine.backup_db --verify           # open the newest backup, integrity-check it, count rows; exit 1 if unusable
-    python3 -m engine.backup_db --restore latest|FILE [--force]   # replace the live DB (daemon must be stopped unless --force)
+    python3 -m engine.backup_db --restore latest|FILE   # replace the live DB (waits for running engines; refused while one stays busy)
     python3 -m engine.backup_db --list
 
 A backup that has never been opened is a hope, not a backup: --verify runs in the nightly job so a corrupt or empty backup is noticed
@@ -19,7 +19,7 @@ from __future__ import annotations
 import os
 import argparse
 import sqlite3
-import subprocess
+from contextlib import ExitStack
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -114,23 +114,22 @@ def verify_backup(path: Path, tables: tuple[str, ...] = TABLES, required: str = 
         con.close()
 
 
-def restore(src: Path, db_path: Path = DB_PATH, backup_dir: Path = BACKUP_DIR, tables: tuple[str, ...] = TABLES, required: str = "accounts") -> Path:
-    """Replace the live DB with `src`. The source is verified first; the current DB is saved as pre_restore_* so this is reversible."""
+def restore(src: Path, db_path: Path = DB_PATH, backup_dir: Path = BACKUP_DIR, tables: tuple[str, ...] = TABLES, required: str = "accounts",
+            lock_timeout_s: float = 30.0) -> Path:
+    """Replace the live DB with `src`. The source is verified first; the current DB is saved as pre_restore_* so this is reversible.
+    Every paper account's run lock is held throughout (the engines hold the same lock for a run), so no engine writes mid-restore;
+    an account still busy after lock_timeout_s raises ResetError and nothing is replaced."""
+    from engine.account_reset import ACCOUNTS, account_lock
     verify_backup(src, tables, required)                        # refuse to overwrite a good DB with a bad backup
-    saved = backup_once(db_path, backup_dir, kind="pre_restore") if db_path.exists() else None
-    for suffix in ("-wal", "-shm"):
-        Path(str(db_path) + suffix).unlink(missing_ok=True)      # a stale WAL from the old DB must not be replayed onto the restored one
-    _snapshot(src, db_path)
+    with ExitStack() as locks:
+        for account in ACCOUNTS:
+            locks.enter_context(account_lock(account, lock_timeout_s, lock_dir=Path(db_path).parent))
+        saved = backup_once(db_path, backup_dir, kind="pre_restore") if db_path.exists() else None
+        for suffix in ("-wal", "-shm"):
+            Path(str(db_path) + suffix).unlink(missing_ok=True)      # a stale WAL from the old DB must not be replayed onto the restored one
+        _snapshot(src, db_path)
     log.info("Restored %s -> %s (previous DB saved as %s)", src, db_path, saved)
     return saved or db_path
-
-
-def _daemon_running() -> bool:
-    try:
-        r = subprocess.run(["systemctl", "--user", "is-active", "hft-dryrun.service"], capture_output=True, text=True)
-        return r.stdout.strip() == "active"
-    except OSError:
-        return False
 
 
 def _backups_for(name: str, backup_dir: Path = BACKUP_DIR) -> list[Path]:
@@ -148,7 +147,6 @@ def main(argv=None) -> int:
     g.add_argument("--list", action="store_true")
     g.add_argument("--restore", metavar="FILE|latest")
     ap.add_argument("--db", choices=list(DATABASES), default="main", help="which database --restore targets (--verify with no --db checks every database; --list always shows everything)")
-    ap.add_argument("--force", action="store_true", help="restore even if the daemon is running (not recommended)")
     args = ap.parse_args(argv)
     setup_logger("", log_file=str(LOG_DIR / "backup_db.log"))
 
@@ -178,9 +176,6 @@ def main(argv=None) -> int:
             print(f"verified {backups[0].name}: {counts}")
         return 1 if failed else 0
     if args.restore:
-        if _daemon_running() and not args.force:
-            print("hft-dryrun.service is running. Stop it first (systemctl --user stop hft-dryrun) or pass --force.")
-            return 1
         _, db_path, tables, required = DATABASES[args.db]
         src = _backups_for(args.db)[0] if args.restore == "latest" and _backups_for(args.db) else Path(args.restore)
         try:
@@ -188,7 +183,7 @@ def main(argv=None) -> int:
         except (ValueError, OSError) as exc:
             print(f"RESTORE REFUSED: {exc}")
             return 1
-        print(f"Restored {src.name}. Previous DB saved as {saved.name if saved else 'n/a'}. Start the daemon again.")
+        print(f"Restored {src.name}. Previous DB saved as {saved.name if saved else 'n/a'}.")
         return 0
     kind = "hourly" if args.hourly else "daily"
     for name, (label, db_path, _, _) in DATABASES.items():

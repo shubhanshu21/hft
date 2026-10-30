@@ -1,25 +1,14 @@
 """`python3 cli.py status` -- one screen answering "is it healthy, and what is it doing?"."""
 from __future__ import annotations
 
-import json
-import subprocess
 import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from core.paths import DB_DIR
-from engine import heartbeat
 from engine.backup_db import list_backups
 from engine.database import TradingDB
 
 IST = ZoneInfo("Asia/Kolkata")
-
-
-def _service_state(name: str = "hft-dryrun.service") -> str:
-    try:
-        return subprocess.run(["systemctl", "--user", "is-active", name], capture_output=True, text=True).stdout.strip() or "unknown"
-    except OSError:
-        return "unknown"
 
 
 def collect(account: str = "CRYPTO_DIP_REVERSAL", db_path=None, now: datetime | None = None) -> dict:
@@ -28,11 +17,11 @@ def collect(account: str = "CRYPTO_DIP_REVERSAL", db_path=None, now: datetime | 
     acct = db.get_account(account) or {}
     today = now.strftime("%Y-%m-%d")
     todays = db.get_trades_for_date(today, account)
-    hb = heartbeat.read()
-    try:
-        control = json.loads((DB_DIR / f".{account}_control.json").read_text())
-    except (OSError, ValueError):
-        control = {}
+    try:                                       # the same timer/journal check as the Telegram monitor and the website
+        from engine import engine_monitor
+        engine = engine_monitor.engine_status(account)
+    except Exception as e:
+        engine = {"ok": None, "text": f"engine status unavailable ({type(e).__name__})"}
     token_hours = None
     try:
         from engine.config import UpstoxConfig
@@ -43,10 +32,10 @@ def collect(account: str = "CRYPTO_DIP_REVERSAL", db_path=None, now: datetime | 
         pass
     backups = list_backups()
     return {
-        "now": now, "service": _service_state(), "heartbeat": hb, "heartbeat_problem": heartbeat.stale_reason(now, hb),
+        "now": now, "engine": engine,
         "capital": acct.get("current_capital", acct.get("capital")), "initial": acct.get("initial_capital"),
         "day_trades": len(todays), "day_pnl": sum(float(t.get("net_pnl") or 0) for t in todays),
-        "open_positions": db.get_open_positions(account), "control": control, "token_hours": token_hours,
+        "open_positions": db.get_open_positions(account), "token_hours": token_hours,
         "last_backup": datetime.fromtimestamp(backups[0].stat().st_mtime, IST) if backups else None,
     }
 
@@ -54,12 +43,8 @@ def collect(account: str = "CRYPTO_DIP_REVERSAL", db_path=None, now: datetime | 
 def render(s: dict) -> str:
     now = s["now"]
     out = [f"STATUS  {now:%Y-%m-%d %H:%M:%S} IST", ""]
-    hb = s["heartbeat"]
-    hb_txt = "no heartbeat file yet" if hb is None else f"{hb.get('phase')} at {hb['ts'][11:19]} IST" + ("" if not s["heartbeat_problem"] else f"  << {s['heartbeat_problem']}")
-    out.append(f"Daemon      {s['service']}   heartbeat: {hb_txt}")
-    ctl = s["control"]
-    halted = ctl.get("enabled", True) is False          # same key DryRunner._load_trading_enabled reads
-    out.append(f"Trading     {'HALTED (Telegram /stop)' if halted else 'enabled'}")
+    e = s["engine"]
+    out.append(f"Engine      {'OK' if e.get('ok') else 'UNKNOWN' if e.get('ok') is None else 'PROBLEM'}   {e.get('text')}")
     if s["capital"] is not None:
         out.append(f"Capital     Rs{s['capital']:,.2f}" + (f"  (started Rs{s['initial']:,.2f}, {s['capital'] - s['initial']:+,.2f})" if s["initial"] else ""))
     out.append(f"Today       {s['day_trades']} trade(s), net Rs{s['day_pnl']:+,.2f}")

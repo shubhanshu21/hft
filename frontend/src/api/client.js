@@ -1,7 +1,7 @@
 
 const TOKEN_KEY = "hft-admin-token";
 
-/** The admin token is only needed for destructive calls (delete a run, reset a paper account). */
+/** The admin token is only needed for calls that change saved data (rename or delete a run, reset a paper account). */
 function adminToken() {
   try { return localStorage.getItem(TOKEN_KEY) || ""; } catch { return ""; }
 }
@@ -29,7 +29,7 @@ async function request(path, options = {}, { admin = false } = {}) {
 export const listStrategies = () => request("/api/strategies");
 export const listRuns = () => request("/api/backtests");
 export const getRun = (id) => request(`/api/backtests/${id}`);
-export const renameRun = (id, label) => request(`/api/backtests/${id}/label`, { method: "POST", body: JSON.stringify({ label }) });
+export const renameRun = (id, label) => request(`/api/backtests/${id}/label`, { method: "POST", body: JSON.stringify({ label }) }, { admin: true });
 export const getOverview = () => request("/api/overview");
 export const getPaper = (account) => request(`/api/paper${account ? `?account=${encodeURIComponent(account)}` : ""}`);
 export const resetPaper = (account, confirm) => request("/api/paper/reset", { method: "POST", body: JSON.stringify({ account, confirm }) }, { admin: true });

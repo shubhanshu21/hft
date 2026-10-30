@@ -74,6 +74,24 @@ class TestDestructiveRoutesRefuseAnonymousCallers(unittest.TestCase):
         self.assertEqual(self._delete("/api/backtests/abc123abc123", "s3cret"), HTTPStatus.OK)
         self.assertFalse((self.tmp / "abc123abc123.json").exists())
 
+    def _rename(self, token=None):
+        req = urllib.request.Request(self.base + "/api/backtests/abc123abc123/label", method="POST", data=json.dumps({"label": "hacked"}).encode())
+        if token:
+            req.add_header("X-API-Token", token)
+        try:
+            with urllib.request.urlopen(req, timeout=5) as r:
+                return r.status
+        except urllib.error.HTTPError as e:
+            return e.code
+
+    def test_rename_needs_the_token_too(self):
+        """2026-10-30 audit: renaming a saved result was the one write that skipped the token check."""
+        os.environ[A.ADMIN_TOKEN_ENV] = "s3cret"
+        self.assertEqual(self._rename(), HTTPStatus.UNAUTHORIZED)
+        self.assertNotIn("label", json.loads((self.tmp / "abc123abc123.json").read_text()))
+        self.assertEqual(self._rename("s3cret"), HTTPStatus.OK)
+        self.assertEqual(json.loads((self.tmp / "abc123abc123.json").read_text())["label"], "hacked")
+
     def test_reading_runs_stays_open(self):
         with urllib.request.urlopen(self.base + "/api/backtests", timeout=5) as r:
             self.assertEqual(r.status, HTTPStatus.OK)
@@ -81,3 +99,15 @@ class TestDestructiveRoutesRefuseAnonymousCallers(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSavedRunsAreKept(unittest.TestCase):
+    def test_finishing_a_run_deletes_no_older_results(self):
+        """2026-10-30 audit: finishing a backtest silently deleted saved results beyond the newest 200 -- against the no-delete rule."""
+        tmp = Path(tempfile.mkdtemp())
+        for i in range(205):
+            (tmp / f"{i:012x}.json").write_text(json.dumps({"id": f"{i:012x}", "status": "done"}))
+        run = {"id": "ffffffffffff", "status": "queued", "market": "nosuch", "strategy": "nosuch", "params": {}}
+        with mock.patch.object(A, "RUNS_DIR", tmp):
+            A.work(run)                                              # fails fast (unknown strategy) but still finishes and saves
+        self.assertEqual(len(list(tmp.glob("*.json"))), 206)

@@ -13,10 +13,10 @@ It only reads archived candles and runs the strategy code; it never talks to Ups
 Fees (the strategy's cost model) and slippage are always charged. One run at a time; results are saved in var/backtests/<id>.json.
 Binds to 127.0.0.1 -- nginx publishes /api/.
 
-Authentication (2026-10-26): nginx publishes this port to the internet, so the DESTRUCTIVE calls -- DELETE /api/backtests[/<id>] and
-POST /api/paper/reset -- require an `X-API-Token` header matching BACKTEST_ADMIN_TOKEN in backend/.env (the web page asks for it once and
+Authentication: the whole site sits behind an nginx login since 2026-10-30 (only the server itself skips it). Calls that change saved
+data -- DELETE /api/backtests[/<id>], POST /api/backtests/<id>/label and POST /api/paper/reset -- also require an `X-API-Token` header matching BACKTEST_ADMIN_TOKEN in backend/.env (the web page asks for it once and
 keeps it in the browser). With BACKTEST_ADMIN_TOKEN unset those calls are refused outright (fail closed); reading and starting a backtest
-stay open -- a run only uses CPU -- limited to one at a time, one start per address every COOLDOWN_S seconds, and the newest MAX_SAVED runs.
+stay open -- a run only uses CPU -- limited to one at a time and one start per address every COOLDOWN_S seconds; saved runs are never auto-deleted.
 """
 from __future__ import annotations
 
@@ -47,7 +47,6 @@ CURRENCY = ["USDINR", "EURINR", "GBPINR"]
 LIMITS = {"capital": (10_000, 1_000_000_000), "slippage_bp": (0, 100), "risk_pct": (0.1, 10), "max_positions": (1, 10), "leverage": (1, 40),
           "trail_stop_pct": (0, 30), "trail_after_pct": (0, 50), "profit_trail_pct": (0, 20)}
 COOLDOWN_S = 5
-MAX_SAVED = 200
 ADMIN_TOKEN_ENV = "BACKTEST_ADMIN_TOKEN"
 MAX_TRACKED_ADDRESSES = 2000
 _lock = threading.Lock()
@@ -107,12 +106,6 @@ def catalog() -> list[dict]:
              "default_risk_pct": getattr(s, "default_risk_pct", None),
              "default_symbols": [x for x in (getattr(s, "universe", None) or universe(m)) if s.trades(x)]}     # what its paper trading uses
             for (m, n), s in sorted(registry.discover().items())] + [mcx, dip_reversal, results_gap, earnings_drift]
-
-
-def prune() -> None:
-    files = sorted(RUNS_DIR.glob("*.json"), key=lambda f: f.stat().st_mtime, reverse=True)
-    for f in files[MAX_SAVED:]:
-        f.unlink(missing_ok=True)
 
 
 def save(run: dict) -> None:
@@ -572,8 +565,7 @@ def work(run: dict) -> None:
         run["status"], run["error"] = "failed", f"{type(e).__name__}: {e}"
     run["progress"] = 100
     run.pop("partial", None)
-    save(run)
-    prune()
+    save(run)                                                        # every result is kept (no auto-delete: 2026-10-30 audit)
     with _lock:
         _running = None
 
@@ -668,6 +660,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(HTTPStatus.BAD_REQUEST, {"error": str(e)})
         m = re.fullmatch(r"/api/backtests/([0-9a-f]{12})/label", urlparse(self.path).path.rstrip("/"))
         if m:
+            if not self._admin_ok():                               # 2026-10-30 audit: renaming was the one write without the token
+                return
             run = load(m.group(1))
             if not run:
                 return self._send(HTTPStatus.NOT_FOUND, {"error": "not found"})

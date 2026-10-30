@@ -87,6 +87,19 @@ class TestBackups(unittest.TestCase):
         backup_db.restore(b, self.db, self.dir)
         self.assertFalse(wal.exists())
 
+    def test_restore_waits_for_a_running_engine_and_refuses_when_busy(self):
+        """2026-10-30 audit: the old guard checked hft-dryrun.service (removed 2026-10-21), so a restore could overwrite a trade an engine
+        was writing. Now it takes every account's run lock (the same lock the engines hold) and refuses if one stays busy."""
+        from engine.account_reset import ResetError, account_lock
+        b = backup_db.backup_once(self.db, self.dir)
+        con = sqlite3.connect(str(self.db)); con.execute("DELETE FROM trades"); con.commit(); con.close()
+        with account_lock("CRYPTO_DIP_REVERSAL", lock_dir=self.db.parent):           # an engine run in progress
+            with self.assertRaises(ResetError):
+                backup_db.restore(b, self.db, self.dir, lock_timeout_s=0.3)
+        self.assertEqual(self._count(self.db), 0)                                   # nothing was replaced while it was busy
+        backup_db.restore(b, self.db, self.dir, lock_timeout_s=0.3)                  # lock released: the restore goes through
+        self.assertEqual(self._count(self.db), 3)
+
     def test_backup_of_a_missing_db_is_a_noop(self):
         self.assertIsNone(backup_db.backup_once(self.tmp / "nope.db", self.dir))
 

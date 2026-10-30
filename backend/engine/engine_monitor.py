@@ -11,7 +11,7 @@ clears -- state in var/db/engine_monitor_state.json):
                MCX_GRACE_MIN allowed) and that run succeeded.
   * Upstox  -- in the half hour before each MCX run, the login token is refreshed if needed and must then be valid (MCX prices come
                from Upstox), so there is time to log in by hand.
-The old engine/watchdog.py watches hft-dryrun.service, which was removed on 2026-10-21; this replaces it for the two engines that run now."""
+It replaced the old hft-dryrun watchdog (both removed: the service 2026-10-21, engine/watchdog.py 2026-10-30)."""
 from __future__ import annotations
 
 import argparse

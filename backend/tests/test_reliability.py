@@ -1,16 +1,15 @@
-"""Reliability and safety nets: the live-trading kill switch, broker request timeouts and response parsing, heartbeat + watchdog."""
+"""Reliability and safety nets: the live-trading kill switch, broker request timeouts and response parsing, token handling."""
 import json
 import os
 import tempfile
 import unittest
-from datetime import datetime, timedelta
+
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from engine import heartbeat, safety_gate, watchdog
+from engine import safety_gate
 
-IST = heartbeat.IST
 
 
 class TestSafetyGate(unittest.TestCase):
@@ -119,77 +118,6 @@ class TestBrokerTimeoutAndParsing(unittest.TestCase):
         def boom(api_version):
             raise TimeoutError()
         self.assertIsNone(self._broker(_portfolio_api=SimpleNamespace(get_positions=boom)).get_broker_positions())   # None = "could not check"
-
-
-class TestHeartbeatAndWatchdog(unittest.TestCase):
-    NOW = datetime(2026, 9, 24, 12, 0, tzinfo=IST)
-
-    def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp())
-        self.hb_path, self.state = self.tmp / "hb.json", self.tmp / "wd.json"
-        self.sent, self.calls = [], []
-
-    def _run(self, active=True):
-        def run(cmd, **kw):
-            self.calls.append(cmd)
-            return SimpleNamespace(stdout="active\n" if active else "inactive\n", returncode=0)
-        return run
-
-    def _check(self, hb, active=True, **kw):
-        return watchdog.check(self.NOW, hb=hb, run=self._run(active), notify=self.sent.append, state_path=self.state, **kw)
-
-    def _hb(self, phase="scan", late_s=0, next_in=0):
-        """A heartbeat written (next_in + grace + late_s) seconds ago, i.e. late_s past its own deadline."""
-        written = self.NOW - timedelta(seconds=next_in + heartbeat.GRACE_S + late_s)
-        heartbeat.beat(phase, next_in, now=written, path=self.hb_path)
-        return heartbeat.read(self.hb_path)
-
-    def test_a_fresh_scan_beat_is_healthy(self):
-        self.assertEqual(self._check(self._hb(late_s=-60)), "ok")
-        self.assertEqual(self.sent, [])
-
-    def test_a_long_overnight_sleep_is_not_a_hang(self):
-        hb = self._hb("waiting_for_open", next_in=8 * 3600, late_s=-30)     # 8h sleep, still inside its promised window
-        self.assertEqual(self._check(hb), "ok")
-
-    def test_a_missed_deadline_on_a_running_service_restarts_it_and_alerts(self):
-        self.assertEqual(self._check(self._hb(late_s=120)), "stale-restarted")
-        self.assertIn(["systemctl", "--user", "restart", watchdog.SERVICE], self.calls)
-        self.assertEqual(len(self.sent), 1)
-        self.assertIn("WATCHDOG RESTART", self.sent[0])
-
-    def test_a_stopped_service_is_never_restarted_by_the_watchdog(self):
-        self.assertEqual(self._check(self._hb(late_s=600), active=False), "not-active")
-        self.assertFalse([c for c in self.calls if "restart" in c])
-
-    def test_a_clean_stop_is_not_a_hang(self):
-        self.assertEqual(self._check(self._hb("stopped", late_s=9999)), "ok")
-
-    def test_no_heartbeat_file_yet_never_triggers_a_restart(self):
-        with patch.object(heartbeat, "read", return_value=None):                # the real file exists whenever the daemon is running
-            self.assertEqual(watchdog.check(self.NOW, hb=None, run=self._run(), notify=self.sent.append, state_path=self.state), "no-heartbeat")
-        self.assertEqual(self.calls, [])
-
-    def test_restarts_are_rate_limited_so_a_boot_hang_cannot_loop(self):
-        hb = self._hb(late_s=120)
-        self.assertEqual(self._check(hb), "stale-restarted")
-        self.calls.clear()
-        self.assertEqual(self._check(hb), "stale-alerted")             # same incident a moment later: alert, do not restart again
-        self.assertFalse([c for c in self.calls if "restart" in c])
-
-    def test_autorestart_can_be_switched_off(self):
-        self.assertEqual(self._check(self._hb(late_s=120), autorestart=False), "stale-alerted")
-        self.assertFalse([c for c in self.calls if "restart" in c])
-
-    def test_beat_is_atomic_json_and_never_raises_on_a_bad_path(self):
-        heartbeat.beat("scan", 30, now=self.NOW, path=self.hb_path)
-        data = json.loads(self.hb_path.read_text())
-        self.assertEqual(data["phase"], "scan")
-        heartbeat.beat("scan", 0, path=self.tmp / "no" / "such" / "dir" / "hb.json")      # must not raise: a full disk cannot stop trading
-
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 class TestTokenLogic(unittest.TestCase):

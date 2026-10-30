@@ -95,7 +95,7 @@ def cmd_status(args):
 
 def cmd_restore_db(args):
     from engine.backup_db import main as backup_main
-    raise SystemExit(backup_main(["--restore", args.source] + (["--force"] if args.force else [])))
+    raise SystemExit(backup_main(["--restore", args.source]))
 
 
 def main():
@@ -117,13 +117,12 @@ def main():
     p_rst.add_argument("--leverage", type=float, default=float(_env("INTRADAY_LEVERAGE", "4.0")), help="Margin leverage")
     p_rst.set_defaults(func=cmd_reset_db)
 
-    p_st = subparsers.add_parser("status", help="One-screen health check: daemon, heartbeat, P&L, open positions, token, last backup")
+    p_st = subparsers.add_parser("status", help="One-screen health check: engine status, P&L, open positions, token, last backup")
     p_st.add_argument("--account", default="CRYPTO_DIP_REVERSAL", help="Account ID (CRYPTO_DIP_REVERSAL or MCX_TREND_CARRY)")
     p_st.set_defaults(func=cmd_status)
 
     p_rs = subparsers.add_parser("restore-db", help="Restore the paper-trading DB from a backup (daemon must be stopped)")
     p_rs.add_argument("source", nargs="?", default="latest", help="backup file, or 'latest' (default); see: python3 -m engine.backup_db --list")
-    p_rs.add_argument("--force", action="store_true", help="restore even if the daemon is running")
     p_rs.set_defaults(func=cmd_restore_db)
 
     # Layered live-trading kill switch (see safety_gate.py) -- arming here is

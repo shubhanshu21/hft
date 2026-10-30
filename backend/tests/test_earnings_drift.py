@@ -117,6 +117,16 @@ class TestEngine(Base):
         self.assertEqual((t["symbol"], t["strategy"], t["exit_price"], t["exit_reason"]), ("OLD", S.NAME, 120.0, "held_40_days"))
         self.assertAlmostEqual(float(self.db.get_account(E.ACCOUNT)["current_capital"]), cap0 + 2000 - S.delivery_costs(100.0, 120.0, 100)["total"], places=2)
 
+    def test_holidays_push_the_sale_back(self):
+        """40 trading days, not 40 weekdays: with two market holidays in the hold, day 26 Oct is only day 38 (2026-10-30 audit)."""
+        self.hold("OLD", 100, 100.0, "2026-08-31")                              # 40 weekdays before 26 Oct
+        with mock.patch.object(E, "_indicators", return_value=make_ind(good_jump=0.0)):
+            lines = E.plan(self.db, self.at(8, 50).date(), {date(2026, 9, 15), date(2026, 10, 2)})
+        self.assertNotIn("SELL", " ".join(lines))
+        with mock.patch.object(E, "_indicators", return_value=make_ind(good_jump=0.0)):
+            lines = E.plan(self.db, self.at(8, 50).date(), set())                # no holidays known: it would sell
+        self.assertIn("SELL OLD", " ".join(lines))
+
     def test_buy_limited_to_free_cash(self):
         self.hold("A", 950, 100.0, "2026-10-20")                                 # Rs95k of the Rs1L already in stocks
         with mock.patch.object(E, "_indicators", return_value=make_ind()):
