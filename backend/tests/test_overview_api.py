@@ -54,6 +54,35 @@ class TestOverview(unittest.TestCase):
     def test_totals(self):
         self.assertEqual(self.o["totals"], {"start": 450000.0, "value": 467728.0, "today_pnl": 3500.0, "open_count": 2})
 
+    def test_an_older_position_counts_only_todays_move(self):
+        """2026-10-30: 'today' used to add a position's whole profit since entry, so a crude lot bought on 26 Oct showed four days of gain
+        as today's. A position from before today now counts (price now - yesterday's close) x units; one opened today, its gain since entry."""
+        def summary(aid):
+            s = fake_summary(aid)
+            if aid == "MCX_TREND_CARRY":
+                s["positions"] = [{"symbol": "CRUDEOILM", "direction": "long", "entry_time": "2026-10-26T09:10:17+05:30", "units": 10,
+                                   "price_now": 9700.0, "prev_close": 9650.0, "profit_now": 1060.0, "move_pct": 1.1}]
+            if aid == "RESULTS_GAP":
+                s["positions"] = [{"symbol": "ABC", "direction": "long", "entry_time": "2026-10-29T09:30:05+05:30", "units": 100,
+                                   "price_now": 120.0, "prev_close": 110.0, "profit_now": 2000.0, "move_pct": 1.5}]
+            return s
+        o = A.overview(now=NOW, summary=summary)
+        mcx = next(a for a in o["accounts"] if a["id"] == "MCX_TREND_CARRY")
+        rg = next(a for a in o["accounts"] if a["id"] == "RESULTS_GAP")
+        self.assertEqual((mcx["open_pnl"], mcx["today_pnl"]), (1060.0, 500.0))      # (9700 - 9650) x 10, not the 1,060 since 26 Oct
+        self.assertEqual(rg["today_pnl"], 3500.0)                                   # bought today: 1500 sold + 2000 since entry
+        self.assertEqual(o["totals"]["today_pnl"], 4000.0)
+
+    def test_older_position_without_yesterdays_close_counts_nothing_for_today(self):
+        def summary(aid):
+            s = fake_summary(aid)
+            if aid == "MCX_TREND_CARRY":
+                s["positions"] = [{"symbol": "CRUDEOILM", "direction": "long", "entry_time": "2026-10-26T09:10:17+05:30", "units": 10,
+                                   "price_now": 9700.0, "prev_close": None, "profit_now": 1060.0, "move_pct": 1.1}]
+            return s
+        mcx = next(a for a in A.overview(now=NOW, summary=summary)["accounts"] if a["id"] == "MCX_TREND_CARRY")
+        self.assertEqual(mcx["today_pnl"], 0.0)
+
     def test_engine_problem_is_passed_through(self):
         crypto = next(a for a in self.o["accounts"] if a["id"] == "CRYPTO_DIP_REVERSAL")
         self.assertFalse(crypto["engine"]["ok"])

@@ -276,8 +276,9 @@ def _live_prices(keys: list[str]) -> dict:
                 bid = next((x["price"] for x in depth.get("buy") or [] if x.get("price")), None)
                 ask = next((x["price"] for x in depth.get("sell") or [] if x.get("price")), None)
                 ltt = v.get("last_trade_time")
+                lp, chg = v.get("last_price"), v.get("net_change")
                 prices[v.get("instrument_token")] = {
-                    "ltp": v.get("last_price") or None, "bid": bid, "ask": ask,
+                    "ltp": lp or None, "bid": bid, "ask": ask, "prev_close": round(lp - chg, 4) if lp and chg is not None else None,
                     "trade_time": datetime.fromtimestamp(int(ltt) / 1000, IST).isoformat(timespec="seconds") if ltt else None}
     except Exception:
         traceback.print_exc()
@@ -368,6 +369,7 @@ def _value_mcx(p: dict, live: dict) -> None:
     price = q.get("ltp")
     p.update(market="commodity", lot_size=units, units=p["qty"] * units, size_text=f"{p['qty']} lot{'s' if p['qty'] != 1 else ''} · {p['qty'] * per:g} {unit}",
              price_now=price, price_source="live" if price else None, price_time=q.get("trade_time"), bid=q.get("bid"), ask=q.get("ask"),
+             prev_close=q.get("prev_close"),
              checked_at=datetime.now(IST).isoformat(timespec="seconds") if q else None, margin_used=float(st.get("margin_used") or 0.0), risk_to_stop=None)
     p.pop("instrument_key", None)
     if price is None:
@@ -392,7 +394,7 @@ def _value_results_gap(p: dict, live: dict) -> None:
     price = q.get("ltp")
     size = (f"{int(p['qty'])} shares · swing, sold after {ED.HOLD_DAYS} trading days (bought {st.get('entry_date', '?')})" if swing
             else f"{int(p['qty'])} shares · sold at 15:20 today")
-    p.update(market="equity", lot_size=1, units=p["qty"], size_text=size, price_now=price,
+    p.update(market="equity", lot_size=1, units=p["qty"], size_text=size, price_now=price, prev_close=q.get("prev_close"),
              price_source="live" if price else None, price_time=q.get("trade_time"), bid=q.get("bid"), ask=q.get("ask"),
              checked_at=datetime.now(IST).isoformat(timespec="seconds") if q else None, margin_used=round(p["entry_price"] * p["qty"] / lev, 2), risk_to_stop=None)
     p.pop("instrument_key", None)
@@ -479,9 +481,22 @@ def paper_summary(account: str = "CRYPTO_DIP_REVERSAL") -> dict:
                       "fees": round(sum(t["total_friction"] or 0 for t in trades))}}
 
 
+def _today_part(p: dict, today: str, crypto: bool) -> float:
+    """One open position's share of today's profit (2026-10-30): opened today -> its profit since entry; opened earlier -> only today's
+    move, (price now - yesterday's close) x units, 0 when yesterday's close is unknown. Crypto has no daily close and holds trades at most
+    24 h, so it keeps the profit since entry."""
+    if crypto or str(p.get("entry_time") or today)[:10] >= today:
+        return float(p.get("profit_now") or 0)
+    px, prev = p.get("price_now"), p.get("prev_close")
+    if px is None or prev is None:
+        return 0.0
+    return (px - prev) * float(p.get("units") or 0) * (1 if p.get("direction", "long") == "long" else -1)
+
+
 def overview(now: datetime | None = None, summary=None) -> dict:
     """Every paper account at once, for the Today page. value = booked money + open profit (unpriced positions count 0);
-    today_pnl = profit after fees of trades sold today (IST) + open profit now. One account failing never hides the others."""
+    today_pnl = profit after fees of trades sold today (IST) + each open position's part of today (_today_part).
+    One account failing never hides the others."""
     now = now or datetime.now(IST)
     summary = summary or paper_summary
     today = now.date().isoformat()
@@ -497,8 +512,9 @@ def overview(now: datetime | None = None, summary=None) -> dict:
         open_pnl = round(sum(p.get("profit_now") or 0 for p in pos), 2)
         booked = float(acc.get("current_capital") or 0)
         sold_today = sum(t.get("net_pnl") or 0 for t in s.get("trades") or [] if str(t.get("exit_dt") or "")[:10] == today)
+        open_today = sum(_today_part(p, today, aid.startswith("CRYPTO")) for p in pos)
         accounts.append({"id": aid, "label": label, "strategy": ACCOUNT_STRATEGIES.get(aid, ""), "start": float(acc.get("initial_capital") or 0),
-                         "booked": booked, "open_pnl": open_pnl, "value": round(booked + open_pnl, 2), "today_pnl": round(sold_today + open_pnl, 2),
+                         "booked": booked, "open_pnl": open_pnl, "value": round(booked + open_pnl, 2), "today_pnl": round(sold_today + open_today, 2),
                          "open_count": len(pos), "unpriced": sum(1 for p in pos if p.get("profit_now") is None),
                          "open": [{"symbol": p["symbol"], "profit_now": p.get("profit_now"), "move_pct": p.get("move_pct")} for p in pos],
                          "engine": s.get("engine") or {}, "market_open": tab.get("market_open"), "market_text": tab.get("market_text")})

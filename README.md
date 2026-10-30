@@ -1,626 +1,116 @@
-# Multi-Asset Quantitative Trading Framework (Indian Markets)
+# HFT -- paper trading for Indian markets
 
-> **Status 2026-10-26 — read first. Everything is PAPER trading; no real order is placed anywhere unless all three gates in
-> [`engine/safety_gate.py`](backend/engine/safety_gate.py) agree.** Three paper accounts, each on its own tab of the web page (Paper
-> trading; a green/red dot shows whether that market is open now):
->
-> | Account | Strategy | Money | Runs |
-> |---|---|---|---|
-> | `CRYPTO_DIP_REVERSAL` | crypto `dip_reversal` — 5-min Bollinger-band dip-buy on 11 perpetual futures; 15% target / 7% stop / mid-band exit / 24h time stop; 6% risk per trade scaled 0.6–1.8x by market volatility; at most 5 open | Rs1L | `engine/crypto_dip_reversal.py`, `hft-crypto-dip-reversal.timer` (every 5 min). Prices from Delta Exchange India, candles/funding from Binance. Real demo orders on Delta exist but are **off** (`DELTA_PLACE_REAL_ORDERS=false`), and now need the safety gates as well |
-> | `MCX_TREND_CARRY` | commodity `trend_carry` — top 3 of 8 MCX commodities by 12-month trend + carry, sized by 1/volatility, whole mini lots, re-checked every 2 weeks (10 trading days) | Rs2.5L, 1.5x exposure | `engine/mcx_trend_carry.py`, `hft-mcx-trend-carry.timer` (Mon–Fri 09:10 and 23:40 IST) |
-> | `RESULTS_GAP` | equity `results_gap` — buy a stock that opens 7%+ above the market the morning after its results and is still rising, 09:30 → 15:20, long only, 3x | Rs1L | `engine/results_gap.py`, `hft-results-gap.timer` (08:50 calendar, 09:30 buy, 09:40 buy retry, 15:20 sell, 15:26 sell retry) |
->
-> Every strategy, its numbers and its status: [`backend/markets/README.md`](backend/markets/README.md). Settings: [`backend/.env.example`](backend/.env.example)
-> (the variables the three engines actually read are in its first section; the rest is documented legacy).
->
-> **Website API.** Read endpoints and starting a backtest are open; **deleting** a run and **resetting a paper account** require the
-> `X-API-Token` header to match `BACKTEST_ADMIN_TOKEN` from `.env` (unset = those endpoints refuse everything). The page asks for the
-> token once and keeps it in the browser.
->
-> **One note on `.agents/rules/trading_rules.md`:** that file records an earlier, narrower preference set (crypto perpetuals only,
-> ₹30,000 base, 0.02% maker per side). The deployed accounts are the three above — three markets, ₹1L/₹2.5L/₹1L — and this README plus the
-> code are the authority on what actually runs. Crypto fees here are Delta India's 0.05% taker / 0.02% maker **plus 18% GST**, and profits
-> are reported after costs as business income (31.2% at the financial-year level, losses carried), not as a VDA flat tax per trade.
->
-> **Earlier status blocks (kept as history).** 2026-10-17: four accounts, including `EQUITY_SWING`, `DRYRUN_ACCOUNT` and `CRYPTO_CALM` — all
-> removed since (git history has them). 2026-10-14: crypto and MCX `gold_crude` removed. 2026-10-12: MCX commodity removed; it returned as
-> `trend_carry` on 2026-10-15. 2026-10-10: the 5-minute scalpers deleted. The old crypto spot paper trader, the options module and the
-> ML/regime machinery are gone too (git history). Sections further down that describe intraday scalpers, MCX scalping or `cli.py backtest`
-> are history as well.
->
-> Earlier notes, still useful for context: the equity scalper was rebuilt once to fix a survivorship-biased universe and Upstox's flat
-> brokerage cap, then switched off on 2026-10-07 because its validations used a fill model that sold stops at prices the market had already
-> passed (with real fills it loses in every year 2022-26 — see the "Fill model" section below); the rebuild's universe analysis is in git
-> history.
+A small system that trades **paper money** (no real orders) on three markets, records every trade in one SQLite database, and shows
+the accounts and backtests on a private website. Strategies are only added after a fair test: rules picked on older data, judged on
+newer data the rules never saw, with real costs.
 
----
+Rewritten 2026-10-30. The old README described the removed dry-run daemon, the 5-minute scalpers, currency and the earlier crypto
+strategies; git history has it. `markets/README.md` lists every strategy with its numbers and status.
 
-> **2026-10-29:** the old 24/7 dry-run daemon (`engine/live_dryrun.py`, `cli.py dryrun`) and the real-order runner (`engine/live_trading.py`)
-> were removed (git history has them). The three paper engines that run now are described in `CLAUDE.md` and `backend/markets/README.md`;
-> several sections below still describe the removed intraday scalpers and are kept only as history.
+## What trades now
 
-## Table of Contents
+| Account | Money | Strategy (folder under `backend/markets/`) | When it runs |
+|---|---|---|---|
+| `MCX_TREND_CARRY` | Rs2.5L, 1.5x | MCX trend + carry: holds the best 3 of 8 commodities' mini futures, re-checked every 10 trading days (`commodity/strategies/tf_daily/trend_carry/`) | Mon-Fri 09:10 and 23:40 IST |
+| `CRYPTO_DIP_REVERSAL` | Rs1L | Buys sharp 5-minute dips on 11 coins' perpetual futures; 15% target, 7% stop, middle-band exit, 24 h time stop (`crypto/strategies/tf_5min/dip_reversal/`) | 5 s after every 5-minute close |
+| `RESULTS_GAP` | Rs1L | **Results gap** (intraday, 3x): buys results-day gap-ups of 7%+ vs the market that keep rising, 09:30 -> 15:20 (`equity/strategies/tf_intraday/results_gap/`)<br>**Earnings drift** (swing, same account): buys at the open two days after results that beat the market by 4%+ on 2x volume, up to 10 stocks, sells after 40 trading days (`equity/strategies/tf_daily/earnings_drift/`) | Mon-Fri 08:50 (plan), 09:30 / 09:40 (buys), 15:20 / 15:26 (sells) IST |
 
-1. [Framework Overview](#framework-overview)
-2. [System Architecture Flow](#system-architecture-flow)
-3. [Directory & Codebase Structure](#directory--codebase-structure)
-4. [Supported Instruments & Trading Profiles](#supported-instruments--trading-profiles)
-5. [Dynamic Position Sizing & Margin Budgeting](#dynamic-position-sizing--margin-budgeting)
-6. [Dynamic Instrument Master Resolution](#dynamic-instrument-master-resolution)
-7. [Environment Configuration (`.env`)](#environment-configuration-env)
-8. [Adding a strategy](#adding-a-strategy)
-9. [Unified CLI Cheat Sheet](#unified-cli-cheat-sheet)
-10. [Running 24/7 as a systemd Service](#running-247-as-a-systemd-service)
-11. [Safety Features (Dry Run)](#safety-features-dry-run)
-12. [Telegram Alerts & Equity Curve Chart](#telegram-alerts--equity-curve-chart)
-13. [Quantitative Strategy & Autocorrelation Regime Architecture](#quantitative-strategy--autocorrelation-regime-architecture)
-14. [Real Market Data Ingestion via Upstox](#real-market-data-ingestion-via-upstox)
-15. [Statutory Taxation & Friction Schedule](#statutory-taxation--friction-schedule)
-16. [Walk-Forward Backtest Performance](#walk-forward-backtest-performance)
-17. [Automated Testing Suite](#automated-testing-suite)
+Prices: Upstox for NSE and MCX, Delta Exchange India for crypto (candles and funding from Binance). Nothing places real orders:
+`UpstoxBroker` always runs with `dry_run=True`, and `engine/safety_gate.py` blocks real orders on its own as well.
 
----
-
-## Framework Overview
-
-The framework provides an end-to-end quantitative trading infrastructure:
-- **Zero Static Logic**: instruments, lot sizes, contract multipliers, statutory taxes/costs, market hours, and strategy thresholds are all configurable via `.env` or module-level constants, not hardcoded.
-- **Dynamic Exchange Master Resolution**: downloads and parses the official Upstox `MCX.csv.gz` daily master, automatically resolving the current front-month contract for each commodity as older ones expire.
-- **Production-Grade Risk & Execution**: position sizing via risk budgeting and broker margin/leverage constraints, take-profits, breakeven locks, and trailing stops.
-- **Realistic Statutory Cost Model**: itemizes CTT, Brokerage caps, Stamp Duty, Exchange Turnover fees, SEBI fees, 18% GST, and slippage matching the official Upstox brokerage calculator.
-- **Layered live-trading kill switch** (`engine/safety_gate.py`): three independent gates (a source-code constant, an `.env` flag, and an explicit armed-state file created via `cli.py arm-live-trading`) must all agree before any code path is allowed to place a real (non-paper) order.
-
----
-
-## System Architecture Flow
-
-The framework is architected into 5 modular layers (the diagram that used to sit here is in git history):
-1. **Real-Time Data Ingestion Layer**: ingests real-time 5-minute bar feeds via Upstox and parses the official daily MCX/NSE master contracts.
-2. **Microstructure Feature Engine**: computes Parkinson volatility, volume surge ratios, EMA slope, ADX/DMI trend expansion, and VWAP distance.
-3. **Quantitative Signal Engine & Regime Gate**: pure rule-based momentum breakout core with multi-symbol daily-return autocorrelation regime gates (blocks trading on choppy/mean-reverting days).
-4. **Risk Management & Position Sizing**: dynamically sizes lots/shares against segment capital risk % and Upstox MIS margin leverage, managing trailing stops, anti-martingale drawdown scaling, and portfolio heat caps.
-5. **Execution & Audit Core**: walk-forward backtests, virtual paper execution, SQLite audit logging, performance dashboards, and automated Telegram notifications.
-
----
-
-## Directory & Codebase Structure
+## Folder layout
 
 ```
 backend/
-├── cli.py                            # Unified CLI (backtest, dryrun, report, reset-db, arm/disarm live trading)
-├── .env / .env.example / requirements.txt
-│
-├── engine/                           # What runs: runners + plumbing
-│   ├── safety_gate.py                # Layered live-trading kill switch (source constant + .env flag + armed-state file)
-│   ├── database.py                   # SQLite persistence: accounts, orders, positions, trades, snapshots
-│   ├── config.py                     # Upstox credentials/token handling
-│   └── backup_db.py                  # Daily SQLite backup (14-day retention)
-│
-├── markets/                          # What trades: one folder per market
-│   ├── commodity/                    # MCX
-│   │   ├── costs.py  features.py  data.py        # shared by every commodity strategy (statutory costs, indicators, Upstox top-up)
-│   │   ├── scalping/                 # entry_signal.py (also serves currency), backtest.py -- the live strategy
-│   │   └── experiments/              # throwaway research (EMA crossover)
-│   ├── currency/                     # NSE currency derivatives -- same shape (costs, data, scalping/, experiments/)
-│   ├── equity/                       # NSE NIFTY50 -- costs, features, universe, data, scalping/ (own entry_signal + backtest)
-│                                     # a new strategy (e.g. swing) = a new sibling folder of scalping/
-│
-├── core/                             # Market-agnostic logic
-│   ├── regime.py                     # daily-return autocorrelation gate (used by the retired runners)
-│   ├── slippage.py                   # real bid/ask spread -> adaptive slippage
-│   ├── sector_correlation.py
-│   ├── strategy.py                   # the Strategy contract (Strategy, Signal, contexts) -- used by the RETIRED runners, see its docstring
-│   ├── registry.py                   # auto-discovers markets/*/*/strategy.py; picks the active ones from <MARKET>_STRATEGIES
-│   ├── exits.py                      # reusable exit managers (fixed TP + breakeven trail; activation trail)
-│   ├── risk.py                       # heat / margin gates for the RETIRED paper/live runners (the three live engines size their own trades)
-│   ├── sessions.py                   # trading-session windows per market
-│   └── paths.py                      # single source of truth for every filesystem path
-│
-├── services/                         # External plumbing
-│   ├── broker/                       # Upstox client, instrument-master resolver, order manager, feed streamer
-│   ├── auth/                         # Upstox OAuth2 + headless auto-login
-│   ├── utils/                        # telegram, logger, market_holidays, chart, position_reconciliation
-│   └── data/                         # candle fetching helpers
-│
-├── deploy/systemd/                   # systemd --user units (symlinked from ~/.config/systemd/user/)
-│   ├── hft-dryrun.service            # 24/7 paper-trading daemon
-│   └── hft-daily-data-topup.service/.timer   # nightly data top-up + DB backup (00:30 IST)
-│
-├── tests/                            # unit tests
-└── var/                              # ALL runtime state (gitignored): archive/<market>/, cache/, logs/, db/
+  cli.py  .env  requirements.txt  pyproject.toml
+  engine/     one runner per account (mcx_trend_carry, crypto_dip_reversal, results_gap + earnings_drift), database, backup_db,
+              nightly, research_data (downloads), backtest_api (website API), engine_monitor (Telegram alerts), status, safety_gate
+  markets/    <market>/strategies/tf_<timeframe>/<name>/strategy.py, plus each market's costs and data download
+  core/       shared logic: fill model (exits.py), backtester, risk, sessions; paths.py holds every filesystem path
+  services/   broker/ (Upstox, Delta), auth/ (Upstox auto-login), utils/ (Telegram, holidays, logging)
+  deploy/     systemd units (symlinked into ~/.config/systemd/user)
+  tests/      unittest suite
+  var/        all runtime state, not in git: archive/ (price data), cache/, logs/, db/ (SQLite + backups)
+frontend/     React + Vite website (Desk, Accounts, Research, Backtest pages)
 ```
 
----
+Code writes only under `backend/var/`. Run modules from `backend/` as `python3 -m <module>`.
 
-## Supported Instruments & Trading Profiles
+## Commands (from `backend/`)
 
-Every symbol below is calibrated with its **own** entry thresholds in `markets/commodity/strategies/tf_5min/scalping/backtest.py`'s `ENTRY_THRESHOLDS` dict (mirrored in `engine/live_dryrun.py`) — nothing is shared across symbols by assumption; each was validated independently on real data.
+```bash
+.venv/bin/python3 -m unittest discover -s tests        # full test suite -- run after every change
 
-### Live-traded (`DRYRUN_SYMBOLS` in `.env`)
+python3 cli.py status --account RESULTS_GAP           # one screen: engine state, money, today's trades, open positions, token, last backup
+python3 cli.py report --account CRYPTO_DIP_REVERSAL   # trade report
+python3 -m engine.results_gap --status                # what an engine would do / holds, without trading
+python3 -m engine.backup_db --list | --verify          # backups in var/db/backups/
+python3 -m engine.backup_db --restore latest           # waits for running engines; refused while one stays busy
+python3 -m engine.research_data <job>                 # downloads: index, nifty-options-oi, banknifty-options-oi, ...
+```
 
-| Symbol | Status | Real-data win rate | Notes |
-|---|---|---|---|
-| **`CRUDEOILM`** | Live | **68.2%**, PF 1.87 | Primary scalper. `min_adx=18` found via a 192-combo real-data sweep (2026-09-17) — improved win rate, net PnL, and max drawdown simultaneously. |
-| **`GOLDM`** | Live | **69.2%**, PF 2.72 | Added 2026-09-17 after a 192-combo real-data sweep found 141/144 credible configs profitable (vs. natgas's 0/51) — a robust, not lucky, result. |
+`python3 cli.py reset-db` wipes every account (a backup is taken first) -- never run it without deciding to.
 
-### Tested and deliberately NOT traded
+## Website
 
-| Symbol | Status | Finding |
+- `https://161.118.190.136/` -- asks for a login (nginx). The username and password are in `~/hft-website-login.txt` on the server.
+  The server itself (127.0.0.1) skips the login: the Upstox auto-login's redirect and the smoke tests need that.
+- The API (`engine/backtest_api.py`, 127.0.0.1:8000, published by nginx at `/api/`) also needs `X-API-Token` =
+  `BACKTEST_ADMIN_TOKEN` for anything that changes saved data: deleting or renaming a backtest, resetting a paper account.
+  Saved backtests are never deleted automatically.
+- From `frontend/`: `npm test`, `npm run test:smoke [-- <base-url>]` (real Chromium, every page at desktop and phone size),
+  deploy = `npm run build` then copy `dist/*` to `/var/www/hft-web/`.
+
+## Services (systemd, user units)
+
+Unit files live in `backend/deploy/systemd/`; `~/.config/systemd/user/` holds symlinks to them. After editing one:
+`systemctl --user daemon-reload`.
+
+| Unit | What it does | Schedule |
 |---|---|---|
-| `NATGASMINI` | Removed 2026-09-17 | **0 real edge found across 5 independent strategy families and 658+ tested configurations**: the original ADX/EMA-slope momentum rules (480 combos), Donchian trend-following (20 combos), VWAP/RSI mean-reversion (48 combos), all 61 TA-Lib candlestick patterns (30 credible), and Stochastic/CCI/Williams %R/MFI/Parabolic SAR/Ichimoku (11 strategies) — only noise-level "wins" (right at the false-positive rate expected from testing that many configurations). Root cause: 85% of the momentum strategy's losses were full stop-outs — entries got reversed against almost immediately, a choppy/mean-reverting market character that also defeated the trend-following and mean-reversion attempts. Real edge in natural gas (per both outside research and this project's own findings) comes from weather-forecast (HDD/CDD) and EIA storage-report data, not price-pattern indicators — a genuinely different, larger project, not a threshold retune. Kept in `ENTRY_THRESHOLDS` as a record; the research scripts (`backtest_natgas_*.py`) remain in the repo so this is reproducible rather than just asserted. |
-| `SILVERMIC` / `COPPER` | Surveyed, not added | Baseline (untuned) results: silver near-breakeven, copper a net loser with high drawdown. Neither has had the dedicated calibration sweep gold/crude received. |
+| `hft-mcx-trend-carry.timer` | MCX paper run | Mon-Fri 09:10, 23:40 IST |
+| `hft-crypto-dip-reversal.timer` | crypto paper run | every 5 minutes (+5 s) |
+| `hft-results-gap.timer` | results gap + earnings drift | Mon-Fri 08:50, 09:30, 09:40, 15:20, 15:26 IST |
+| `hft-daily-data-topup.timer` | `engine/nightly.py`: MCX data, MCX futures EOD, all-NSE daily candles, results dates, research data (incl. Nifty / Bank Nifty options), crypto data, DB backup + verify, trade audit. Every step runs even if one fails; failures go to Telegram | 00:30 and 06:30 IST |
+| `hft-db-backup.timer` | hourly database snapshot (keeps 48; daily ones keep 14) | hourly |
+| `hft-engine-monitor.timer` | Telegram alert when an engine misses a run, fails, or the Upstox login is invalid before an MCX run | every 15 min |
+| `hft-backtest-api.service` | the website's API | always on |
+| `hft-depth-recorder.service`, `hft-preopen-recorder.timer` | record order-book depth and NSE pre-open quotes (research only) | market hours |
 
-### Session window
+New machine: symlink every file in `deploy/systemd/` into `~/.config/systemd/user/`, run `loginctl enable-linger "$USER"`,
+`systemctl --user daemon-reload`, then `systemctl --user enable --now <each timer above> hft-backtest-api.service hft-depth-recorder.service`.
 
-Full session (10:00–22:30 IST) by default (`DRYRUN_FULL_SESSION=true`) — a real-data sweep found this **more than doubles total net PnL** versus the narrower evening-only US-overlap window (18:30–22:00 IST), at the cost of ~3x more trades, a ~5-point lower win rate, and higher fee drag. Toggle via `.env` if you'd rather trade the narrower, cleaner window.
+## Settings (`backend/.env`)
 
-### NSE Currency Derivatives (`markets/currency/strategies/tf_5min/scalping/backtest.py`, `ENTRY_THRESHOLDS` per pair)
+The next timer run picks up a change; no restart needed (restart `hft-backtest-api.service` for the website).
 
-Same feature engine and entry-rule shape as commodities, with pair-specific thresholds calibrated from a 375-combo real-data sweep per pair (2026-09-18) — `strategy.currency_costs` swaps in the genuinely different NCD_FO fee schedule (no STT/CTT at all on currency derivatives; different stamp duty/exchange-fee rates). Session is 09:00–17:00 IST — no MCX-style evening/US-overlap window (a currency pair has no analogous "second session").
-
-| Pair | Status | Real-data result | Sweep robustness |
-|---|---|---|---|
-| **`USDINR`** | Live | 45 trades, 48.9% win, PF 3.13, +₹13,854 | **258/258 credible (≥15 trade) combos profitable (100%)** — the most robust result in this project |
-| **`GBPINR`** | Live | 17 trades, 41.2% win, PF 2.87, +₹4,679 | **192/192 (100%)** |
-| **`EURINR`** | Live | 43 trades, 39.5% win, PF 2.23, +₹9,721 | 201/359 (56%) — still a real, majority-robust edge |
-
-**Important shape difference from commodities**: all three live pairs win *under 50%* of trades but are solidly profitable (profit factors 2.2–3.8x) — winners run 2-4x bigger than losers, the opposite payoff shape from crude/gold's 65-70%-win-rate/tight-R:R style. Don't judge these by win rate alone.
-
-### NSE Equity: NIFTY50 Intraday Scalping (`markets/equity/strategies/tf_5min/scalping/backtest.py`, ONE shared `ENTRY_THRESHOLDS`)
-
-Structurally different from commodity/currency in three ways, all deliberate:
-
-1. **One shared entry-rule set for the entire 49-stock universe, not per-symbol tuning.** The original version of this scalper (removed 2026-09-18) hand-curated a small "best" universe *because* those stocks already backtested well — a circular selection that guarantees an inflated result regardless of whether any real edge exists. The rebuild fixes this by deciding the universe (`markets/equity/universe.py` — all NIFTY50 names except `TATAMOTORS`, which no longer resolves in Upstox's instrument master) *before* any backtest, and applying identical thresholds to every stock. A stock trades often or rarely purely because its own price action does or doesn't clear the bar — nothing is ever pruned after the fact based on how it performed.
-2. **Dynamic ADX-scaled trailing exits, no fixed take-profit.** Once a trade proves itself (moves favorably past an activation threshold that itself scales with how strong the trend looked at entry), a trailing stop — recomputed from the *current* bar's ATR every bar, not frozen at entry — manages the rest of the trade. A strong trend can run well past where a fixed target would have capped it.
-3. **A hard cap of 3 concurrent open positions across the whole universe.** An earlier, uncapped version of this backtest allowed up to 10 simultaneous positions at 5% risk each — correlated market-wide moves hit many of them at once on the same bad days (worst single day: -₹11,053 across 16 trades, ~11% of capital), nearly wiping the account despite a profit factor above 1 in aggregate. The cap is a real portfolio-concentration constraint, not a backtest artifact.
-
-| | Status | Result |
-|---|---|---|
-| **Full NIFTY50 (49 names)** | **Off since 2026-10-07** (`ENABLE_EQUITY_TRADING=false`; the validation below used the pre-fix fill model — the audit is in git history) | Validated across **3 independent train/test folds** (2023-09→2024-08, 2024-07→2025-06, 2025-07→2026-09): win rate 64.7–68.0%, profit factor 1.41–1.56, all three net-positive with no exceptions. |
-
-**Why the original version failed, root-caused (not just re-asserted):** beyond the circular universe selection above, its untuned entry rules generated ~7,700 trades over 4 years averaging just ₹4.07 gross profit each — but ₹17.02 in fees each (mostly Upstox's flat ~₹20-per-leg brokerage cap). Every trade had negative expected value after costs, so capital was mathematically guaranteed to decay toward zero over enough trades, confirmed by testing risk-per-trade from 0.5% to 5% and concurrency caps from 3 to 10 — all converged to the same near-total wipeout. The fix wasn't better risk management, it was fewer, higher-conviction trades (`min_ema_slope` raised to 0.22, a much stronger trend-strength requirement) so each trade's edge meaningfully exceeds the flat fee floor.
-
-**ML was tried and deliberately NOT used.** A LightGBM model trained on the pooled 2.64M-row dataset (`ml/train_equity.py`, since removed) shows real signal (ROC-AUC 0.81, ~3x precision lift over the 4.3% base rate) — but adding it as an entry filter made results *worse* on 1 of 3 test folds, including flipping the most recent period from a +₹195k profit to a -₹15k loss. Equity runs rule-based only, same posture as currency.
-
-**Session**: 09:15–15:30 IST (NSE cash hours), entries gated 09:30–15:15, square-off 15:15.
-
----
-
-## Dynamic Position Sizing & Margin Budgeting
-
-The position sizing engine dynamically balances account risk with broker margin limits:
-
-$$\text{Loss per Lot} = \text{Stop Distance} \times \text{Contract Multiplier}$$
-$$\text{Lots by Risk} = \left\lfloor \frac{\text{Capital} \times \text{Risk \%}}{\text{Loss per Lot}} \right\rfloor$$
-$$\text{Margin Required per Lot} = \frac{\text{Entry Price} \times \text{Multiplier}}{\text{Leverage}}$$
-$$\text{Lots by Margin} = \left\lfloor \frac{\text{Capital}}{\text{Margin Required per Lot}} \right\rfloor$$
-$$\text{Executed Lots} = \max(1, \min(\text{Lots by Risk}, \text{Lots by Margin}))$$
-
-### Sizing Modes Supported:
-* **`--size-mode margin` (Default)**: Strict real-world mode that enforces Upstox / SEBI MIS peak margin limits.
-* **`--size-mode risk`**: Pure theoretical risk-budgeted mode where positions scale purely by account risk %.
-
----
-
-## Environment Configuration (`.env`)
-
-Copy `backend/.env.example` to `backend/.env` and fill it in — the template lists every variable the code reads, with the recommended value. Any CLI flag overrides its `.env` value for that run only. **Changing `.env` needs a daemon restart** (`systemctl --user restart hft-dryrun.service`). Two rules when editing: put comments on their own line (a `KEY=   # comment` with an empty value is read as the comment text by python-dotenv), and set the risk / regime / equity variables explicitly, because `engine/live_dryrun.py` and `engine/live_trading.py` have different built-in defaults for some of them.
-
-The daily Upstox access token is **not** in `.env`: it is cached in `var/cache/upstox_token.json` by `services/auth/`.
-
-### Broker Credentials
-
-| Variable | Description |
+| Setting | Used for |
 |---|---|
-| `UPSTOX_API_KEY` / `UPSTOX_API_SECRET` | OAuth2 app credentials from [developer.upstox.com](https://developer.upstox.com/). |
-| `UPSTOX_REDIRECT_URI` | OAuth2 redirect URL registered with your Upstox app (default `https://127.0.0.1/`). |
-| `UPSTOX_USERNAME` / `UPSTOX_PIN` / `UPSTOX_TOTP_SECRET` | Optional — enable `services/auth/upstox_auto_login.py`'s headless daily token refresh (Selenium + TOTP). Leave blank to refresh manually with `python3 -m services.auth.upstox_auth`. **Security:** the TOTP secret plus PIN is permanent full login access to the account. |
-| `UPSTOX_ACCESS_TOKEN` | Fallback only, used if `var/cache/upstox_token.json` doesn't exist yet. Leave blank. |
-
-Upstox keeps **one active access token per app**: a login from anywhere else invalidates the token the daemon holds. Never run a second copy of the daemon (or a second systemd scope) against the same credentials — the two would log in over and over and invalidate each other every 15 minutes.
-
-### Shared Trading Parameters
-
-| Variable | Built-in default | Description |
-|---|---|---|
-| `TRADING_CAPITAL` | `100000.0` | `--capital` default for `backtest`, `dryrun`, `reset-db`. |
-| `INTRADAY_LEVERAGE` | `4.0` (CLI) | `--leverage` fallback whenever `BACKTEST_LEVERAGE` / `DRYRUN_LEVERAGE` is blank. |
-| `TRADING_DIRECTION` | `both` | `both` / `long-only` / `short-only`. |
-| `ALLOW_SHORTS` | `true` | `false` = never open a short, whatever `TRADING_DIRECTION` says. |
-
-### Dry Run (`cli.py dryrun`, the 24/7 daemon)
-
-| Variable | Built-in default | Description |
-|---|---|---|
-| `DRYRUN_SYMBOLS` | *(blank = `USDINR`)* | NSE currency pairs, e.g. `USDINR EURINR`. Any other symbol (MCX included) stops the daemon at start. |
-| `DRYRUN_INCLUDE_EQUITY` | `false` (dry run) | `true` = also trade the fixed NIFTY50 universe (49 names). Extends `DRYRUN_SYMBOLS` rather than replacing it. |
-| `DRYRUN_RISK_PCT` | `5.0` | Risk % per trade. |
-| `DRYRUN_LEVERAGE` | *(blank)* | Blank = `INTRADAY_LEVERAGE`. |
-| `DRYRUN_INTERVAL` | `30` | Scan interval, seconds. |
-
-### Per-Market Risk, Leverage and Switches
-
-| Variable | Built-in default | Description |
-|---|---|---|
-| `CURRENCY_RISK_PCT` / `EQUITY_RISK_PCT` | `DRYRUN_RISK_PCT` | Risk % per trade for that market. Per-symbol overrides (e.g. GBPINR leverage) live in code: `_SYMBOL_RISK_PCT_OVERRIDE` / `_SYMBOL_LEVERAGE_OVERRIDE` in `engine/live_dryrun.py`. |
-| `CURRENCY_LEVERAGE` / `EQUITY_LEVERAGE` | resolved `DRYRUN_LEVERAGE` | Leverage for that market. |
-| `ENABLE_CURRENCY_TRADING` | `true` | `false` = no new entries for that market (open positions are still managed). |
-| `ENABLE_EQUITY_TRADING` | follows `DRYRUN_INCLUDE_EQUITY` | Same, for equity. |
-
-### Strategy Switches
-
-| Variable | Built-in default | Description |
-|---|---|---|
-| `CURRENCY_STRATEGIES` / `EQUITY_STRATEGIES` | strategies with `default_enabled` (the scalpers) | Comma-separated names of the strategy folders under `markets/<market>/` that trade, e.g. `EQUITY_STRATEGIES=scalping,swing`. A strategy file that isn't named here never trades. See [Adding a strategy](#adding-a-strategy). |
-| `<MARKET>_<STRATEGY>_RISK_PCT` | the market's risk % | Optional per-strategy risk %, e.g. `EQUITY_SWING_RISK_PCT=1.0`. |
-| `USE_EQUITY_REGIME_FILTER` | `false` | Same gate on the NIFTY50 index for all equity entries. Unvalidated. |
-| `ENABLE_MEAN_REVERSION` | `true` in code — **`.env` sets `false`** | VWAP/RSI mean-reversion setup for commodity and equity. Off: it failed out-of-sample on crude (TRAIN PF 2.28 → TEST PF 0.96) and had too few trades elsewhere. Thresholds are hardcoded in the `entry_signal` modules, not env vars. |
-
-### Safety Limits and Money Management (dry run daemon)
-
-| Variable | Built-in default | Description |
-|---|---|---|
-| `MAX_DAILY_LOSS_PCT` | `5.0` | Account-wide daily loss kill switch (% of day-start capital). Halts new entries; open positions are still managed. |
-| `MAX_MARKET_DAILY_LOSS_PCT` | `3.0` | Same, per market (currency / equity): that market pauses, the others keep trading. |
-| `MARKET_COOLDOWN_MINUTES` | `60` | Pause length after a per-market breach; 1.5x at 150% of the limit, 2x at 200%+. |
-| `MAX_PORTFOLIO_HEAT_PCT` | `8.0` | Total stop-distance risk across **all** open positions, % of capital. Researched range: 4–8% swing, up to ~10% for tight-stop scalpers. |
-| `MAX_MARGIN_UTILIZATION_PCT` | `100.0` | Total margin the open positions may commit, % of capital — margin is one shared pool. A new entry is **sized to the margin still free**, not rejected. Sizing is margin-bound (one trade routinely uses 80–100% of capital), so values well below 100 shrink every position; 90 (with a 50 per-market cap) once blocked essentially every entry. |
-| `MAX_MARKET_MARGIN_UTILIZATION_PCT` | `100.0` | Same, per market, so one market can't crowd out the others. Override per market with `CURRENCY_MAX_MARGIN_PCT` / `EQUITY_MAX_MARGIN_PCT`. |
-| `MARGIN_REFRESH_MIN` / `MARGIN_MAX_AGE_HOURS` / `MARGIN_VERIFY` | `60` / `6` / `strict` | **Real Upstox margin.** The `*_LEVERAGE` values are only an upper bound: the daemon reads Upstox's margin calculator at start, every `MARGIN_REFRESH_MIN` minutes and before every entry (`engine/margin_rates.py`), never uses more leverage than Upstox gives that symbol (2026-09-24: CRUDEOILM 3.3x, GOLDM 10.7x, SILVER 7.7x, USDINR 42x, NIFTY50 5.0x), cuts an order the account cannot carry, and skips any symbol whose ONE lot needs more margin than the capital (at Rs100k: GOLDM needs Rs140k, SILVER Rs901k). A cached rate older than `MARGIN_MAX_AGE_HOURS` is not trusted (`strict` skips the entry instead). Telegram alerts once when a symbol becomes untradable and when the broker changes a lot size. |
-| `<MARKET>_SQUAREOFF_BEFORE_CLOSE_MIN` / `<MARKET>_LAST_ENTRY_BEFORE_CLOSE_MIN` | currency `35`/`50`, equity `35`/`45` | Forced exit and last entry, in minutes **before the day's real close**, which the daemon reads from Upstox every day (`core/sessions.py`, `get_exchange_timings`) - so special or shortened sessions and MCX's daylight-saving shift need no config. Upstox does not publish its auto square-off time through any API (only announced: currency 16:30, MCX 22:50, equity 15:00-15:15), so these two values are the one static policy; the defaults leave the account flat before those times, and `tests/test_sessions.py` fails if they ever do not. |
-| `MAX_POSITIONS_PER_SECTOR` | `1` | Max concurrent open equity positions in one sector (`core/sector_correlation.py`). |
-| `TOKEN_CHECK_INTERVAL_MIN` | `15` | How often the daemon re-validates its Upstox token; also re-checked immediately on a broker 401. |
-| `SPREAD_SAMPLE_INTERVAL_MIN` | `5` | How often live bid/ask is sampled per symbol **while its market is open**, feeding the adaptive slippage model (`var/logs/spread_samples.csv`). |
-
-Drawdown-scaled position sizing (5 / 10 / 15% drawdown → 10 / 25 / 50% smaller size) is always on and has no switch.
-
-### Telegram Alerts (optional)
-
-| Variable | Description |
-|---|---|
-| `TELEGRAM_BOT_TOKEN` | From [@BotFather](https://t.me/BotFather). Blank = alerts disabled. |
-| `TELEGRAM_CHAT_ID` | Message your bot once, then open `https://api.telegram.org/bot<TOKEN>/getUpdates` to find it. |
-
-### Live Trading Gate
-
-| Variable | Default | Description |
-|---|---|---|
-| `ALLOW_LIVE_TRADING` | `false` | Gate 2 of 3 (Gate 1 is `KILL_SWITCH_ENGAGED` in `engine/safety_gate.py`, Gate 3 is the armed-state file from `cli.py arm-live-trading`). Read `engine/safety_gate.py` in full before touching it — and note that the crypto engine's Delta demo orders need these gates too. |
-
----
-
-## Adding a strategy
-
-There are two shapes today, and only the second one trades:
-
-**1. The `Strategy` contract** — `markets/<market>/strategies/<timeframe>/<name>/strategy.py` exposing `STRATEGY` (`python3 cli.py new-strategy --market equity --name swing` creates the template), discovered through `core/registry.py` and run by `engine/live_dryrun.py` / `engine/live_trading.py`. **Those runners are retired** (equity and currency were removed 2026-10-21), so a strategy written this way is *not* picked up by any running engine unless a runner is brought back. The contract itself is documented in `core/strategy.py`; there is no separate guide file.
-
-**2. What the three live engines do** — each engine (`engine/crypto_dip_reversal.py`, `engine/mcx_trend_carry.py`, `engine/results_gap.py`) names its strategy module in code, owns its own execution, sizing and state file, and is scheduled by its own systemd timer. Adding a strategy to one of those markets means writing the strategy module plus an engine like those (and a timer), then recording it in `backend/markets/README.md`. There is no shared-gate layer between them: each engine implements its own risk rules, which is why they are reviewed one by one.
-
-Project rule either way: a credible backtest (>= 15 trades) and a genuine held-out test window on the real cost model before a strategy is switched on, then paper trading.
-
----
-
-## Unified CLI Cheat Sheet
-
-All commands below assume you're in `backend/` with the venv active (or just call `.venv/bin/python3`, which `cli.py` also auto-re-execs into if you run it with the system Python). Every flag shown has an `.env` equivalent from the table above — omit the flag to use whatever's in `.env`.
-
-### 1. `cli.py backtest` — Walk-forward backtest on historical MCX commodity data
-
-```bash
-python3 cli.py backtest [--symbols SYM [SYM ...]]
-                         [--capital N] [--risk-pct N] [--leverage N]
-                         [--from YYYY-MM-DD] [--to YYYY-MM-DD]
-                         [--full-session]
-```
-| Flag | Meaning |
-|---|---|
-| `--symbols` | Override the default MCX symbol list. NSE currency is backtested standalone via `markets/currency/strategies/tf_5min/scalping/backtest.py` (see #6 below) — not wired into this command. |
-| `--capital` | Starting capital in ₹. |
-| `--risk-pct` | Risk % of capital per trade. |
-| `--leverage` | MIS margin leverage multiplier. |
-| `--from` / `--to` | Date range filter (`--from-date`/`--to-date` also accepted). |
-| `--full-session` | Trade the full 10:00–22:30 IST session instead of just the evening US-overlap window. |
-
-```bash
-# Examples
-python3 cli.py backtest                                                  # everything from .env
-python3 cli.py backtest --symbols CRUDEOILM GOLDM --from 2026-08-17 --to 2026-09-17
-```
-
-### 3. `cli.py report` / `cli.py reset-db`
-
-```bash
-python3 cli.py report [--db PATH] [--account ID]                          # dashboard: balance, win rate, open positions, last trades/orders
-python3 cli.py reset-db [--db PATH] [--account ID] [--capital N] [--risk-pct N] [--leverage N]   # wipes the DB and starts a fresh paper account
-```
-
-### 4. `cli.py arm-live-trading` / `disarm-live-trading` — the layered kill switch
-
-```bash
-python3 cli.py arm-live-trading --component {upstox,ALL} --confirm "I UNDERSTAND THIS PLACES REAL ORDERS WITH REAL MONEY"
-python3 cli.py disarm-live-trading [--component {upstox,ALL}]
-```
-Arming the state file is only **one** of three independent gates — `engine.safety_gate.KILL_SWITCH_ENGAGED` must also be hand-edited to `False` in source (and redeployed), and `ALLOW_LIVE_TRADING=true` must be set in `.env`. All three must agree before any broker call is allowed to place a real order; a caller requesting `dry_run=True` is always honored regardless of gate state. See `engine/safety_gate.py`.
-
-### 6. Backtest scripts directly (`markets/commodity/strategies/tf_5min/scalping/backtest.py`, `markets/currency/strategies/tf_5min/scalping/backtest.py`, `markets/equity/strategies/tf_5min/scalping/backtest.py`)
-
-Same engines `cli.py backtest` delegates to, callable directly when you want their full native flag set:
-
-```bash
-# MCX Commodity Scalper
-python3 -m markets.commodity.strategies.tf_5min.scalping.backtest --symbols CRUDEOILM --capital 100000 --risk-pct 10.0 --leverage 7.0
-python3 -m markets.commodity.strategies.tf_5min.scalping.backtest --symbols CRUDEOILM GOLDM --capital 100000 --risk-pct 10.0 --leverage 7.0
-python3 -m markets.commodity.strategies.tf_5min.scalping.backtest --symbols CRUDEOILM --capital 100000 --risk-pct 10.0 --size-mode risk   # pure risk-budgeted, unconstrained by margin
-
-# NSE Currency Derivatives Scalper
-python3 -m markets.currency.strategies.tf_5min.scalping.backtest --symbols USDINR --capital 100000 --risk-pct 10.0 --leverage 7.0
-python3 -m markets.currency.strategies.tf_5min.scalping.backtest --symbols USDINR EURINR GBPINR --capital 100000 --risk-pct 10.0 --leverage 7.0
-
-# NSE Equity Intraday Scalper (full NIFTY50 universe if --symbols omitted)
-python3 -m markets.equity.strategies.tf_5min.scalping.backtest --capital 100000 --risk-pct 5.0 --leverage 5.0
-python3 -m markets.equity.strategies.tf_5min.scalping.backtest --symbols RELIANCE TCS HDFCBANK --capital 100000 --risk-pct 5.0 --leverage 5.0
-python3 -m markets.equity.strategies.tf_5min.scalping.backtest --capital 100000 --risk-pct 5.0 --leverage 5.0 --from 2025-07-01 --to 2026-09-18   # one of the 3 validated OOS folds
-```
-
----
-
-## Running 24/7 as a systemd Service
-
-`engine/live_dryrun.py` is a long-running daemon (it loops across trading days on its own, sleeping through nights/weekends), so it's meant to run under a process supervisor — **not** `nohup`. A `systemd --user` service gives you: survives terminal logout, auto-restarts on crash, centralized logs via `journalctl`, and starts on boot.
-
-### Unit files live in the repo, not just in systemd's directory
-
-All unit files are checked into **`backend/deploy/systemd/`** — not hidden away in `~/.config/systemd/user/` where they'd be invisible to the repo and easy to lose track of. `~/.config/systemd/user/` holds only **symlinks** pointing back into `backend/deploy/systemd/`, so systemd reads the exact file you see and edit in the project — no separate "deploy" step, no copying, no drift between what's committed and what's running.
-
-| Unit | Type | Purpose | Schedule |
-|---|---|---|---|
-| `hft-dryrun.service` | persistent daemon | Runs `cli.py dryrun` — the 24/7 paper-trading loop | Always on (`Restart=always`) |
-| `hft-daily-data-topup.service` + `.timer` | oneshot + timer | Runs `engine/nightly.py`: data top-up for commodity, currency and equity (1/3/5-min etc. into `var/archive/<market>/`), DB backup, backup verify, trade audit, archive-freshness check. **Every step runs even if an earlier one fails** (systemd would stop a oneshot at the first failing `ExecStart`); failures and stale archives go to Telegram. Runs twice because Upstox sometimes has the previous day's candles final only after 00:30 | Daily, 00:30 and 06:30 IST |
-| `hft-watchdog.service` + `.timer` | oneshot + timer | `engine/watchdog.py`: restarts `hft-dryrun.service` when it is running but has stopped scanning (missed heartbeat in `var/db/heartbeat.json`), and alerts on Telegram. Never touches a service that was stopped on purpose; at most one restart per 15 min; `WATCHDOG_AUTORESTART=false` = alert only | Every 2 min |
-| `hft-equity-swing.service` + `.timer` | oneshot + timer | `engine/equity_swing.py`: the EQUITY_SWING paper account (plan before the open, then trades and marks during the day) | Mon-Fri 09:08-15:31 IST |
-| `hft-mcx-trend-carry.service` + `.timer` | oneshot + timer | `engine/mcx_trend_carry.py`: MCX trend + carry paper account (month-end rebalance, contract rolls, daily mark) | Mon-Fri 09:10 and 23:40 IST |
-| `hft-crypto-breakout.service` + `.timer` | oneshot + timer | `engine/crypto_breakout.py`: the trend_breakout sleeve of the CRYPTO_CALM account; processes each finished 4-hour candle (Binance futures klines), enters at CoinDCX's live price, exits at the 10-candle channel / 8% stop | Every 4 hours, 2 minutes after the candle (00/04/08/12/16/20 UTC) |
-| `hft-crypto-calm.service` + `.timer` | oneshot + timer | `engine/crypto_calm.py`: tops up the crypto daily candles and funding (`markets/crypto/data.py`, CoinDCX + Binance public APIs), then today's weekday part of each coin re-decides calm (hold) / wild (cash) at CoinDCX's live futures price; Telegram summary | Every day 05:45 IST |
-| `hft-db-backup.service` + `.timer` | oneshot + timer | `engine.backup_db --hourly`: snapshot of the paper-trading DB (keeps 48; daily snapshots keep 14). Restore with `python3 cli.py restore-db [FILE|latest]` (stop the daemon first); `reset-db` saves the old DB first | Hourly |
-
-### First-time setup on a new machine
-
-```bash
-cd /var/www/html/hft/backend
-
-# 1. Symlink every unit file from the repo into systemd's user directory
-mkdir -p ~/.config/systemd/user
-for f in deploy/systemd/*; do
-    ln -s "$(pwd)/$f" ~/.config/systemd/user/"$(basename "$f")"
-done
-
-# 2. Let user services survive logout/reboot (one-time, machine-wide)
-loginctl enable-linger "$USER"
-
-# 3. Load the units and start everything
-systemctl --user daemon-reload
-systemctl --user enable --now hft-dryrun.service
-systemctl --user enable --now hft-daily-data-topup.timer hft-watchdog.timer hft-db-backup.timer hft-equity-swing.timer hft-mcx-trend-carry.timer hft-crypto-calm.timer hft-crypto-breakout.timer
-
-# 4. Confirm
-systemctl --user status hft-dryrun.service --no-pager
-systemctl --user list-timers --all --no-pager
-```
-
-### Editing a unit
-
-Edit the file directly in `backend/deploy/systemd/` (same as any other project file — visible in your IDE, tracked by git, no secrets in it so safe to commit). Then:
-
-```bash
-systemctl --user daemon-reload                # always needed after any unit-file edit
-systemctl --user restart hft-dryrun.service     # only for a persistent service; timers just need daemon-reload to pick up a new schedule
-```
-
-All trading parameters themselves come from `backend/.env`, not the unit files — edit `.env` and restart `hft-dryrun.service`, no unit-file changes needed for a parameter change.
-
-### Commands
-
-```bash
-systemctl --user daemon-reload                          # after creating/editing any unit file
-systemctl --user enable hft-dryrun.service               # start automatically on boot/login
-systemctl --user start hft-dryrun.service                 # start now
-systemctl --user stop hft-dryrun.service                  # graceful stop (SIGTERM -> clean shutdown + Telegram alert)
-systemctl --user restart hft-dryrun.service                # e.g. after editing engine/live_dryrun.py or .env
-systemctl --user status hft-dryrun.service --no-pager      # is it running, PID, recent log lines
-journalctl --user -u hft-dryrun.service -f                  # follow logs live
-journalctl --user -u hft-dryrun.service --no-pager -n 100    # last 100 lines
-
-systemctl --user list-timers --all --no-pager                          # next scheduled fire for every timer
-systemctl --user start hft-daily-data-topup.service                     # trigger a data top-up right now (don't wait for 00:30 IST)
-journalctl --user -u hft-daily-data-topup.service --no-pager -n 50       # last data top-up's output
-```
-
-`Restart=always` on `hft-dryrun.service` is safe with `systemctl stop` — systemd doesn't apply the restart policy to an explicit stop request, only to unexpected exits/crashes.
-
----
-
-## Safety Features (Dry Run)
-
-Built into `engine/live_dryrun.py`'s `DryRunner`/`main()` — all active by default, no flags needed:
-
-- **Process lock** — refuses to start a second dry-run process for the same `--account`, so a forgotten stray process (or a re-run before the old one exited) can't double-trade the same account. Lock file: `data/.<ACCOUNT_ID>.lock`.
-- **Daily-loss kill switch** (`MAX_DAILY_LOSS_PCT`) — halts *new* entries for the rest of the day once realized loss hits the configured % of the day's starting capital. Open positions still get managed/exited normally. Sends a Telegram alert once when tripped, resets automatically the next trading day.
-- **Token refresh loop** (`TOKEN_CHECK_INTERVAL_MIN`) — proactively re-validates the Upstox token on a timer, or immediately if the broker's 401 circuit breaker trips. Auto-refreshes via headless login if `UPSTOX_USERNAME`/`PIN`/`TOTP_SECRET` are configured; otherwise alerts via Telegram that a manual `python3 -m auth.upstox_auth` is needed.
-- **Graceful shutdown** — both Ctrl-C and `systemctl stop` (SIGTERM) trigger a clean exit with a Telegram alert, not an unhandled crash. The SIGTERM handler is one-shot (re-arms to `SIG_IGN` after the first signal) so a second signal arriving mid-shutdown can't inject a second async exception into the cleanup path.
-- **Real, auto-updating holiday calendar** (`services/utils/market_holidays.py`) — the overnight day-rollover loop used to only skip Sunday (an admitted gap in an earlier version of its own comment); it now also skips Saturday and every real NSE/CDS/MCX trading holiday, sourced live from Upstox's own public holiday API (`GET /v2/market/holidays`, no auth needed) rather than a hand-maintained list. Never hardcodes a year — always reflects whatever year it currently is, cached and refetched automatically once a day (and across a year boundary).
-- **Layered live-trading kill switch** (`engine/safety_gate.py`) — see [`cli.py arm-live-trading`](#4-cliparm-live-trading--disarm-live-trading--the-layered-kill-switch) above.
-
-> **Note on scope**: this is a paper-trading system end to end — `UpstoxBroker` is always constructed with `dry_run=True` (enforced independently by `engine/safety_gate.py` even if a caller ever requested otherwise), and no code path currently places real orders. These safety features harden the *paper* daemon (crash alerting, daily-loss discipline, token hygiene); they are prerequisites for eventually going live, not a live-trading switch.
-
----
-
-## Telegram Alerts & Equity Curve Chart
-
-Set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` in `.env` (see [Environment Configuration](#environment-configuration-env)) to get:
-
-| Event | Alert |
-|---|---|
-| Daemon starts / stops | 🟢/🔴 with capital, risk, leverage, direction, symbols |
-| Position entered | 📥 symbol, direction, price, qty, SL/TP |
-| Position exited | ✅/❌ symbol, direction, exit price, reason, net PnL, balance |
-| Scan error / exception | 🔴 with the exception type and message |
-| Daily-loss kill switch tripped | 🛑 |
-| Token refresh failed | 🔴 |
-| End of trading day | 🏁 trade count, total PnL, balance (sourced from the DB, not an in-memory counter — survives a mid-session restart) — **plus the equity curve chart as a photo** |
-
-The equity curve (`services/utils/chart.py`) is a matplotlib line chart built from `engine/database.py`'s `portfolio_snapshots` table (one row recorded per trade close), aggregated to **one point per calendar day** (that day's end-of-day capital) spanning from the first trading day through today — not a noisy per-trade intraday chart. It's regenerated and sent to Telegram at the end of every trading day, and also saved to `logs/equity_<ACCOUNT_ID>.png` on every `--report` call:
-
-```bash
-python3 -m engine.live_dryrun --report --commodity --account DRYRUN_ACCOUNT
-# -> prints the dashboard AND saves var/logs/equity_DRYRUN_ACCOUNT.png
-```
-
----
-
-## Quantitative Strategy & Autocorrelation Regime Architecture
-
-The trading framework operates as a **100% pure rule-based quantitative engine** coupled with statistical market regime filters:
-
-### 1. High-Conviction Trend Expansion Core
-Trade entry signals are determined via multi-factor technical and microstructure criteria across 5-minute candles:
-- **ADX & DMI Trend Strength**: Verifies trend momentum (`adx >= min_adx` and `+DMI > -DMI` for longs).
-- **EMA Trend Slope**: Filters for positive directional velocity (`ema_slope >= min_ema_slope`).
-- **Opening Range Breakout (ORB)**: Evaluates expansion relative to opening candle ranges.
-- **VWAP Alignment**: Confirms execution direction relative to institutional volume-weighted average price.
-- **Volume Surge Ratio**: Requires volume expansion relative to rolling average volume.
-
-### 2. Multi-Symbol Autocorrelation Market Regime Filter (`core/regime.py`)
-Rather than relying on black-box ML models (which overfit and reduce profits during volatile chop), the system utilizes an institutional daily-return autocorrelation regime filter:
-- Computes rolling lag-1 autocorrelation ($\rho_1$) on daily log returns.
-- **Persistent Trend Regime ($\rho_1 > 0$)**: Trend breakouts continue with high follow-through; signals execute normally.
-- **Mean-Reverting / Choppy Regime ($\rho_1 \le 0$)**: Trend breakouts experience high failure rates; the regime gate dynamically blocks new entries for that symbol/segment, avoiding false breakouts and preserving capital.
-
-### 3. Dynamic Position Sizing & Anti-Martingale Scaling
-- **Segment-Specific Risk & Leverage**: Calibrated independently for Commodities (`4.0%` risk / `5.0x` leverage), Currencies (`4.0%` risk / `5.0x` leverage), and Equities (`4.0%` risk / `5.0x` leverage).
-- **Drawdown-Scaled Sizing (Anti-Martingale)**: Automatically reduces position size if trailing account capital experiences a drawdown (5%/10%/15% drawdown scales risk down to 90%/75%/50%), restoring automatically as capital rebounds.
-- **Portfolio Heat Cap (`MAX_PORTFOLIO_HEAT_PCT=12.0%`)**: Limits aggregate simultaneous market risk across all open positions.
-
----
-
-## Real MCX Data via Upstox
-
-`var/archive/commodity/*.csv` is populated from **genuine historical MCX candles**, fetched via `markets/commodity/data.py` using the same Upstox broker/account this bot already live-trades through — no separate data vendor or credentials needed. `markets/commodity/synthetic_data.py`'s earlier random-walk generator is no longer used for training or backtesting (see git history 2026-09-10 for why: everything validated against it — win rates, parameter tuning — was fit to synthetic patterns, not real market behavior).
-
-**Hard constraint**: MCX commodity futures are monthly-expiry contracts, not continuously-listed instruments. Upstox's real history for the *current* active contract only reaches back to that contract's own listing date — typically ~1 month, not years. Requesting further back returns zero candles, not a clipped result. Real history accumulates one genuine trading day at a time via the daily top-up job; there's no way to get more than ~1 month at once without a paid data vendor (TrueData, Global Data Feeds, PortaraCQG all carry real MCX intraday history, but pricing is quote-based, not self-serve). **Every backtest result quoted in this README reflects this real, currently ~32-day, window** — `markets/commodity/strategies/tf_5min/scalping/backtest.py` prints the actual archive date range it used on every run (never a hardcoded/stale label) specifically so this can't be silently misrepresented.
-
-**Four intervals maintained per symbol**: 1-minute, 5-minute (the one the strategy/ML model actually consumes), 15-minute, and 1-day (which Upstox retains for noticeably longer than intraday — often several months back even when intraday is capped at ~1 month).
-
-```bash
-python3 -m markets.commodity.data           # full initial backfill, all tracked symbols, all 4 intervals
-python3 -m markets.commodity.data --topup     # incremental: fetch only candles newer than what's archived (what the daily timer runs)
-```
-
-Symbols covered: `CRUDEOILM`/`CRUDEOIL`, `GOLDM`/`GOLD`, `SILVERMIC`/`SILVER`, `COPPER` (base-symbol and mini-contract archive files are kept aligned — `train_commodity.py`/`markets/commodity/strategies/tf_5min/scalping/backtest.py` look up whichever name they're given via an alias map).
-
-**NSE currency derivatives** (`var/archive/currency/*.csv`, via `markets/currency/data.py`) hit the same real-data wall — same ~1-month-per-contract cap, verified the same way (a wide single-call request to Upstox's history API was found to silently truncate instead of erroring; `markets/currency/data.py` fetches in small chunks and unions the results rather than trusting one wide call). No free third-party dataset fills this gap either — checked GitHub and Kaggle directly (2026-09-18): `ShabbirHasan1/NSE-Data` has no currency segment at all, and `jugaad-data`'s official-NSE-bhavcopy library doesn't cover currency derivatives in its roadmap either. Real data here, same as MCX, only grows one real day at a time via the daily top-up job.
-
-```bash
-python3 -m markets.currency.data           # full initial backfill, all 4 pairs, all 4 intervals
-python3 -m markets.currency.data --topup     # incremental (what the daily timer runs)
-```
-
-**NSE equity** (`var/archive/equity/*.csv`, via `markets/equity/data.py`) does NOT hit the monthly-expiry wall above — NSE cash equities are continuously-listed, not futures/derivatives contracts, so real history goes back to each stock's own genuine listing/data-availability date. Confirmed directly: ~76,500 real 5-minute candles per symbol, 2022-08-01 through today, for all 49 NIFTY50 names. Uses the same shared `fetch_real_history_backward` chunked-fetch utility as commodity/currency (a hard per-chunk timeout with retry-then-gap logic was added here specifically — a genuine network hang was found and fixed while building this downloader; a timed-out chunk is now retried and, if still stuck, left as an honest gap rather than being misread as "end of history" and silently truncating everything older).
-
-```bash
-python3 -m markets.equity.data              # full initial backfill, all 49 NIFTY50 symbols
-python3 -m markets.equity.data --topup        # incremental (what the daily timer runs)
-python3 -m markets.equity.data --symbols RELIANCE TCS   # subset
-```
-
----
-
-## Statutory Taxation & Friction Schedule
-
-| Cost Head | MCX Futures (`CRUDEOILM`) | NSE Currency Derivatives | NSE Equity (Intraday MIS) |
-|---|---|---|---|
-| **CTT / STT** | **0.010%** on Sell turnover | **None — exempt** | **0.025%** on Sell turnover |
-| **Brokerage** | **₹20 flat cap** per order leg | **₹20 flat cap** per order leg | **₹20 flat cap** per order leg |
-| **Stamp Duty** | **0.002%** on Buy turnover | **0.0001%** (₹10/crore) on Buy turnover | **0.003%** on Buy turnover |
-| **Exchange Turnover** | **0.0021%** on total turnover | **0.0009%** on total turnover | **0.00325%** on total turnover |
-| **SEBI Regulatory Fee** | **₹10 per Crore** (0.0001%) | **₹10 per Crore** (0.0001%) | **₹10 per Crore** (0.0001%) |
-| **GST** | **18%** on (Brokerage + Exch + SEBI) | **18%** on (Brokerage + Exch + SEBI) | **18%** on (Brokerage + Exch + SEBI) |
-| **Slippage Buffer** | **½-tick per leg** | **½-tick per leg** | **½-tick per leg** |
-
-Currency derivatives carry the lightest friction of the three — no STT/CTT at all, and a much lower stamp duty (reduced from ₹200/crore to ₹10/crore specifically for currency & interest-rate derivatives). Equity carries the heaviest STT (0.025% vs. commodity's 0.010%) — this is exactly why the original equity scalper's high-frequency/small-edge approach failed (see [NSE Equity](#nse-equity-nifty50-intraday-scalping-backtest_equitypy-one-shared-entry_thresholds)): the ₹20 flat brokerage cap alone exceeded the average trade's entire gross edge at that trade frequency.
-
----
-
-## Walk-Forward Backtest Performance
-
-**Real MCX data, `python3 cli.py report`/`backtest` reproducible on demand.** Every number below is from the actual real archive (currently ~32 calendar days — see [Real MCX Data via Upstox](#real-mcx-data-via-upstox) for why that's the honest ceiling right now, not a limitation of the testing itself). Capital ₹100,000, risk 10%, leverage 7x, full session, ML filter disabled — the exact configuration currently running live.
-
-### `CRUDEOILM` (2026-08-17 to 2026-09-17, 32 days)
-- **Trades**: 132 (90 wins / 42 losses)
-- **Win Rate**: **68.2%**
-- **Profit Factor**: **1.87**
-- **Net Realized Profit**: **+₹79,939.63 (+79.94%)**
-- **Max Drawdown**: **-13.44%**
-
-### `GOLDM` (2026-08-17 to 2026-09-17, 32 days)
-- **Trades**: 39 (27 wins / 12 losses)
-- **Win Rate**: **69.2%**
-- **Profit Factor**: **2.72**
-- **Net Realized Profit**: **+₹58,795.02 (+58.80%)**
-- **Max Drawdown**: **-7.89%**
-
-**Read this honestly**: 32 days and ~40-130 trades per symbol is a real, disciplined result (both were found via credible-sample-size sweeps requiring ≥15 trades, not cherry-picked), but it is genuinely a smaller evidence base than the "multi-year" framing that used to be quoted here — that framing was wrong; MCX's monthly-expiry contracts mean there is no multi-year real intraday archive to test against. These numbers will be re-verified and updated as the archive grows via the nightly top-up.
-
-### NSE Currency Derivatives (24-60 days depending on pair, per-pair calibrated thresholds)
-
-Same capital/risk/leverage as above; `markets/currency/strategies/tf_5min/scalping/backtest.py` (rule-based).
-
-| Pair | Trades | Win Rate | Profit Factor | Net Realized | Max Drawdown |
+| `UPSTOX_API_KEY`, `UPSTOX_API_SECRET`, `UPSTOX_REDIRECT_URI`, `UPSTOX_USERNAME`, `UPSTOX_PIN`, `UPSTOX_TOTP_SECRET` | Upstox login; the token is refreshed headlessly and cached in `var/cache/upstox_token.json`, never in `.env` |
+| `MCX_TREND_CARRY_CAPITAL`, `MCX_TREND_CARRY_EXPOSURE` | MCX account size and exposure |
+| `RESULTS_GAP_LEVERAGE` | results gap size (3x), never above Upstox's own limit for the stock |
+| `CRYPTO_MAX_TOTAL_NOTIONAL_X`, `CRYPTO_MAX_TOTAL_RISK_PCT` | optional whole-book crypto caps (0 = off) |
+| `DELTA_DEMO_API_KEY`, `DELTA_DEMO_API_SECRET`, `DELTA_PLACE_REAL_ORDERS` | Delta demo-account orders (off by default) |
+| `ALLOW_LIVE_TRADING` | one of the three switches real orders would need (off) |
+| `MARGIN_REFRESH_MIN`, `MARGIN_MAX_AGE_HOURS`, `MARGIN_VERIFY` | how often Upstox margin rates are refreshed |
+| `BACKTEST_ADMIN_TOKEN` | token for the website's data-changing calls (unset = those calls are refused) |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | alerts (optional) |
+
+`.env` still holds settings of removed parts (`DRYRUN_*`, `CURRENCY_*`, `EQUITY_*`, sandbox keys, ...); nothing reads them.
+
+## Costs used in every backtest and paper trade
+
+| | MCX futures | NSE equity intraday | NSE equity delivery | NSE index options | Crypto perps (Delta) |
 |---|---|---|---|---|---|
-| `USDINR` | 45 | 48.9% | 3.13 | **+₹13,853.68 (+13.85%)** | -1.46% |
-| `EURINR` | 43 | 39.5% | 2.23 | **+₹9,721.30 (+9.72%)** | -3.85% |
-| `GBPINR` | 17 | 41.2% | 2.87 | **+₹4,678.85 (+4.68%)** | -1.80% |
+| Brokerage | Rs30 per order (Upstox Plus) | Rs30 or 0.05% | Rs30 or 0.1% + Rs20 DP per sale | Rs30 per order | 0.05% taker / 0.02% maker |
+| Tax on the sale | CTT 0.01% | STT 0.025% | STT 0.1% both sides | STT 0.15% of premium (0.10% before Apr 2026) | -- |
+| Other | stamp, exchange, SEBI, GST 18% | stamp 0.003%, exchange, SEBI, GST | stamp 0.015%, exchange, SEBI, GST | exchange 0.0353%, stamp 0.003%, GST | GST 18% on fees, real funding |
+| Slippage | half the bid-ask spread | 0.1% a side | 5 bp a side | max(Rs0.10, 0.5% of premium) | per coin |
 
-Note the win rates: all under 50%, yet all profitable with strong profit factors — see [NSE Currency Derivatives](#nse-currency-derivatives-backtest_currencypy-entry_thresholds-per-pair) above for why. `USDINR`/`GBPINR` had every one of their credible sweep combinations profitable (100%); `EURINR` had 56%. Same small-sample caveat as commodities applies.
+Code: `markets/commodity/costs.py`, the `costs()` / `delivery_costs()` of the equity strategies, and constants in the crypto strategy.
 
-### NSE Equity — full NIFTY50 universe (2022-08 to 2026-09, 3 independent train/test folds)
+## Fill model (read before trusting any backtest)
 
-Unlike commodity/currency, equity has a genuine multi-year real archive (NSE cash has no monthly-expiry cap), so this was validated with real out-of-sample folds rather than one short window. Capital ₹100,000, risk 5%, leverage 5x, max 3 concurrent positions, `markets/equity/strategies/tf_5min/scalping/backtest.py`, no ML filter (see [Equity's ML model](#equitys-ml-model-trained-but-deliberately-not-used-live) for why).
-
-| Fold | Test period | Trades | Win Rate | Profit Factor | Net Realized |
-|---|---|---|---|---|---|
-| 1 | 2025-07-01 to 2026-09-18 | 422 | 64.7% | 1.43 | **+₹195,313 (+195.31%)** |
-| 2 | 2024-07-01 to 2025-06-30 | 453 | 68.0% | 1.56 | **+₹345,530 (+345.53%)** |
-| 3 | 2023-09-01 to 2024-08-31 | 599 | 65.8% | 1.41 | **+₹236,449 (+236.45%)** |
-
-All three folds are independently seeded at ₹100,000 (not chained/compounded across folds) specifically so each fold's win rate/PF is a fair, comparable measurement — win rate holds in a tight 64.7–68.0% band and profit factor in 1.41–1.56 across three non-overlapping multi-month periods, the strongest cross-period consistency found anywhere in this project. Max drawdown is real and significant on all three (33–43%) — this is a genuinely rougher ride than the commodity/currency numbers above, consistent with equity's higher-beta, high-conviction-but-fewer-trades shape (see [NSE Equity](#nse-equity-nifty50-intraday-scalping-backtest_equitypy-one-shared-entry_thresholds) for the concentration-risk cap that keeps it from being worse). Not yet proven with real capital — currently paper-trading only.
-
----
-
-## Automated Testing Suite
-
-To run all unit tests (statutory cost calculators, the scalper pipelines, the strategy framework and the risk gates):
-
-```bash
-cd backend
-.venv/bin/python3 -m unittest discover -s tests
-RUN_REPLAY=1 .venv/bin/python3 -m unittest tests.test_strategy_parity   # + the ~1 min bar-by-bar replay of the paper runner
-```
-
-`tests/test_strategy_parity.py` locks the trading behaviour: golden files record what the scalpers did (orders, trades, real-order broker calls) and the code must reproduce them exactly. If you change behaviour **on purpose**, regenerate the golden that moved (commands are in that file's docstring).
-
-
-## What is read from Upstox at runtime (and what is not)
-
-| Item | Source | Refresh |
-|---|---|---|
-| Margin per lot / leverage per symbol | `ChargeApi.post_margin` (margin calculator) | start, hourly, and the exact order before every entry (`engine/margin_rates.py`) |
-| Lot size, tick size | Instrument master (`lot_size`, `tick_size`) by exact instrument key | hourly; a revised lot size scales multipliers, sizing and costs automatically and alerts |
-| Session hours (open / close) | `MarketHolidaysAndTimingsApi.get_exchange_timings` | start, hourly, and the next trading day at rollover (`core/sessions.py`) |
-| Trading holidays | Upstox holiday API (`services/utils/market_holidays.py`) | daily |
-| Contract / expiry (instrument keys) | Instrument master, nearest expiry | daily rollover |
-| Charges (brokerage, taxes) | Modelled in `markets/*/costs.py`, **checked against `ChargeApi.get_brokerage`** | start and nightly (`engine/cost_drift.py`); alerts on drift |
-| Auto square-off time | **Not available from any Upstox API** | policy minutes-before-close (see env table); pinned by tests |
-| NIFTY50 universe | **Not available** (no index-constituent API); fixed and performance-blind by design | manual |
-
-
+A stop fills at the stop price only if the bar opened on the right side of it; otherwise it fills at that open. When one bar reaches
+both stop and target, the stop comes first unless the 1-minute path says otherwise. Code: `core/exits.py`, `core/minute_bars.py`.
+Results from before 2026-10-07 filled every stop at the stop price and are not valid.

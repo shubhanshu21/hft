@@ -49,7 +49,7 @@ export default function TodayPage() {
       <section className="strip">
         <div className="cell lead"><span className="k">Total value · 3 accounts</span><b className="big-v">{inr(total)}</b></div>
         <div className="cell"><span className="k">Since start</span><b className={tone(gain)}>{signed(gain)}</b><small className={tone(gain)}>{gain >= 0 ? "▲" : "▼"} {Math.abs(pctOf(t.value, t.start)).toFixed(2)}% on {inr(t.start)}</small></div>
-        <div className="cell"><span className="k">Today (sold + open)</span><b className={t.today_pnl ? tone(t.today_pnl) : ""}>{signed(t.today_pnl)}</b><small>{d.recent.filter((r) => String(r.exit_dt).slice(0, 10) === d.as_of.slice(0, 10)).length} sold today</small></div>
+        <div className="cell"><span className="k">Today</span><b className={t.today_pnl ? tone(t.today_pnl) : ""}>{signed(t.today_pnl)}</b><small>{d.recent.filter((r) => String(r.exit_dt).slice(0, 10) === d.as_of.slice(0, 10)).length} sold today</small></div>
         <div className="cell"><span className="k">Open positions</span><b>{t.open_count}</b><small>{positions.length ? positions.map((p) => p.symbol).join(", ") : "none"}</small></div>
         <div className="cell"><span className="k">Engines</span><b className={problems.length ? "down" : "up"}><span className={`pulse ${problems.length ? "bad" : ""}`} />{problems.length ? `${problems.length} down` : `${ok.length} / ${d.accounts.length} up`}</b><small>checked every 15 min</small></div>
       </section>
