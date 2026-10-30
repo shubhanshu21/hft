@@ -86,6 +86,8 @@ kbd{font-family:var(--font-ui);font-size:.68rem;font-weight:700;border:1px solid
 .fills li:first-child{border-top:0}.f-s{font-weight:700;font-size:.86rem;min-width:0}.f-s small{display:block;color:var(--muted);font-weight:600;font-size:.72rem}
 
 @media (max-width:1280px){.g-chart,.g-pos,.g-accts{grid-column:span 12}.g-alloc,.g-sched,.g-fills{grid-column:span 6}.g-fills{grid-column:span 12}}
+/* phones: long contract names (CRUDEOILM26NOVFUT) wrap so the money columns fit on screen (2026-10-30 QA) */
+@media (max-width:640px){.g-pos .blotter td:first-child{white-space:normal;overflow-wrap:anywhere;min-width:7ch}}
 @media (max-width:1100px){.strip{grid-template-columns:repeat(2,minmax(0,1fr))}.strip .lead{grid-column:1 / -1}.strip .cell + .cell{border-left:0}
   .strip .cell{border-top:1px solid var(--line)}.strip .lead{border-top:0}.strip .cell:nth-child(odd):not(.lead){border-left:1px solid var(--line)}}
 @media (max-width:900px){
