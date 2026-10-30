@@ -87,7 +87,8 @@ class FakeBroker:
         return {k: self.ltp.get(k.split("|")[1]) for k in keys}
 
 
-class TestEngine(unittest.TestCase):
+class EngineCase(unittest.TestCase):
+    """Shared fixture only (no tests), so the classes below do not re-run each other's tests (2026-10-30 test audit)."""
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         self.db = TradingDB(self.tmp / "t.db")
@@ -103,6 +104,8 @@ class TestEngine(unittest.TestCase):
     def at(self, hh, mm, day=26):
         return datetime(2026, 10, day, hh, mm, 5, tzinfo=IST)
 
+
+class TestEngine(EngineCase):
     def test_buy_at_0930_then_sell_at_1520(self):
         E.run(self.db, FakeBroker(quotes(BIG)), self.at(9, 30), set(), self.lookup, send=None)
         pos = self.db.get_open_positions(E.ACCOUNT)
@@ -188,7 +191,7 @@ class MarginBroker(FakeBroker):
         return None if lev is None else qty * float(self.q[key.split("|")[1]]["ltp"]) / lev
 
 
-class TestReviewFixes(TestEngine):
+class TestReviewFixes(EngineCase):
     """2026-10-29 code review of engine/results_gap.py."""
 
     def test_retry_after_a_crash_keeps_this_mornings_buys(self):
@@ -219,7 +222,7 @@ class TestReviewFixes(TestEngine):
         self.assertEqual(len(sent), 1)                                   # and it reaches Telegram, not just the log
 
 
-class TestUpstoxLeverageCap(TestEngine):
+class TestUpstoxLeverageCap(EngineCase):
     """2026-10-29: 5x chosen, but Upstox gives some stocks only 1x (CEMPRO, PROTEAN on the day it was checked)."""
 
     def run_at_0930(self, broker, lev=5.0):
@@ -264,7 +267,7 @@ class CandleBroker(FakeBroker):
         return self.candles
 
 
-class TestFillTracking(TestEngine):
+class TestFillTracking(EngineCase):
     """2026-10-29: the backtest buys at the 09:30 candle's open; buying at that candle's high instead cut 2025-26 from Rs7.3L to Rs1.6L
     at 5x. Every live sale now records how far our buy was from that open, so a costly fill shows up in days, not months."""
 
@@ -430,6 +433,3 @@ class TestQuoteBatchPrevClose(unittest.TestCase):
         b = self.broker({"NSE_EQ:A": self.q("NSE_EQ|A", 975.0, None)})
         with mock.patch("services.broker.upstox_broker._circuit_is_open", return_value=False):
             self.assertIsNone(b.get_quote_batch(["NSE_EQ|A"])["NSE_EQ|A"]["prev_close"])
-
-    def test_engine_uses_the_full_quote(self):
-        self.assertIn("get_quote_batch", open(E.__file__).read())

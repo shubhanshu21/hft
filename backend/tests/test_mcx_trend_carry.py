@@ -58,7 +58,8 @@ class TestNeedsRebalance(unittest.TestCase):
         self.assertFalse(self.due({"rebalanced_on": str(DAYS[-3].date()), "opened": ["P1"]}, ids={"P1"}))
 
 
-class TestRun(unittest.TestCase):
+class RunCase(unittest.TestCase):
+    """Shared fixture only (no tests), so TestRebalanceLikeTheBacktest does not re-run TestRun's tests (2026-10-30 test audit)."""
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         self.db = TradingDB(self.tmp / "t.db")
@@ -84,6 +85,8 @@ class TestRun(unittest.TestCase):
     def gold(self):
         return [p for p in self.db.get_open_positions(M.ACCOUNT) if p["symbol"].startswith("GOLD")]
 
+
+class TestRun(RunCase):
     def test_reset_account_buys_the_current_signal(self):
         M.STATE.write_text(json.dumps({"reset_at": "2026-10-24T20:16:20+05:30"}))      # the live state after the 2026-10-24 reset
         out = self.run_once()
@@ -146,7 +149,7 @@ if __name__ == "__main__":
 
 
 
-class TestRebalanceLikeTheBacktest(TestRun):
+class TestRebalanceLikeTheBacktest(RunCase):
     """2026-10-29 code review: the live re-check must trade like trend_carry.backtest -- resize by the difference, size from the
     marked-to-market account value, and never sell a holding before the contract it moves into has a price."""
 
