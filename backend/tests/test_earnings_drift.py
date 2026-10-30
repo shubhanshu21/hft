@@ -7,7 +7,6 @@ from datetime import date, datetime
 from pathlib import Path
 from unittest import mock
 
-import numpy as np
 import pandas as pd
 
 from engine import earnings_drift as E
@@ -52,9 +51,6 @@ class TestStrategy(unittest.TestCase):
         fee, slip = S._fee(10_000, 11_000)
         self.assertAlmostEqual(c["total"], fee + slip, places=2)
         self.assertGreater(c["stt"], 0)
-
-    def test_holds_up_to_ten_stocks(self):
-        self.assertEqual(S.K, 10)                       # 2026-10-29 research: 10 x 1/10 beat 5 x 1/5 on 2022-24 and in the shared account
 
     def test_trading_days_held(self):
         self.assertEqual(S.trading_days_held(date(2026, 10, 23), date(2026, 10, 26), set()), 1)              # Fri -> Mon
@@ -136,6 +132,37 @@ class TestEngine(Base):
         E.fill(self.db, Broker({}), self.at(9, 46), self.lookup, [])
         E.fill(self.db, Broker({"GOOD": 200.0}), self.at(15, 20), self.lookup, [])
         self.assertEqual(self.db.get_open_positions(E.ACCOUNT), [])
+
+
+class TestTenSlots(Base):
+    """2026-10-29: up to 10 stocks, a tenth of the drift money each (was 5 x 1/5)."""
+    def many(self, n):
+        syms = [f"W{i:02d}" for i in range(n)] + [f"F{i}" for i in range(20)]
+        C = pd.DataFrame(100.0, index=DAYS, columns=syms); VAL = pd.DataFrame(1e7, index=DAYS, columns=syms)
+        m = DAYS.get_loc(pd.Timestamp("2026-10-22"))
+        for i in range(n):
+            C.iloc[m:, i] = 100 * (1.10 + i / 1000); VAL.iloc[m:m + 2, i] = 5e7      # all strong; W(n-1) strongest
+        ind = {"C": C, "O": C.copy(), "VAL": VAL, "univ": pd.DataFrame(True, index=DAYS, columns=syms), "breadth": pd.Series(80.0, index=DAYS)}
+        ev = pd.DataFrame({"sym": syms[:n], "d": pd.Timestamp("2026-10-22")})
+        return ind, ev
+
+    def test_eleven_signals_buy_the_ten_strongest(self):
+        ind, ev = self.many(11)
+        with mock.patch.object(E, "_indicators", return_value=ind), mock.patch.object(S, "results_events", return_value=ev):
+            E.plan(self.db, self.at(8, 50).date(), set())
+        E.fill(self.db, Broker({f"W{i:02d}": 100.0 for i in range(11)}), self.at(9, 30), self.lookup, [])
+        pos = self.db.get_open_positions(E.ACCOUNT)
+        self.assertEqual(len(pos), 10)
+        self.assertNotIn("W00", {p["symbol"] for p in pos})                     # the weakest reaction waits
+        self.assertTrue(all(p["qty"] * p["entry_price"] <= S.SLEEVE_CAPITAL / 10 for p in pos))
+
+    def test_a_share_dearer_than_the_slot_says_so(self):
+        with mock.patch.object(E, "_indicators", return_value=make_ind()):
+            E.plan(self.db, self.at(8, 50).date(), set())
+        lines = []
+        E.fill(self.db, Broker({"GOOD": 15_000.0}), self.at(9, 30), self.lookup, lines)   # Rs1L free, slot Rs10k
+        self.assertEqual(self.db.get_open_positions(E.ACCOUNT), [])
+        self.assertIn("costs more than its 1/10 slot", " ".join(lines))
 
 
 class TestSharedAccount(Base):

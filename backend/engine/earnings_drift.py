@@ -123,11 +123,13 @@ def fill(db, broker, now: datetime, lookup, lines: list) -> None:
             buys.remove(s); continue
         if s not in px:
             continue
-        free = float(db.get_account(ACCOUNT)["current_capital"]) - locked_cash(db)
-        qty = int(min(sleeve_value(db) / S.K, free) // px[s])
+        free, slot = float(db.get_account(ACCOUNT)["current_capital"]) - locked_cash(db), sleeve_value(db) / S.K
+        qty = int(min(slot, free) // px[s])
         buys.remove(s)
         if qty < 1:
-            lines.append(f"earnings drift: {s} skipped -- not enough free cash ({_inr(free)})")
+            why = (f"one share ({_inr(px[s])}) costs more than its 1/{S.K} slot ({_inr(slot)})" if free >= slot
+                   else f"not enough free cash ({_inr(free)})")
+            lines.append(f"earnings drift: {s} skipped -- {why}")
             continue
         db.open_position(f"POS_ED_{now:%Y%m%d}_{s}", s, "long", qty, px[s], 0.0, 0.0, px[s], account_id=ACCOUNT, instrument_key=keys[s],
                          strategy=S.NAME, state=json.dumps({"entry_date": str(now.date()), "fill": "official open (pre-open auction)"}))

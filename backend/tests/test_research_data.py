@@ -161,3 +161,36 @@ class TestCurrencyBhavcopy(unittest.TestCase):
         self.assertEqual(len(df), 1)
         self.assertEqual(df.iloc[0].expiry, "2026-10-28")
         self.assertAlmostEqual(df.iloc[0].underlying, 96.88)
+
+
+class TestIndexOptions(unittest.TestCase):
+    """Index option archives (2026-10-29): the Nifty weekly job generalised so Bank Nifty's monthly options use the same code,
+    with its own index file, folder and a wider strike band (a monthly expiry spans a month of moves)."""
+
+    def test_bank_nifty_uses_its_index_band_and_folder(self):
+        from types import SimpleNamespace as NS
+        tmp = Path(tempfile.mkdtemp())
+        (tmp / "index").mkdir()
+        pd.DataFrame({"timestamp": ["2026-08-27T15:29:00+05:30", "2026-09-24T15:29:00+05:30"], "close": [50000.0, 50000.0]}).to_csv(
+            tmp / "index" / "NIFTYBANK_1minute.csv.gz", index=False, compression="gzip")
+        asked = []
+
+        class Api:
+            def get_expiries(self, u):
+                asked.append(("expiries", u)); return NS(data=["2026-08-27", "2026-09-24", "2099-01-01"])
+            def get_expired_option_contracts(self, u, e):
+                return NS(data=[NS(strike_price=k, instrument_type=t, instrument_key=f"{k}{t}", trading_symbol=f"BN{k}{t}")
+                                for k in (47000.0, 48000.0, 50000.0, 52000.0, 53000.0) for t in ("CE", "PE")])
+            def get_expired_historical_candle_data(self, key, unit, e, frm):
+                asked.append(("candles", key))
+                return NS(data=NS(candles=[[f"{e}T09:15:00+05:30", 10, 11, 9, 10.5, 100, 5]]))
+
+        with patch.object(rd, "ARCHIVE_ROOT", tmp), patch.object(rd, "expired_api", lambda: Api()), patch.object(rd, "pace", lambda: None):
+            rd.JOBS["banknifty-options-oi"]()
+        self.assertIn(("expiries", "NSE_INDEX|Nifty Bank"), asked)
+        keys = {k for kind, k in asked if kind == "candles"}
+        self.assertTrue({"48000.0CE", "50000.0PE", "52000.0CE"} <= keys)          # within +-5% of 50,000
+        self.assertFalse({"47000.0CE", "53000.0PE"} & keys)                        # outside
+        out = pd.read_csv(tmp / "options" / "BANKNIFTY" / "2026-09-24.csv.gz")
+        self.assertEqual(set(out["type"]), {"CE", "PE"})
+        self.assertFalse((tmp / "options" / "BANKNIFTY" / "2099-01-01.csv.gz").exists())   # future expiries are not fetched

@@ -5,6 +5,7 @@
     python3 -m engine.research_data index-futures         # NIFTY / BANKNIFTY front-month futures, 1-minute with open interest
     python3 -m engine.research_data participant-oi        # NSE daily open interest and volume by participant (FII / DII / Pro / Client)
     python3 -m engine.research_data nifty-options-oi      # Nifty weekly options within +-3% of the index: 5-minute OHLC + open interest
+    python3 -m engine.research_data banknifty-options-oi  # Bank Nifty (monthly since Nov 2024) options within +-5%: same format
     python3 -m engine.research_data fii-dii-cash          # FII / DII cash-market buy-sell (NSE serves only the latest day: daily)
     python3 -m engine.research_data bulk-block            # bulk and block deals (latest day only: daily)
     python3 -m engine.research_data delivery              # delivery quantity and % per NIFTY50 stock, NSE bhavcopy, 2020 onward
@@ -250,22 +251,34 @@ def job_participant_oi(start="2020-01-01") -> None:
 def job_nifty_options_oi() -> None:
     """Per weekly expiry: every strike within +-3% of the Nifty close on the day the expiry became the front week, CE and PE,
     1-minute candles (each expired contract's last month) -> 5-minute OHLC + volume + open interest, one gz per expiry."""
+    index_options("NIFTY", "NSE_INDEX|Nifty 50", "NIFTY50_1minute.csv.gz", OPTIONS_BAND)
+
+
+def job_banknifty_options_oi() -> None:
+    """Bank Nifty options (2026-10-29, user: options research for Nifty and Bank Nifty), like job_nifty_options_oi. Bank Nifty has had only
+    MONTHLY expiries since Nov 2024 (SEBI), so the strike band is +-5%: a month of moves, not a week."""
+    index_options("BANKNIFTY", "NSE_INDEX|Nifty Bank", "NIFTYBANK_1minute.csv.gz", 0.05)
+
+
+def index_options(name: str, underlying: str, spot_file: str, band: float) -> None:
+    """Per expiry of `underlying`: every strike within +-band of the index close on the day the expiry became the front one, CE and PE,
+    1-minute candles (each expired contract's last month) -> 5-minute OHLC + volume + open interest, var/archive/options/<name>/<expiry>.csv.gz."""
     api = expired_api()
-    spot = read_gz(ARCHIVE_ROOT / "index" / "NIFTY50_1minute.csv.gz")
+    spot = read_gz(ARCHIVE_ROOT / "index" / spot_file)
     if spot.empty:
-        log("nifty-options-oi needs the index job first (NIFTY50_1minute)")
+        log(f"{name} options need the index job first ({spot_file})")
         return
     spot["day"] = spot["timestamp"].str[:10]
     day_close = spot.groupby("day")["close"].last()
-    root = ARCHIVE_ROOT / "options" / "NIFTY"
+    root = ARCHIVE_ROOT / "options" / name
     pace()
-    expiries = sorted(api.get_expiries("NSE_INDEX|Nifty 50").data or [])
+    expiries = sorted(api.get_expiries(underlying).data or [])
     prev = None
     for e in expiries:
         if e >= date.today().isoformat():
             break
         out = root / f"{e}.csv.gz"
-        if not out.exists() and out_of_time(f"options {e}"):
+        if not out.exists() and out_of_time(f"{name} options {e}"):
             break
         if out.exists():
             prev = e
@@ -277,8 +290,8 @@ def job_nifty_options_oi() -> None:
             continue
         s0 = float(ref.iloc[-1])
         pace()
-        contracts = api.get_expired_option_contracts("NSE_INDEX|Nifty 50", e).data or []
-        pick = [c for c in contracts if abs(c.strike_price / s0 - 1) <= OPTIONS_BAND]
+        contracts = api.get_expired_option_contracts(underlying, e).data or []
+        pick = [c for c in contracts if abs(c.strike_price / s0 - 1) <= band]
         frm = (date.fromisoformat(ref_day) - timedelta(days=1)).isoformat()
         frames = []
         for c in pick:
@@ -300,7 +313,7 @@ def job_nifty_options_oi() -> None:
         if frames:
             out.parent.mkdir(parents=True, exist_ok=True)
             concat(frames).to_csv(out, index=False, compression="gzip")
-            log(f"options {e}: {len(pick)} contracts around {s0:.0f}")
+            log(f"{name} options {e}: {len(pick)} contracts around {s0:.0f}")
         prev = e
 
 
@@ -560,7 +573,8 @@ def _save_currency_daily(frames, holidays, none_file) -> None:
 
 
 JOBS = {"equity-1m": job_equity_1m, "index": job_index, "index-futures": job_index_futures,
-        "participant-oi": job_participant_oi, "nifty-options-oi": job_nifty_options_oi, "fii-dii-cash": job_fii_dii_cash,
+        "participant-oi": job_participant_oi, "nifty-options-oi": job_nifty_options_oi,
+        "banknifty-options-oi": job_banknifty_options_oi, "fii-dii-cash": job_fii_dii_cash,
         "bulk-block": job_bulk_block, "delivery": job_delivery, "events": job_events, "global-1m": job_global_1m,
         "currency-daily": job_currency_daily}
 
@@ -577,7 +591,7 @@ def main(argv=None) -> int:
     global _deadline
     _deadline = time.time() + a.max_minutes * 60 if a.max_minutes else None
     order = (["fii-dii-cash", "bulk-block", "global-1m", "index", "participant-oi", "events", "delivery", "currency-daily", "index-futures",
-              "equity-1m", "nifty-options-oi"] if a.job == "all" else [a.job])     # the collect-daily-or-lose-it sources first
+              "equity-1m", "nifty-options-oi", "banknifty-options-oi"] if a.job == "all" else [a.job])     # the collect-daily-or-lose-it sources first
     failed = []
     for name in order:
         if out_of_time(name):
