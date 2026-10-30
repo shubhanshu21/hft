@@ -118,6 +118,15 @@ class TestEngine(unittest.TestCase):
         self.assertAlmostEqual(t["net_pnl"], gross - S.costs(112.0, 115.0, qty)["total"], places=2)
         self.assertAlmostEqual(self.db.get_account(E.ACCOUNT)["current_capital"], 100_000 + t["net_pnl"], places=2)
 
+    def test_the_1520_run_records_the_days_value(self):
+        """2026-10-30 QA: the account page's value-by-day chart stayed empty -- the other engines write a daily snapshot, this one did not."""
+        E.run(self.db, FakeBroker(quotes(BIG)), self.at(9, 30), set(), self.lookup, send=None)
+        self.assertEqual(self.db.get_snapshots(account_id=E.ACCOUNT), [])
+        E.run(self.db, FakeBroker(quotes(BIG), ltp={"WIN": 115.0}), self.at(15, 20), set(), self.lookup, send=None)
+        snaps = self.db.get_snapshots(account_id=E.ACCOUNT)
+        self.assertEqual(len(snaps), 1)
+        self.assertAlmostEqual(snaps[0]["current_capital"], float(self.db.get_account(E.ACCOUNT)["current_capital"]))
+
     def test_no_price_keeps_it_open_and_next_morning_sells_it(self):
         E.run(self.db, FakeBroker(quotes(BIG)), self.at(9, 30), set(), self.lookup, send=None)
         E.run(self.db, FakeBroker(quotes(BIG), ltp={}), self.at(15, 20), set(), self.lookup, send=None)

@@ -9,7 +9,7 @@ const PAGES = [
   ["paper/RESULTS_GAP", ["Results gap + earnings drift", "Account value", "Open positions", "Closed trades"]],
   ["paper/MCX_TREND_CARRY", ["MCX trend + carry", "Account value", "Engine"]],
   ["results", ["Saved results", "Where the money went"]],
-  ["new", ["Backtest builder", "What to test", "Money, fees and slippage", "Run backtest"]],
+  ["new", ["Backtest builder", "What to test", "Money, fees and slippage", "Run backtest", "(data from "]],   // the Year list labels the strategy's own data start (2026-10-30 QA)
 ];
 const SIZES = [["desktop", 1440, 900], ["phone", 390, 844]];
 

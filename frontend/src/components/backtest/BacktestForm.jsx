@@ -5,7 +5,7 @@ import { niceDate } from "../../lib/format.js";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const THIS_YEAR = new Date().getFullYear();
-const FIRST_YEAR = 2022;                    // the archived daily candles start in September 2022
+const FIRST_YEAR = 2022;                    // the Year list starts here; each strategy's own data start is labelled (since)
 const YEARS = Array.from({ length: THIS_YEAR - FIRST_YEAR + 1 }, (_, i) => THIS_YEAR - i);
 // Remembers the last market, strategy and dates used (this browser only; 2026-10-24) so a repeat test needs no re-typing.
 const SAVED_KEY = "lastBacktest";
@@ -88,7 +88,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
         <div className="form-grid when-grid">
           <div className="field"><label htmlFor="year">Year</label>
             <select id="year" value={/^\d{4}$/.test(year) ? year : "custom"} onChange={(e) => pickYear(e.target.value)}>
-              {YEARS.map((y) => <option key={y} value={y}>{y}{y === FIRST_YEAR ? " (data starts in September)" : y === THIS_YEAR ? " (so far)" : ""}</option>)}
+              {YEARS.map((y) => <option key={y} value={y}>{y}{y === Number(since.slice(0, 4)) ? ` (data from ${niceDate(since)})` : y === THIS_YEAR ? " (so far)" : ""}</option>)}
               <option value="custom">Custom dates</option>
             </select>
             </div>
@@ -111,7 +111,7 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
         {gap && (
           <p className="hint">Intraday, buys only: the morning after a company's quarterly results, it buys at 09:30 if the stock opened 7% or more above the
             market and is still above its 09:15 opening price, and sells everything at 15:20. It skips stocks that were frozen at 09:30 or had under Rs50 lakh
-            traded then. Stocks: every NSE stock with at least Rs10 crore traded a day over the previous 20 days at the time (no hindsight list); data September 2022 to mid-October 2026. Real Upstox intraday costs + 0.1% slippage
+            traded then. Stocks: every NSE stock with at least Rs10 crore traded a day over the previous 20 days at the time (no hindsight list). Real Upstox intraday costs + 0.1% slippage
             each way are always charged.</p>
         )}
         {auto && !gap && (

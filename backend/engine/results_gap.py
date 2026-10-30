@@ -246,6 +246,7 @@ def _close(db, broker, p: dict, now: datetime, reason: str, lines: list) -> bool
 def exit_all(db, broker, now: datetime, lines: list) -> None:
     for p in _own(db):
         _close(db, broker, p, now, "end_of_day", lines)
+    db.record_snapshot(ACCOUNT)                    # the day's value for the account page's chart (MCX and crypto write theirs too)
     st = _state()
     st["exited_on"] = str(now.date())
     _save_state(st)
