@@ -103,4 +103,5 @@ class UpstoxConfig:
             "access_token": token,
             "saved_at": datetime.now(timezone.utc).isoformat(),
         }))
+        os.chmod(_TOKEN_CACHE_PATH, 0o600)     # owner-only: the token can trade the account (2026-10-30 security audit)
         cls.ACCESS_TOKEN = token

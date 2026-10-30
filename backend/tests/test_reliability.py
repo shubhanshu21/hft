@@ -209,3 +209,24 @@ class TestTokenSharedBetweenProcesses(unittest.TestCase):
             login.assert_called_once()
 
 
+
+
+class TestTokenFileIsPrivate(unittest.TestCase):
+    """2026-10-30 security audit: the Upstox token cache was written with the default umask (0664 when the file is new),
+    so another local account could read a bearer token that can trade the owner's account."""
+
+    def test_a_new_token_file_is_owner_only(self):
+        import stat
+        from engine import config as C
+        path = Path(tempfile.mkdtemp()) / "cache" / "upstox_token.json"
+        old = os.umask(0o002)
+        try:
+            with patch.object(C, "_TOKEN_CACHE_PATH", path), patch.object(C.UpstoxConfig, "ACCESS_TOKEN", ""):
+                C.UpstoxConfig.save_access_token("tok123")
+                self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+                self.assertEqual(json.loads(path.read_text())["access_token"], "tok123")
+                path.chmod(0o644)                                         # an older file with loose permissions
+                C.UpstoxConfig.save_access_token("tok456")
+                self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+        finally:
+            os.umask(old)
