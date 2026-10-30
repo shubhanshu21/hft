@@ -316,6 +316,13 @@ def process_exits(db: TradingDB, state: dict, candles_map: dict, live_info: dict
             # instead, before anything is credited.
             _log.warning("%s was already closed in the database (%s); dropping it from the state without booking it again.",
                          pos_id, already.get("exit_reason"))
+            # Its trade row (if that write happened) is the booked result the state never got: credit it once (2026-10-30 review).
+            t = next((t for t in db.get_trades(limit=10_000, account_id=ACCOUNT_ID) if t.get("position_id") == pos_id), None)
+            if t is not None:
+                state["trading_capital"] += float(t["net_pnl"] or 0)
+                state["total_fees_paid"] += float(t["total_friction"] or 0)
+                state["completed_trades_count"] += 1
+                state["winning_trades_count"] += int(float(t["net_pnl"] or 0) > 0)
             del state["open_positions"][coin]
             continue
         state["trading_capital"] += net_inr

@@ -239,6 +239,25 @@ class TestLedgerSurvivesACrash(unittest.TestCase):
         self.assertEqual(state["trading_capital"], 100_000.0, "a re-run must not credit the same exit again")
         self.assertEqual(len(self.db.get_trades(account_id=E.ACCOUNT_ID)), 0)
 
+    def test_an_exit_booked_before_a_crash_still_reaches_the_capital(self):
+        """2026-10-30 review: the trade row was written, then the run died before saving the state (e.g. an error while looking for
+        entries). The next run dropped the position without booking it twice -- but also never added its profit to the capital, and
+        then overwrote the database's capital with that stale number. Now it credits the recorded trade's result once."""
+        self.db.open_position("P", "DOT", "long", 10.0, 100.0, 93.0, 115.0, 100.0, account_id=E.ACCOUNT_ID)
+        self.db.close_position("P", 105.0, "target", 500.0, 450.0, 50.0)
+        self.db.record_trade(position_id="P", symbol="DOT", direction="long", qty=10.0, entry_price=100.0, exit_price=105.0,
+                             entry_dt="2026-10-30T01:00:00+05:30", exit_dt="2026-10-30T02:00:00+05:30", hold_minutes=60, exit_reason="target",
+                             gross_pnl=500.0, costs_dict={"total": 50.0}, net_pnl=450.0, capital_after=100_450.0,
+                             account_id=E.ACCOUNT_ID, strategy=E.STRATEGY_NAME)
+        state = {"trading_capital": 100_000.0, "open_positions": {"DOT": position()}, "completed_trades_count": 0,
+                 "winning_trades_count": 0, "total_fees_paid": 0.0}
+        df = candles([FLAT, FLAT, (99.0, 101.5, 98.8, 101.2, 100.5)])
+        E.process_exits(self.db, state, {"DOT": df}, {"usdtinr": 90.0, "prices": {"DOT": 101.25}}, [], None)
+        self.assertNotIn("DOT", state["open_positions"])
+        self.assertEqual(state["trading_capital"], 100_450.0)
+        self.assertEqual((state["completed_trades_count"], state["winning_trades_count"], state["total_fees_paid"]), (1, 1, 50.0))
+        self.assertEqual(len(self.db.get_trades(account_id=E.ACCOUNT_ID)), 1)          # still one trade row
+
     def test_a_normal_exit_is_booked_once(self):
         self.db.open_position("P", "DOT", "long", 10.0, 100.0, 93.0, 115.0, 100.0, account_id=E.ACCOUNT_ID)
         state = {"trading_capital": 100_000.0, "open_positions": {"DOT": position()}, "completed_trades_count": 0,
