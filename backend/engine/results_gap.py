@@ -235,10 +235,9 @@ def _close(db, broker, p: dict, now: datetime, reason: str, lines: list) -> bool
     gross = (px - entry) * qty
     net = gross - c["total"]
     cap = float(db.get_account(ACCOUNT)["current_capital"]) + net
-    db.close_position(p["position_id"], px, reason, gross, net, c["total"])
     hold = (now - datetime.fromisoformat(p["entry_time"])).total_seconds() / 60
     db.record_trade(p["position_id"], p["symbol"], "long", qty, entry, px, p["entry_time"], now.isoformat(), hold, reason, gross, c, net, cap,
-                    account_id=ACCOUNT, strategy=NAME)
+                    account_id=ACCOUNT, strategy=NAME, close=True)
     lines.append(f"SOLD {p['symbol']} {qty} {entry:,.2f} -> {px:,.2f}: {'+' if net >= 0 else ''}{_inr(net)} after fees")
     return True
 

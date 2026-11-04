@@ -153,18 +153,17 @@ def candidates(ind: dict, sig: pd.DataFrame, day) -> list[str]:
 
 
 def _fee(ev: float, xv: float, slip_bp: float = SLIP_BP) -> tuple[float, float]:
-    """Backtest charges for one round trip: (Upstox delivery fees, slippage at slip_bp a side)."""
-    br = lambda v: min(v * 0.001, 30.0)
-    fees = (br(ev) + br(xv)) * 1.18 + (ev + xv) * 0.001 + ev * 0.00015 + (ev + xv) * 0.0000335 * 1.18 + 20 * 1.18
-    return fees, (ev + xv) * slip_bp / 1e4
+    """Backtest charges for one round trip: (Upstox delivery fees, slippage at slip_bp a side) -- delivery_costs' numbers, one formula."""
+    c = delivery_costs(ev, xv, 1, slip_bp)
+    return c["total"] - c["slippage"], c["slippage"]
 
 
-def delivery_costs(entry: float, exit_price: float, qty: int) -> dict:
-    """_fee as the itemised dict the trades table stores (DP charge Rs20 + GST counted with brokerage)."""
+def delivery_costs(entry: float, exit_price: float, qty: int, slip_bp: float = SLIP_BP) -> dict:
+    """Round-trip delivery charges as the itemised dict the trades table stores (DP charge Rs20 + GST counted with brokerage)."""
     ev, xv = entry * qty, exit_price * qty
     brokerage = min(ev * 0.001, 30.0) + min(xv * 0.001, 30.0) + 20.0
     stt, stamp, exch = (ev + xv) * 0.001, ev * 0.00015, (ev + xv) * 0.0000335
-    gst, slip = 0.18 * (brokerage + exch), (ev + xv) * SLIP_BP / 1e4
+    gst, slip = 0.18 * (brokerage + exch), (ev + xv) * slip_bp / 1e4
     total = brokerage + stt + stamp + exch + gst + slip
     return {"brokerage": round(brokerage, 2), "stt": round(stt, 2), "stamp_duty": round(stamp, 2), "exchange_txn": round(exch, 2),
             "sebi": 0.0, "gst": round(gst, 2), "slippage": round(slip, 2), "total": round(total, 2)}

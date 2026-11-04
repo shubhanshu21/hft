@@ -330,11 +330,10 @@ def process_exits(db: TradingDB, state: dict, candles_map: dict, live_info: dict
         state["completed_trades_count"] += 1
         if net_inr > 0:
             state["winning_trades_count"] += 1
-        db.close_position(pos_id, px, why, gross_inr, net_inr, fee_inr)
         db.record_trade(position_id=pos_id, symbol=coin, direction="long", qty=pos["qty"], entry_price=entry_px, exit_price=px,
                          entry_dt=pos["entry_time"], exit_dt=datetime.now(IST).isoformat(), hold_minutes=hours * 60, exit_reason=why,
                          gross_pnl=gross_inr, costs_dict={"brokerage": fee_inr, "slippage": 0.0, "total": fee_inr}, net_pnl=net_inr,
-                         capital_after=state["trading_capital"], account_id=ACCOUNT_ID, strategy=STRATEGY_NAME)
+                         capital_after=state["trading_capital"], account_id=ACCOUNT_ID, strategy=STRATEGY_NAME, close=True)
         sign = "+" if net_inr >= 0 else ""
         lines.append(f"CLOSED LONG {coin}: {why}\nEntry {entry_px:,.4f} -> Exit {px:,.4f} USDT\nNet PnL: {sign}{_inr(net_inr)} (fees {_inr(fee_inr)})\n"
                       f"Trading capital: {_inr(state['trading_capital'])}")

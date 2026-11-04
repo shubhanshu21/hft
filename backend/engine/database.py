@@ -368,9 +368,15 @@ class TradingDB:
                      vwap_dist_pct: Optional[float] = None,
                      ema_slope_pct: Optional[float] = None,
                      account_id: str = "DRYRUN_ACCOUNT",
-                     strategy: str = "scalping") -> int:
+                     strategy: str = "scalping", close: bool = False) -> int:
+        """close=True also closes the position in the SAME save: a crash or error between two separate saves left a CLOSED position
+        whose profit never reached the balance (2026-10-31 audit). Leave it False for a partial sale (the position stays open)."""
         now_str = datetime.now(IST).isoformat()
         with self._get_conn() as conn:
+            if close:
+                conn.execute("""UPDATE positions SET status = 'CLOSED', exit_time = ?, exit_price = ?, exit_reason = ?, gross_pnl = ?,
+                                net_pnl = ?, total_fees = ?, updated_at = ? WHERE position_id = ?""",
+                             (now_str, exit_price, exit_reason, gross_pnl, net_pnl, costs_dict.get("total", 0.0), now_str, position_id))
             cur = conn.execute("""
             INSERT INTO trades (
                 position_id, account_id, symbol, direction, qty,

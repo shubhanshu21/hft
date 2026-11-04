@@ -51,6 +51,9 @@ class TestStrategy(unittest.TestCase):
         fee, slip = S._fee(10_000, 11_000)
         self.assertAlmostEqual(c["total"], fee + slip, places=2)
         self.assertGreater(c["stt"], 0)
+        fee20, slip20 = S._fee(10_000, 11_000, 20)                 # the Backtest page's slippage changes slippage only, never the fees
+        self.assertAlmostEqual(slip20, 42.0, places=2)
+        self.assertAlmostEqual(fee20, fee, places=2)
 
     def test_trading_days_held(self):
         self.assertEqual(S.trading_days_held(date(2026, 10, 23), date(2026, 10, 26), set()), 1)              # Fri -> Mon

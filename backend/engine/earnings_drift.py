@@ -111,10 +111,9 @@ def fill(db, broker, now: datetime, lookup, lines: list) -> None:
         c = S.delivery_costs(entry, x, qty)
         gross = (x - entry) * qty; net = gross - c["total"]
         cap = float(db.get_account(ACCOUNT)["current_capital"]) + net
-        db.close_position(pid, x, why, gross, net, c["total"])
         hold = (now - datetime.fromisoformat(p["entry_time"])).total_seconds() / 60
         db.record_trade(pid, p["symbol"], "long", qty, entry, x, p["entry_time"], now.isoformat(), hold, why, gross, c, net, cap,
-                        account_id=ACCOUNT, strategy=S.NAME)
+                        account_id=ACCOUNT, strategy=S.NAME, close=True)
         lines.append(f"earnings drift: SOLD {p['symbol']} {qty} {entry:,.2f} -> {x:,.2f} at the open: {'+' if net >= 0 else ''}{_inr(net)} after fees")
         sells.pop(pid)
     held = {p["symbol"] for p in _mine(db)}

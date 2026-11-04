@@ -102,10 +102,9 @@ def run(broker, db, now: datetime, report: bool = True, send=None) -> dict:
         stt = json.loads(p.get("state") or "{}")
         c = compute_mcx_costs(stt.get("family", p["symbol"]), "long", p["entry_price"], px, p["qty"])
         capital += c["net"]
-        db.close_position(p["position_id"], px, reason, c["gross"], c["net"], c["total"])
         hold = (now - datetime.fromisoformat(p["entry_time"])).total_seconds() / 60
         db.record_trade(p["position_id"], p["symbol"], "long", p["qty"], p["entry_price"], px, p["entry_time"], now_s, hold, reason, c["gross"], c,
-                        c["net"], capital, account_id=ACCOUNT, strategy=NAME)
+                        c["net"], capital, account_id=ACCOUNT, strategy=NAME, close=True)
         lines.append(f"• SOLD {p['symbol']} {p['qty']} lot(s) {p['entry_price']:,.2f} → {px:,.2f}: {'+' if c['net'] >= 0 else ''}{_inr(c['net'])} after fees")
         return True
 
