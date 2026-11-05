@@ -263,6 +263,8 @@ def backtest(capital: float = 100_000, start: str = "2022-09-01", end: str = "21
     x = x[x["gap"].abs() < 0.25]
     x["xgap"] = x["gap"] - x.groupby("day")["gap"].transform("median")
     all_days = sorted(x["day"].unique())
+    if days_df is None and universe == "liquid":      # the 414's 5-minute archive stops at 2026-10-15; NSE's daily files keep the calendar going
+        all_days += sorted(d for d in (p.name[:10] for p in BHAV_DIR.glob("*.csv.gz")) if d > all_days[-1])
     res = results if results is not None else _results_days()
     nxt = {d: all_days[i + 1] for i, d in enumerate(all_days[:-1])}
     hit = set(res) | {(s, nxt[d]) for s, d in res if d in nxt}

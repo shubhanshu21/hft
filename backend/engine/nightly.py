@@ -27,6 +27,7 @@ STEPS = [                            # (name, argv, exit codes that count as suc
     ("mcx futures eod", [PY, "-m", "markets.commodity.futures_eod"], {0}),      # every expiry, daily: commodity trend_carry signals and backtests
     ("all nse daily", [PY, "-m", "markets.equity.all_daily", "--max-minutes", "25"], {0}),   # equity/earnings_drift: liquid pool + holdings, then the rest oldest-first
     ("results dates", [PY, "-m", "markets.equity.results_dates"], {0}),          # equity/earnings_drift: NSE results board meetings, all equities
+    ("results gap table", [PY, "-m", "markets.equity.strategies.tf_intraday.results_gap.liquid_days"], {0}),   # equity/results_gap: its backtest's new days
     ("research data", [PY, "-m", "engine.research_data", "all", "--max-minutes", "40"], {0}),     # 1-minute stocks/indexes, futures/options OI, NSE participant OI;
                                                                                                 # stops inside STEP_TIMEOUT_S and resumes next night (a 2026-10-09 first backfill was killed at 45 min)
     ("commodity daily series", [PY, "-m", "markets.commodity.daily_series"], {0}),     # daily gold / crude series for research (runs after "mcx data")

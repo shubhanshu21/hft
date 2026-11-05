@@ -8,7 +8,9 @@ apply the same >= Rs10 cr liquidity test the live engine uses.
                        DataFrame with timestamp/open/high/low/close/volume}, fetched from Upstox's history API (one request per day)
     load()             the saved table (var/archive/nse/results_gap_liquid_days.pkl), or None
 
-Built once from the 2026-10-29 research (391 Upstox requests); the 414's rows come from day_summary(), so they keep up with the archive.
+    topup()            add the days since the table's last day (nightly: python3 -m markets.equity.strategies.tf_intraday.results_gap.liquid_days)
+
+Built from the 2026-10-29 research (391 Upstox requests); kept current by topup() since 2026-11-05.
 """
 from __future__ import annotations
 
@@ -68,6 +70,51 @@ def rows(extra_bars: dict, extra_gaps: dict, min_gap: float = 0.065) -> pd.DataF
     return out.drop_duplicates(["sym", "day"]).sort_values(["day", "sym"]).reset_index(drop=True)
 
 
+def new_rows(O: pd.DataFrame, C: pd.DataFrame, hit: set, panel: list[str], after: str, fetch, min_gap: float = 0.065) -> list[dict]:
+    """Rows for the days after `after`: O/C are all-NSE daily opens/closes, hit = (symbol, day) with results out, fetch(symbol, day) = its
+    5-minute bars. The market's gap is the panel's median, as in day_summary; only stocks that gapped enough cost an Upstox request."""
+    gap = O / C.shift(1) - 1
+    gap = gap.where(gap.abs() < 0.25)
+    xgap = gap.sub(gap[[s for s in panel if s in gap]].median(axis=1), axis=0)
+    out = []
+    for ts in xgap.index[xgap.index > pd.Timestamp(after)]:
+        day = ts.strftime("%Y-%m-%d")
+        row = xgap.loc[ts]
+        for s in row[row >= min_gap].index:
+            if (s, day) not in hit:
+                continue
+            b = fetch(s, day)
+            r = _summarise_extra(b) if b is not None and len(b) else None
+            if r:
+                out.append({"sym": s, "day": day, "xgap": float(row[s]), **r, "turn20": turnover20(s, day)})
+    return out
+
+
+def topup() -> int:
+    """Add the days since the table's last day (nightly, engine/nightly.py). The 414's 5-minute archive stopped at 2026-10-15, so these come
+    from the all-NSE daily archive + one Upstox request per candidate. Returns the rows added."""
+    from markets.commodity.data import _get_broker
+    from markets.equity.strategies.tf_daily.earnings_drift import strategy as ED
+    from markets.equity.strategies.tf_intraday.results_gap import strategy as S
+    from services.broker.instruments import get_instrument_key
+    from services.data.candles import fetch_intraday_candles_range
+    old = load()
+    ind, broker = ED.cached_indicators(), _get_broker()
+    days = [d.strftime("%Y-%m-%d") for d in ind["C"].index]
+    nxt = dict(zip(days, days[1:]))
+    res = S._results_days()
+    hit = res | {(s, nxt[d]) for s, d in res if d in nxt}
+
+    def fetch(sym, day):
+        key = get_instrument_key(sym)
+        return pd.DataFrame(fetch_intraday_candles_range(broker, key, 5, day, day)) if key else None
+
+    new = new_rows(ind["O"], ind["C"], hit, S.market_panel(), old["day"].max(), fetch)
+    if new:
+        save(pd.concat([old, pd.DataFrame(new, columns=COLS)], ignore_index=True).drop_duplicates(["sym", "day"]).sort_values(["day", "sym"]).reset_index(drop=True))
+    return len(new)
+
+
 def save(df: pd.DataFrame) -> None:
     PATH.parent.mkdir(parents=True, exist_ok=True)
     df.to_pickle(PATH)
@@ -75,3 +122,8 @@ def save(df: pd.DataFrame) -> None:
 
 def load() -> pd.DataFrame | None:
     return pd.read_pickle(PATH) if PATH.exists() else None
+
+
+if __name__ == "__main__":
+    import engine.config  # noqa: F401  -- loads backend/.env (Upstox login)
+    print(f"results_gap table: {topup()} rows added")

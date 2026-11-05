@@ -113,6 +113,14 @@ def crowd_scale(n_signals: int, k: int | None = CROWD_K) -> float:
     return 1.0 if not k or n_signals <= k else k / n_signals
 
 
+def _read_5m(coin: str, usecols: list[str] | None = None) -> pd.DataFrame:
+    """A coin's 5-minute archive, one row per candle on the exact 5-minute marks. Rows saved 2026-10-16 -> 2026-11-05 are labelled 1 s early
+    (12:54:59 = the 12:55 candle) and the days just before the download fix hold both labels; the file itself is left as it is."""
+    df = pd.read_csv(DATA_DIR / f"{coin}_5m.csv", usecols=usecols, parse_dates=["date"])
+    df["date"] = pd.to_datetime(df["date"], utc=True).dt.tz_localize(None).dt.ceil("5min")
+    return df.sort_values("date", kind="stable").drop_duplicates("date", keep="last").reset_index(drop=True)
+
+
 def available() -> list[str]:
     return [c for c in COINS if (DATA_DIR / f"{c}_5m.csv").exists()]
 
@@ -153,8 +161,7 @@ def market_vol_scale_series() -> pd.Series:
         f = DATA_DIR / f"{c}_5m.csv"
         if not f.exists():
             continue
-        s = pd.read_csv(f, usecols=["date", "close"], parse_dates=["date"]).set_index("date")["close"]
-        s.index = s.index.tz_localize(None)
+        s = _read_5m(c, ["date", "close"]).set_index("date")["close"]
         daily[c] = s.resample("1D").last().dropna().pct_change()
     if not daily:
         return pd.Series(dtype=float)
@@ -213,8 +220,7 @@ _VOL_MEMO: dict = {}
 def load_5m_data(coins: list[str]) -> dict:
     """5-minute OHLC + the entry/exit indicators, cached per coin. Call markets.crypto.data.topup_5m() first to keep this current."""
     for c in [c for c in coins if c not in _CACHE]:
-        df = pd.read_csv(DATA_DIR / f"{c}_5m.csv", parse_dates=["date"]).sort_values("date").reset_index(drop=True)
-        df["date"] = df["date"].dt.tz_localize(None)
+        df = _read_5m(c)
         mid40 = df["close"].rolling(40).mean(); std40 = df["close"].rolling(40).std()
         lower40 = mid40 - std40 * 2
         df["bbdelta"] = (mid40 - lower40).abs()

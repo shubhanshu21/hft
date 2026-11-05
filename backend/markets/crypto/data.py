@@ -65,9 +65,9 @@ def candles_5m(coin: str, days: int = 5) -> pd.DataFrame:
     if not out:
         return pd.DataFrame(columns=["date", "open", "high", "low", "close"])
     df = pd.DataFrame(out, columns=["t", "open", "high", "low", "close", "v", "close_t"] + [f"x{i}" for i in range(5)])
-    df = df.astype({"close_t": "int64", "open": "float64", "high": "float64", "low": "float64", "close": "float64"})
-    df = df[df["close_t"] < end][["close_t", "open", "high", "low", "close"]]       # completed candles only
-    df["date"] = pd.to_datetime(df["close_t"] - 5 * MIN_MS, unit="ms").dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    df = df.astype({"t": "int64", "close_t": "int64", "open": "float64", "high": "float64", "low": "float64", "close": "float64"})
+    df = df[df["close_t"] < end][["t", "open", "high", "low", "close"]]             # completed candles only
+    df["date"] = pd.to_datetime(df["t"], unit="ms").dt.strftime("%Y-%m-%dT%H:%M:%SZ")   # opening time (close_t ends in .999: labels were 1 s early, 2026-11-05)
     return df[["date", "open", "high", "low", "close"]]
 
 
