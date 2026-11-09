@@ -109,7 +109,8 @@ class TestEngineTradesTheLiquidList(unittest.TestCase):
         q = quotes({"NEWCO": {"ltp": 112.0, "prev_close": 100.0, "today_open": 110.0, "today_high": 113.0, "today_low": 109.0}})
         with mock.patch.object(E, "STATE", tmp / "state.json"), mock.patch.object(S, "CALENDAR", cal), \
              mock.patch.object(S, "refresh_calendar", return_value=1), \
-             mock.patch.object(S, "universe", return_value=["NEWCO"] + list(UNI)), mock.patch.object(S, "market_panel", return_value=list(UNI)):
+             mock.patch.object(S, "universe", return_value=["NEWCO"] + list(UNI)), mock.patch.object(S, "market_panel", return_value=list(UNI)), \
+             mock.patch.object(S, "established", return_value=True):                                 # the one-year filter: own tests
             db = TradingDB(tmp / "t.db")
             E.run(db, FakeBroker(q), datetime(2026, 10, 26, 9, 30, 5, tzinfo=E.IST), set(), lambda s: f"NSE_EQ|{s}", send=None)
             self.assertEqual([p["symbol"] for p in db.get_open_positions(E.ACCOUNT)], ["NEWCO"])
@@ -147,7 +148,8 @@ class TestEntryRecordsMarketContext(unittest.TestCase):
             q["Nifty 50"] = nifty
         with mock.patch.object(E, "STATE", tmp / "state.json"), mock.patch.object(S, "CALENDAR", cal), \
              mock.patch.object(S, "refresh_calendar", return_value=1), mock.patch.object(S, "universe", return_value=list(UNI)), \
-             mock.patch.object(S, "market_panel", return_value=list(UNI)), mock.patch.object(S, "runup20", return_value=0.12):
+             mock.patch.object(S, "market_panel", return_value=list(UNI)), mock.patch.object(S, "runup20", return_value=0.12), \
+             mock.patch.object(S, "established", return_value=True):
             db = TradingDB(tmp / "t.db")
             out = E.run(db, FakeBroker(q), datetime(2026, 10, 26, 9, 30, 5, tzinfo=E.IST), set(), lambda s: f"NSE_EQ|{s}", send=None)
             return json.loads(db.get_open_positions(E.ACCOUNT)[0]["state"]), out

@@ -56,7 +56,8 @@ class BacktestCalendarTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             for d in ("2026-11-03", "2026-11-04", "2026-11-05"):
                 (Path(tmp) / f"{d}.csv.gz").write_text("")
-            with mock.patch.object(S, "BHAV_DIR", Path(tmp)), mock.patch.object(S, "day_summary", return_value=last):
+            with mock.patch.object(S, "BHAV_DIR", Path(tmp)), mock.patch.object(S, "day_summary", return_value=last), \
+                    mock.patch.object(S, "established", return_value=True):
                 r = S.backtest(100_000, "2026-11-01", "2026-11-30", leverage=1.0, results=set(), liquid_rows=rows)
         self.assertEqual(r["days"], ["2026-11-03", "2026-11-04", "2026-11-05"])
         self.assertEqual([t["symbol"] for t in r["trades"]], ["X"])

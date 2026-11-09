@@ -151,7 +151,11 @@ def enter(db, broker, now: datetime, holidays: set[date], lookup, lines: list) -
         _save_state(st)
         return
     st["entered_on"] = str(today)
-    st["last_check"] = {"candidates": len(cands), "market_gap": mkt, "signals": [b["symbol"] for b in buys]}
+    new = [b["symbol"] for b in buys if not S.established(b["symbol"], today)]       # 2026-11-09: only stocks traded heavily for a year
+    for s in new:
+        lines.append(f"{s}: not traded heavily for a year (new listing or newly busy stock) -- skipped; such results-day gap-ups lost in the backtest")
+    buys = [b for b in buys if b["symbol"] not in new]
+    st["last_check"] = {"candidates": len(cands), "market_gap": mkt, "signals": [b["symbol"] for b in buys], "not_established": new}
     if not buys:
         lines.append(f"No trade today: {len(cands)} stocks had results, none opened 7%+ above the market (market gap {mkt:+.2%}) and kept rising.")
         _save_state(st)

@@ -20,6 +20,7 @@ from __future__ import annotations
 import glob
 import os
 from datetime import date, timedelta
+from functools import lru_cache
 
 import pandas as pd
 
@@ -34,6 +35,8 @@ UNIVERSE_DIR = ARCHIVE_ROOT / "equity"
 BHAV_DIR = ARCHIVE_ROOT / "nse" / "bhav_eq"     # NSE's daily full bhavcopy, EQ series only (symbol, close, turnover), one file per day
 LIQUID_MIN = 10e7              # Rs10 crore median daily turnover ...
 LIQUID_DAYS = 20               # ... over the 20 trading days before the day (point in time: no hindsight)
+YEAR_DAYS, YEAR_MIN_HISTORY = 250, 120     # established(): the same Rs10 cr, as the median over the 250 trading days before (>= 120 days held)
+DAILY_DIR = ARCHIVE_ROOT / "equity_all"     # all-NSE daily candles (markets/equity/all_daily.py, nightly)
 
 
 def market_panel() -> list[str]:
@@ -112,6 +115,26 @@ def runup20(sym: str, asof: date, root=None) -> float | None:
             return None
         closes.append(float(hit.iloc[0]))
     return closes[1] / closes[0] - 1 if closes[0] else None
+
+
+@lru_cache(maxsize=4096)
+def _year_turnover(path: str, asof: str) -> float | None:
+    d = pd.read_csv(path, usecols=["timestamp", "close", "volume"])
+    d = d[d["timestamp"].str[:10] < asof]
+    return float((d["close"] * d["volume"]).tail(YEAR_DAYS).median()) if len(d) >= YEAR_MIN_HISTORY else None
+
+
+def established(sym: str, asof, root=None) -> bool:
+    """True when the stock was traded heavily for a year before `asof` (median daily turnover over the previous YEAR_DAYS trading days
+    >= LIQUID_MIN, with >= YEAR_MIN_HISTORY days of history). 2026-11-09 study: the rule's results-day gap-ups in stocks that only recently
+    got busy (new listings, newly hot small stocks: KANOHAR, KSHINTL, DAMCAPITAL) lost -1.13%/trade (19 trades) while the 49 others made
+    +1.61%; at 1x Rs1L -> Rs2.11L (worst -7%) vs Rs1.75L (-13%). Caveat: the gain is all in 2025-26 (2022-24 Rs1.31L vs Rs1.42L) and it was
+    found while studying the 2026 losses -- on paper only, reviewed with the next 20 trades."""
+    p = (root or DAILY_DIR) / f"{sym}_daily.csv.gz"
+    if not p.exists():
+        return False
+    t = _year_turnover(str(p), str(asof)[:10])
+    return t is not None and t >= LIQUID_MIN
 
 
 def universe(asof: date | None = None) -> list[str]:
@@ -282,6 +305,7 @@ def backtest(capital: float = 100_000, start: str = "2022-09-01", end: str = "21
         L = liquid_rows
         sig = L[L["day"].isin(set(days)) & (L["xgap"] >= GAP_MIN) & (L["c925"] > L["o915"]) & L["moved_pre"].astype(bool)
                 & (L["v_pre"] >= MIN_PRE_VALUE) & (L["o930"] >= MIN_PRICE) & (L["turn20"].fillna(0) >= LIQUID_MIN)]
+        sig = sig[[established(s, d) for s, d in zip(sig["sym"], sig["day"])]]        # traded heavily for a year (2026-11-09)
     by_day = {d: g for d, g in sig.groupby("day")}
     cap, equity, events, closed, trades = float(capital), [], [], [], []
     for k, d in enumerate(days):

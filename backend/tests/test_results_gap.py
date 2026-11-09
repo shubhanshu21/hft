@@ -96,7 +96,8 @@ class EngineCase(unittest.TestCase):
         pd.DataFrame({"bm_symbol": ["WIN", "FLAT"], "bm_date": ["23-Oct-2026", "23-Oct-2026"], "bm_purpose": ["Financial Results"] * 2}).to_csv(cal, index=False)
         for p in (mock.patch.object(E, "STATE", self.tmp / "state.json"), mock.patch.object(S, "CALENDAR", cal),
                   mock.patch.object(S, "universe", return_value=UNI), mock.patch.object(S, "refresh_calendar", return_value=2),
-                  mock.patch.object(E.ED, "STATE", self.tmp / "ed_state.json"), mock.patch.object(E.ED, "plan", return_value=[])):   # earnings_drift: own tests
+                  mock.patch.object(E.ED, "STATE", self.tmp / "ed_state.json"), mock.patch.object(E.ED, "plan", return_value=[]),   # earnings_drift: own tests
+                  mock.patch.object(S, "established", return_value=True)):                        # the one-year filter: own tests
             p.start(); self.addCleanup(p.stop)
         self.lookup = lambda s: f"NSE_EQ|{s}"
         cal.touch()
@@ -379,7 +380,8 @@ class TestWebBacktest(unittest.TestCase):
 
     def test_liquid_universe_trades_any_liquid_stock_and_skips_thin_ones(self):
         # 2026-10-29: the fixed list was hindsight; the fair backtest trades whatever was liquid (>= Rs10 cr a day) at the time
-        r = S.backtest(100_000, "2026-01-05", "2026-01-07", leverage=3.0, days_df=self.frame(), results=set(), liquid_rows=self.liquid())
+        with mock.patch.object(S, "established", return_value=True):                    # the one-year filter has its own tests
+            r = S.backtest(100_000, "2026-01-05", "2026-01-07", leverage=3.0, days_df=self.frame(), results=set(), liquid_rows=self.liquid())
         self.assertEqual([t["symbol"] for t in r["trades"]], ["NEWCO"])
         self.assertIn("liquid", r["metrics"]["note"])
 
