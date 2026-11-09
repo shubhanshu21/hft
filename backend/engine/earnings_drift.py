@@ -64,18 +64,21 @@ def plan(db, today: date, holidays: set[date]) -> list[str]:
     want = today - timedelta(days=1)
     while want.weekday() >= 5 or want in holidays:
         want -= timedelta(days=1)
-    if last != want:
+    if last is None or last < want:
         lines.append(f"earnings drift: daily data not up to date (last day {last}, needs {want}) -- no new buys today")
     else:
         sig = S.signals(ind)
         held = {p["symbol"] for p in _mine(db)}
-        cands = S.candidates(ind, sig, pd.Timestamp(last))
+        # Usually just `want`. A weekend session (Diwali's Sunday Muhurat, 2026-11-08) adds its own day: the engine does not run on it, so
+        # the signals of the day before it (bought at that session's open in the backtest) and of the session itself are both bought now.
+        days = [d for d in ind["C"].index if d.date() >= want]
+        cands = list(dict.fromkeys(s for d in days for s in S.candidates(ind, sig, d)))
         slots = S.K - len(held) + len(sell)
         buy = [s for s in cands if s not in held][:max(0, slots)]
         if float(ind["breadth"].iloc[-1]) < S.MIN_BREADTH_PCT:
             lines.append(f"earnings drift: market not healthy ({float(ind['breadth'].iloc[-1]):.0f}% of the 200 stocks above their 50-day average) -- no buys")
         for s in buy:
-            r = sig[(sig.sym == s) & (sig.signal_day == pd.Timestamp(last))].iloc[0]
+            r = sig[(sig.sym == s) & sig.signal_day.isin(days)].iloc[0]
             lines.append(f"earnings drift: BUY {s} at the open (results {r.meeting:%d %b}: {r.reaction:+.1%} vs the market on {r.surge:.1f}x volume)")
     for pid in sell:
         lines.append(f"earnings drift: SELL {db.get_position(pid)['symbol']} at the open (held {S.HOLD_DAYS} trading days)")

@@ -88,6 +88,18 @@ class Broker:
 
 
 class TestEngine(Base):
+    def test_a_weekend_session_does_not_lose_fridays_signal(self):
+        # 2026-11-08: Diwali's Sunday Muhurat session. Friday's signal would be bought at that session's open in the backtest; the engine
+        # does not run on Sundays, so Monday must still buy it -- it used to call the data stale and buy nothing.
+        ind = make_ind()
+        sun = pd.Timestamp("2026-10-25")
+        ind = {k: (pd.concat([v, v.iloc[[-1]].set_axis([sun])]) if k != "breadth" else pd.concat([v, pd.Series([80.0], index=[sun])]))
+               for k, v in ind.items()}
+        with mock.patch.object(E, "_indicators", return_value=ind):
+            lines = E.plan(self.db, self.at(8, 50).date(), set())
+        self.assertNotIn("not up to date", " ".join(lines))
+        self.assertIn("BUY GOOD", " ".join(lines))
+
     def test_plan_at_0850_then_buy_at_the_open(self):
         with mock.patch.object(E, "_indicators", return_value=make_ind()):
             lines = E.plan(self.db, self.at(8, 50).date(), set())
