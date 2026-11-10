@@ -51,9 +51,12 @@ def out_of_time(what: str = "") -> bool:
 
 
 def concat(frames) -> pd.DataFrame:
-    """pd.concat without the empty pieces (pandas warns about them, and they add nothing)."""
+    """pd.concat without the empty pieces or all-blank columns (pandas warns about both), keeping every column."""
     frames = [f for f in frames if f is not None and not f.empty]
-    return pd.concat(frames) if frames else pd.DataFrame(columns=COLS)
+    if not frames:
+        return pd.DataFrame(columns=COLS)
+    cols = list(dict.fromkeys(c for f in frames for c in f.columns))
+    return pd.concat([f.dropna(axis=1, how="all") for f in frames]).reindex(columns=cols)
 
 
 def log(msg: str) -> None:

@@ -1,4 +1,5 @@
 """record_trade(close=True): a sale closes the position, writes the trade and moves the balance in ONE save (2026-10-31 audit)."""
+import json
 import sqlite3
 import tempfile
 import unittest
@@ -33,6 +34,25 @@ class CloseAndRecordTest(unittest.TestCase):
             self._sell(symbol=None)                                 # trades.symbol is NOT NULL: the trade insert fails
         self.assertEqual(self.db.get_position("P")["status"], "OPEN", "the close must roll back with the trade, so the next run sells again")
         self.assertEqual(self.db.get_trades(account_id="A"), [])
+        self.assertEqual(self.db.get_account("A")["current_capital"], 100_000.0)
+
+
+    def _trim(self, symbol="X"):
+        self.db.record_trade("P", symbol, "long", 4, 100.0, 110.0, "2026-10-31T09:30:00+05:30", "2026-11-10T09:10:00+05:30", 350.0,
+                             "trim", 40.0, {"total": 2.0}, 38.0, 100_038.0, account_id="A", strategy="s",
+                             keep_qty=6, state_updates={"margin_used": 600.0})
+
+    def test_a_partial_sale_shrinks_the_position_in_the_same_save(self):
+        self._trim()
+        p = self.db.get_position("P")
+        self.assertEqual((p["status"], p["qty"], json.loads(p["state"])["margin_used"]), ("OPEN", 6, 600.0))
+        self.assertEqual(len(self.db.get_trades(account_id="A")), 1)
+        self.assertEqual(self.db.get_account("A")["current_capital"], 100_038.0)
+
+    def test_a_failed_partial_sale_keeps_every_lot(self):
+        with self.assertRaises(sqlite3.IntegrityError):
+            self._trim(symbol=None)
+        self.assertEqual(self.db.get_position("P")["qty"], 10, "the resize must roll back with the trade")
         self.assertEqual(self.db.get_account("A")["current_capital"], 100_000.0)
 
 

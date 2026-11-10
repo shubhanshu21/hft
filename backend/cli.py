@@ -15,8 +15,6 @@ Usage Examples:
     python3 cli.py report
     python3 cli.py reset-db --account MCX_TREND_CARRY --capital 250000   # wipes EVERY account (backup kept first)
 
-    # 4. New strategy from a template
-    python3 cli.py new-strategy --market currency --timeframe 15min --name my_idea
 """
 from __future__ import annotations
 
@@ -47,18 +45,6 @@ from engine.database import TradingDB
 def cmd_report(args):
     db = TradingDB(args.db)
     db.print_dashboard(args.account)
-
-
-def cmd_new_strategy(args):
-    from core import scaffold
-    try:
-        path = scaffold.create(args.market, args.name, timeframe=args.timeframe)
-    except (ValueError, FileExistsError) as exc:
-        sys.exit(f"error: {exc}")
-    print(f"Created {path.relative_to(Path(__file__).parent)}\n"
-          f"Fill in entry() / manage() / costs(), then switch it on with {args.market.upper()}_STRATEGIES=scalping,{args.name} in .env.\n"
-          f"Contract: core/strategy.py. Note no running engine uses this contract (the old runners were removed 2026-10-29) --"
-          f" the three live engines name their strategy module directly (see markets/README.md).")
 
 
 def cmd_arm_live_trading(args):
@@ -139,13 +125,6 @@ def main():
     p_disarm = subparsers.add_parser("disarm-live-trading", help="Remove the armed-state gate (always safe)")
     p_disarm.add_argument("--component", default=None, choices=["upstox", "ALL", None])
     p_disarm.set_defaults(func=cmd_disarm_live_trading)
-
-    p_new = subparsers.add_parser("new-strategy", help="Create a new strategy file from a template (contract: core/strategy.py)")
-    p_new.add_argument("--market", required=True, choices=["currency", "equity"])
-    p_new.add_argument("--name", required=True, help="strategy name, e.g. swing (lowercase, digits, underscores)")
-    p_new.add_argument("--timeframe", default="5min", choices=["5min", "15min", "1hour", "daily"],
-                       help="the bars its signal uses; decides the folder markets/<market>/strategies/tf_<timeframe>/ (default 5min)")
-    p_new.set_defaults(func=cmd_new_strategy)
 
     args = parser.parse_args()
     args.func(args)

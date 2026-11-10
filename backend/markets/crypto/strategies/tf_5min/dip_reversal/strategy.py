@@ -1,4 +1,4 @@
-"""crypto / dip_reversal -- 5-minute dip-buy reversal on 11 coins' perpetual futures (BTC, ETH, SOL, BNB, XRP, DOGE, ADA, AVAX, DOT, LTC, TRX).
+"""crypto / dip_reversal -- 5-minute dip-buy reversal on 9 coins' perpetual futures (BTC, ETH, SOL, BNB, XRP, DOGE, AVAX, LTC, TRX; DOT+ADA dropped 2026-11-10 for their spread).
 
 Found by screening ~60 public strategies from github.com/freqtrade/freqtrade-strategies (`CombinedBinHAndCluc`) on our own coin data
 with real costs, then re-optimised: the only one of the ~60 that stayed profitable in both a 2022-24 dev window and a 2025-26 held-out
@@ -13,7 +13,7 @@ Rule (5-minute finished candles, no indicator peeking at the still-forming candl
   * entry at the next candle's open (a market order); size = RISK_PCT of the account / the 7% stop distance (so ~28.6% of the account
     at RISK_PCT=2%), capped at LEVERAGE x the account as a pure safety ceiling -- the real throttle on profit and risk here is
     RISK_PCT, not leverage (a fixed-% stop means leverage rarely binds; see the risk_pct table in markets/README.md before raising it);
-    at most MAX_CONCURRENT (5) positions open together across the 11 coins (shared margin pool, and crypto coins move together in a crash)
+    at most MAX_CONCURRENT (5) positions open together across the 9 coins (shared margin pool, and crypto coins move together in a crash)
 Costs: Delta Exchange India taker fee 0.05% + 18% GST + slippage on entries, stops and the time exit; maker fee 0.02% + GST on the take-profit; a
 stop the candle OPENS beyond fills at that open, not the stop price; real funding (Binance daily sums, pro-rated by hours held -- a
 long position pays when funding is positive). Tax views: none / strict (31.2% of each winning trade) / business income (31.2% of each
@@ -31,7 +31,7 @@ a default; see the risk_pct table in markets/README.md for the 2%/4%/6%/8%/10% c
 Leverage is a safety CEILING on position size here, not a throttle -- the stop already fixes position size at RISK_PCT / stop%, so
 changing leverage rarely changes a trade's size or the P&L above.
 2026-10-21 dynamic risk (user: "should be dynamic and adjusted according to situations"): position size now scales with how calm or
-wild the 11-coin market's own 20-day realized volatility currently is -- the same idea as the old calm_coins volatility gate, size up
+wild the 9-coin market's own 20-day realized volatility currently is -- the same idea as the old calm_coins volatility gate, size up
 when calm, size down when choppy, rather than one fixed % always. scale = clip(VOL_TARGET / current 20d vol, VOL_LO, VOL_HI); risk =
 RISK_PCT * scale. VOL_TARGET is the market's own long-run median vol (not fit to any year); VOL_LO/VOL_HI (0.6x-1.8x) were checked
 against 5 nearby bound pairs, all giving a similar, consistently better result -- a real effect, not a lucky setting. Result: every
@@ -62,7 +62,11 @@ from core.backtester import metrics
 DATA_DIR = ARCHIVE_ROOT / "crypto"
 _VOL_CACHE_FILE = CACHE_DIR / "crypto_vol_scale.json"
 TAX = 0.312
-COINS = ("BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "AVAX", "DOT", "LTC", "TRX")  # DOT/LTC/TRX added 2026-10-21 (data already
+COINS = ("BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "AVAX", "LTC", "TRX")  # 2026-11-10: DOT + ADA dropped -- Delta India's real spread is
+# ~6bp (DOT) / ~10bp (ADA) a side, 4-7x the 1.5bp the backtest charged. At real costs x3 (spreads widen in the crashes this buys) all 11
+# coins: Rs1L -> Rs3.95L (-77%), dev 2022-24 Rs2.71L / test 2025-26 Rs1.45L; 9 coins Rs7.54L (-73%), Rs3.50L / Rs2.15L -- better in BOTH
+# windows. DOT was kept 2026-10-22 to avoid picking by results; the reason now is its cost today, not its past P&L.
+# DOT/LTC/TRX added 2026-10-21 (data already
 # on disk); LINK removed 2026-10-22 -- lost money in BOTH the dev window (Rs-2.66L) and the held-out test window (Rs-0.29L), a
 # genuine non-edge (not a hindsight pick: it failed before it was ever removed, on data not used to tune anything). Removing it
 # improved both windows: dev Rs17.45L -> Rs19.79L, test Rs2.44L -> Rs2.92L, worst fall -76%/-47% -> -75%/-45%.
@@ -84,7 +88,8 @@ RISK_PCT = 0.06                                   # 2026-10-24, user's choice af
 MAX_CONCURRENT = 5                                # 2026-10-21 joint sweep: 5 beat 3 in both dev and test; 9 (no cap) decayed test -- see docstring
 TAKER = 0.0005 * 1.18                              # Delta Exchange India futures market order incl. 18% GST (verified live 2026-10-21 -- same rate as CoinDCX)
 MAKER = 0.0002 * 1.18                              # limit order (the take-profit) incl. GST
-SLIP = {"BTC": 0.00005, "ETH": 0.00005, "SOL": 0.0001}
+SLIP = {"BTC": 0.00005, "ETH": 0.00005, "SOL": 0.0001, "BNB": 0.00015, "XRP": 0.0001, "DOGE": 0.00015, "AVAX": 0.00045,  # half-spread a side,
+        "LTC": 0.0002, "TRX": 0.00015, "ADA": 0.0010, "DOT": 0.0006}   # Delta India book 2026-11-10; live paper fills (last price) pay it too
 BBDELTA_MULT = 0.008
 CLOSEDELTA_MULT = 0.0175
 TAIL_MULT = 0.25
@@ -153,7 +158,7 @@ def _funding(coin: str) -> pd.Series:
 
 
 def market_vol_scale_series() -> pd.Series:
-    """Daily risk-size scale from the 11-coin basket's own 20-day realized volatility: >1 in a calmer-than-usual market, <1 in a wilder
+    """Daily risk-size scale from the 9-coin basket's own 20-day realized volatility: >1 in a calmer-than-usual market, <1 in a wilder
     one, clipped to [VOL_LO, VOL_HI]. Built from the 5-minute archive's daily close (always present wherever a backtest already runs);
     `current_vol_scale()` below is the one live trading actually calls."""
     daily = {}
@@ -175,7 +180,7 @@ def market_vol_scale_series() -> pd.Series:
 def current_vol_scale(use_cache: bool = True) -> float:
     """The risk-size scale for right now, from the latest completed day. 1.0 (no change) if there isn't enough history yet.
 
-    Rebuilding it means reading all 11 archived 5-minute CSVs (~265 MB) and resampling them -- measured at 17.3 s on 2026-10-26,
+    Rebuilding it means reading all 9 archived 5-minute CSVs (~265 MB) and resampling them -- measured at 17.3 s on 2026-10-26,
     which the live engine paid on every entry, twice (once to size the trade, once for the message), inside a 5-minute job. The
     result only changes when the nightly top-up rewrites those files, so it is cached in var/cache keyed by each file's
     mtime+size and memoised in the process; a stale cache can never be used because the key is the archive itself."""
@@ -334,7 +339,7 @@ def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None
                  f"business income Rs{s_biz.iloc[-1]:,.0f}; strict tax Rs{s_str.iloc[-1]:,.0f}.")
 
     # Replay data for the results page: daily candles + buy/sell events + open-position tracking, one entry per day in `days`
-    # (same shape core.backtester.run_backtest and commodity/trend_carry use -- see components/replay/*.jsx).
+    # (same shape commodity/trend_carry uses -- see components/replay/*.jsx).
     day_idx = {d: i for i, d in enumerate(days)}
     events = [[] for _ in days]
     pos_by_day = [[] for _ in days]

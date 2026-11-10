@@ -304,19 +304,23 @@ class TradingDB:
     def set_position_qty(self, position_id: str, qty: float, entry_price: Optional[float] = None, state_updates: Optional[dict] = None) -> None:
         """Resize an OPEN position in place (2026-10-29: MCX trend_carry adds or trims lots like its backtest instead of selling everything
         and buying back). `entry_price` (optional) becomes the new average price; `state_updates` is merged into the JSON state."""
+        with self._get_conn() as conn:
+            self._resize(conn, position_id, qty, entry_price, state_updates)
+
+    @staticmethod
+    def _resize(conn, position_id, qty, entry_price=None, state_updates=None) -> None:
         import json
         now_str = datetime.now(IST).isoformat()
-        with self._get_conn() as conn:
-            row = conn.execute("SELECT state FROM positions WHERE position_id = ? AND status = 'OPEN'", (position_id,)).fetchone()
-            if row is None:
-                raise ValueError(f"no open position {position_id}")
-            state = json.loads(row[0]) if row[0] else {}
-            state.update(state_updates or {})
-            if entry_price is None:
-                conn.execute("UPDATE positions SET qty = ?, state = ?, updated_at = ? WHERE position_id = ?", (qty, json.dumps(state), now_str, position_id))
-            else:
-                conn.execute("UPDATE positions SET qty = ?, entry_price = ?, state = ?, updated_at = ? WHERE position_id = ?",
-                             (qty, entry_price, json.dumps(state), now_str, position_id))
+        row = conn.execute("SELECT state FROM positions WHERE position_id = ? AND status = 'OPEN'", (position_id,)).fetchone()
+        if row is None:
+            raise ValueError(f"no open position {position_id}")
+        state = json.loads(row[0]) if row[0] else {}
+        state.update(state_updates or {})
+        if entry_price is None:
+            conn.execute("UPDATE positions SET qty = ?, state = ?, updated_at = ? WHERE position_id = ?", (qty, json.dumps(state), now_str, position_id))
+        else:
+            conn.execute("UPDATE positions SET qty = ?, entry_price = ?, state = ?, updated_at = ? WHERE position_id = ?",
+                         (qty, entry_price, json.dumps(state), now_str, position_id))
 
     def get_open_positions(self, account_id: str = "DRYRUN_ACCOUNT") -> List[dict]:
         with self._get_conn() as conn:
@@ -368,11 +372,15 @@ class TradingDB:
                      vwap_dist_pct: Optional[float] = None,
                      ema_slope_pct: Optional[float] = None,
                      account_id: str = "DRYRUN_ACCOUNT",
-                     strategy: str = "scalping", close: bool = False) -> int:
+                     strategy: str = "scalping", close: bool = False,
+                     keep_qty: Optional[float] = None, state_updates: Optional[dict] = None) -> int:
         """close=True also closes the position in the SAME save: a crash or error between two separate saves left a CLOSED position
-        whose profit never reached the balance (2026-10-31 audit). Leave it False for a partial sale (the position stays open)."""
+        whose profit never reached the balance (2026-10-31 audit). A partial sale passes keep_qty (+ state_updates) instead: the position
+        stays open at that size, resized in the same save as the trade and the balance."""
         now_str = datetime.now(IST).isoformat()
         with self._get_conn() as conn:
+            if keep_qty is not None:
+                self._resize(conn, position_id, keep_qty, None, state_updates)
             if close:
                 conn.execute("""UPDATE positions SET status = 'CLOSED', exit_time = ?, exit_price = ?, exit_reason = ?, gross_pnl = ?,
                                 net_pnl = ?, total_fees = ?, updated_at = ? WHERE position_id = ?""",

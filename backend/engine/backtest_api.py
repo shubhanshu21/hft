@@ -35,11 +35,9 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
-import pandas as pd
 
-from core import registry
-from core.backtester import BacktestError, run_backtest
-from core.paths import ARCHIVE_ROOT, BACKEND_ROOT, VAR_DIR
+from core.backtester import BacktestError
+from core.paths import BACKEND_ROOT, VAR_DIR
 from markets.equity.universe import NIFTY50_SYMBOLS
 
 RUNS_DIR = VAR_DIR / "backtests"
@@ -101,11 +99,7 @@ def catalog() -> list[dict]:
     dip_reversal = {"market": "crypto", "name": "dip_reversal", "timeframe": "5 minutes", "supported": True, "symbols": dr.available(), "crypto": True, "scalp": True,
                      "default_symbols": list(dr.COINS), "summary": (dr.__doc__ or "").strip().split("\n")[0], "intraday": True, "default_risk_pct": dr.RISK_PCT * 100,
                      "exposure": 3.0, "exposure_min": 1.0, "exposure_max": 5.0, "default_capital": 100_000}
-    return [{"market": m, "name": n, "timeframe": f"{s.timeframe[1]} {s.timeframe[0]}", "supported": tuple(s.timeframe) == ("days", 1), "symbols": list(getattr(s, "universe", None) or universe(m)),
-             "summary": (s.__doc__ or "").strip().split("\n")[0], "intraday": s.intraday,
-             "default_risk_pct": getattr(s, "default_risk_pct", None),
-             "default_symbols": [x for x in (getattr(s, "universe", None) or universe(m)) if s.trades(x)]}     # what its paper trading uses
-            for (m, n), s in sorted(registry.discover().items())] + [mcx, dip_reversal, results_gap, earnings_drift]
+    return [mcx, dip_reversal, results_gap, earnings_drift]
 
 
 def save(run: dict) -> None:
@@ -220,29 +214,7 @@ def validate(body: dict) -> dict:
                 raise ValueError("Dates must look like 2024-01-31")
             p[key] = body[key]
         return {"market": market, "strategy": name, "params": p}
-    # Leverage is not the user's choice: delivery shares are bought with the account's own cash (1x); futures use the margin Upstox really
-    # charges (engine/margin_rates, refreshed by the paper trader), the lowest of the chosen symbols. The strategy's own caps still apply.
-    strat = registry.get(market, name)
-    if not getattr(strat, "uses_leverage", False):
-        p["leverage"] = 1.0
-    else:
-        from engine import margin_rates
-        p["leverage"] = round(min(min(margin_rates.real_leverage(s) or 40.0 for s in symbols), LIMITS["leverage"][1]), 1)
-    if market == "currency":
-        p["slippage_bp"] = 0.0              # the currency cost model already charges the measured bid-ask spread; extra slippage would count it twice
-    pyr = body.get("pyramid_pct")
-    if pyr in (None, ""):
-        p["pyramid_pct"] = None                                         # the strategy's own setting
-    else:
-        pyr = float(pyr)
-        if not 0 <= pyr <= 30:
-            raise ValueError("pyramid_pct must be between 0 and 30")
-        p["pyramid_pct"] = pyr
-    for key in ("start", "end"):
-        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(body.get(key, ""))):
-            raise ValueError("Dates must look like 2024-01-31")
-        p[key] = body[key]
-    return {"market": market, "strategy": name, "params": p}
+    raise ValueError("Unknown market or strategy")
 
 
 IST = timezone(timedelta(hours=5, minutes=30))
@@ -285,48 +257,6 @@ def _live_prices(keys: list[str]) -> dict:
     with _lock:
         _live_cache.update(at=now, keys=keys, prices=prices)
     return prices
-
-
-def _last_close(symbol: str, market: str) -> tuple[float | None, str | None]:
-    f = ARCHIVE_ROOT / ("currency" if market == "currency" else "equity") / (f"{symbol}_daily_adj.csv" if market == "currency" else f"{symbol}_daily.csv")
-    if market == "equity" and not f.exists():                          # breakout_pair trades beyond the NIFTY list: all-NSE daily archive
-        f = ARCHIVE_ROOT / "equity_all" / f"{symbol}_daily.csv.gz"
-    try:
-        last = pd.read_csv(f).iloc[-1]
-        return float(last["close"]), str(last["timestamp"])[:10]
-    except Exception:
-        return None, None
-
-
-def _value_position(p: dict, live: dict) -> None:
-    """Price an open paper position now: live price (else the last daily close), profit before fees, what selling now would net after the
-    strategy's own cost model (the same call the paper trader makes when it closes), money at risk to the stop and the margin it blocks."""
-    from core.symbols import market_of
-    state = json.loads(p.pop("state") or "{}")
-    market = market_of(p["symbol"])
-    strat = registry.get(market, p["strategy"])
-    lot = int(state.get("lot_size") or (strat.lot_size(p["symbol"]) if strat else 1) or 1)
-    sign = -1 if p["direction"] == "short" else 1
-    q = live.get(p.get("instrument_key")) or {}
-    price, source, as_of = q.get("ltp"), "live", q.get("trade_time")
-    p.update(bid=q.get("bid"), ask=q.get("ask"), checked_at=datetime.now(IST).isoformat(timespec="seconds") if q else None)
-    if price is None:
-        price, as_of = _last_close(p["symbol"], market)
-        source = "last close"
-    p.update(market=market, lot_size=lot, units=p["qty"] * lot, price_now=price, price_source=source if price is not None else None, price_time=as_of,
-             margin_used=round(float(state.get("margin_used") or p["qty"] * lot * p["entry_price"]), 2),
-             risk_to_stop=round((p["entry_price"] - p["current_stop"]) * sign * p["qty"] * lot, 2))
-    p.pop("instrument_key", None)
-    if price is None:
-        p.update(profit_now=None, fees_if_sold=None, net_if_sold=None, move_pct=None)
-        return
-    p["profit_now"] = round((price - p["entry_price"]) * sign * p["qty"] * lot, 2)
-    p["move_pct"] = round((price / p["entry_price"] - 1) * 100 * sign, 3)
-    try:
-        c = strat.costs(p["symbol"], p["direction"], p["entry_price"], price, p["qty"])
-        p["net_if_sold"], p["fees_if_sold"] = round(c["net"], 2), round(c["gross"] - c["net"], 2)
-    except Exception:
-        p["net_if_sold"] = p["fees_if_sold"] = None
 
 
 PAPER_ACCOUNTS = [("MCX_TREND_CARRY", "MCX trend + carry"), ("CRYPTO_DIP_REVERSAL", "Crypto dip-reversal"), ("RESULTS_GAP", "Results gap + earnings drift")]
@@ -459,7 +389,7 @@ def paper_summary(account: str = "CRYPTO_DIP_REVERSAL") -> dict:
     finally:
         con.close()
     live = {} if account in ("CRYPTO_CALM", "CRYPTO_DIP_REVERSAL") else _live_prices([p["instrument_key"] for p in pos if p.get("instrument_key")])   # crypto: Delta Exchange India prices
-    value = {"MCX_TREND_CARRY": _value_mcx, "RESULTS_GAP": _value_results_gap, "CRYPTO_CALM": _value_crypto, "CRYPTO_DIP_REVERSAL": _value_crypto}.get(account, _value_position)
+    value = {"MCX_TREND_CARRY": _value_mcx, "RESULTS_GAP": _value_results_gap, "CRYPTO_CALM": _value_crypto, "CRYPTO_DIP_REVERSAL": _value_crypto}[account]
     for p in pos:
         value(p, live)
     if acc:
@@ -561,12 +491,7 @@ def work(run: dict) -> None:
             except ValueError as e:
                 raise BacktestError(str(e))
         else:
-            run["result"] = run_backtest(registry.get(run["market"], run["strategy"]), p["symbols"], p["start"], p["end"], capital=p["capital"], slippage_bp=p["slippage_bp"],
-                                         risk_pct=p["risk_pct"], max_positions=int(p["max_positions"]), leverage=p["leverage"], progress=progress,
-                                         trail_stop_pct=p["trail_stop_pct"], trail_after_pct=p["trail_after_pct"], profit_trail_pct=p["profit_trail_pct"],
-                                         pyramid_pct=p.get("pyramid_pct"),
-                                         respect_trades=False,              # trade exactly the symbols ticked on the page
-                                         on_snapshot=lambda snap: run.__setitem__("partial", snap))
+            raise BacktestError(f"No backtest for {run['market']}/{run['strategy']}")
         try:                                                             # the strategy's own lines / RSI band / results days for the chart
             from engine.chart_overlays import overlays
             if run["market"] != "crypto":                             # calm_coins brings its own volatility band

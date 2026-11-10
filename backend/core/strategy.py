@@ -14,7 +14,7 @@ defines a Strategy subclass and exposes an instance called STRATEGY:
     STRATEGY = EquitySwing()
 
 then switch it on with  EQUITY_STRATEGIES=scalping,swing  in .env. Nothing else
-changes: the runner imports it through core/registry.py and applies its own gates
+changes: the (retired, removed 2026-11-10) runners imported it through core/registry.py and applied their own gates
 (kill switches, cooldowns, heat and margin caps, sector cap, drawdown-scaled sizing).
 A strategy only makes decisions; the runner owns execution, so a strategy never
 touches the broker or the database.

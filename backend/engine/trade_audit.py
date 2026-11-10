@@ -161,7 +161,7 @@ def fetch_trades(db_path, day_from: date, day_to: date) -> list[dict]:
 
 
 def run_audit(trades: list[dict], loader=load_candles) -> list[TradeAudit]:
-    from core.registry import market_of
+    from core.symbols import market_of
     cache: dict[tuple, tuple] = {}
     results = []
     for t in trades:

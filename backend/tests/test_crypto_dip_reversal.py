@@ -36,52 +36,52 @@ class TestBarExit(unittest.TestCase):
     def test_mid_band_exit_fills_at_next_candles_open_not_the_signal_candles_open(self):
         # the DOT case 2026-10-23: signal candle opened 1.1253, closed 1.1275 above the mid-band; next open 1.1276
         df = candles([FLAT, FLAT, (99.0, 101.5, 98.8, 101.2, 100.5), (101.3, 101.6, 101.0, 101.4, 100.6)])
-        px, fee, why, t = E.bar_exit(position(), df, live_px=None, coin="DOT")
+        px, fee, why, t = E.bar_exit(position(), df, live_px=None, coin="AVAX")
         self.assertEqual((px, why, t), (101.3, E.SIGNAL_WHY, T0 + 3 * BAR))
 
     def test_mid_band_exit_on_the_newest_candle_uses_the_live_price(self):
         df = candles([FLAT, FLAT, (99.0, 101.5, 98.8, 101.2, 100.5)])
-        px, _, why, _ = E.bar_exit(position(), df, live_px=101.25, coin="DOT")
+        px, _, why, _ = E.bar_exit(position(), df, live_px=101.25, coin="AVAX")
         self.assertEqual((px, why), (101.25, E.SIGNAL_WHY))
 
     def test_no_mid_band_exit_on_the_entry_candle(self):
         df = candles([FLAT, (100, 101.5, 99.5, 101.2, 100.5)])        # entry candle (index 1) closes above the mid-band
-        self.assertIsNone(E.bar_exit(position(entry_bar=1), df, live_px=101.0, coin="DOT")[0])
+        self.assertIsNone(E.bar_exit(position(entry_bar=1), df, live_px=101.0, coin="AVAX")[0])
 
     def test_target_on_the_entry_candle_fills_at_the_target(self):
         df = candles([FLAT, (100, 116, 99.5, 112, 105)])
-        px, fee, why, _ = E.bar_exit(position(), df, None, "DOT")
+        px, fee, why, _ = E.bar_exit(position(), df, None, "AVAX")
         self.assertAlmostEqual(px, 115.0)
         self.assertEqual((fee, why), (S.MAKER, "TAKE PROFIT (15%)"))
 
     def test_target_gapped_through_on_a_later_candle_fills_at_the_open(self):
         df = candles([FLAT, FLAT, (117, 118, 116, 117, 105)])
-        self.assertEqual(E.bar_exit(position(), df, None, "DOT")[0], 117)
+        self.assertEqual(E.bar_exit(position(), df, None, "AVAX")[0], 117)
 
     def test_stop_fills_at_the_open_when_the_candle_opens_below_it(self):
         df = candles([FLAT, FLAT, (90, 91, 89, 90, 105)])
-        px, _, why, _ = E.bar_exit(position(), df, None, "DOT")
+        px, _, why, _ = E.bar_exit(position(), df, None, "AVAX")
         self.assertEqual((px, why), (90, "STOP LOSS (7%)"))
 
     def test_stop_comes_before_target_in_one_candle(self):
         df = candles([FLAT, FLAT, (100, 116, 92, 100, 105)])
-        self.assertEqual(E.bar_exit(position(), df, None, "DOT")[2], E.STOP_WHY)
+        self.assertEqual(E.bar_exit(position(), df, None, "AVAX")[2], E.STOP_WHY)
 
     def test_a_stop_in_a_missed_candle_is_still_found(self):
         # last checked at candle 2; the run for candle 3 was missed (stop hit there), now candle 4 is the newest
         df = candles([FLAT, FLAT, FLAT, (99, 99.5, 92.5, 93, 105), (94, 95, 93.5, 94, 105)])
         pos = dict(position(), last_checked_t=T0 + 2 * BAR)
-        px, _, why, t = E.bar_exit(pos, df, None, "DOT")
+        px, _, why, t = E.bar_exit(pos, df, None, "AVAX")
         self.assertEqual((px, why, t), (93.0, E.STOP_WHY, T0 + 3 * BAR))
 
     def test_already_checked_candles_are_not_rechecked(self):
         df = candles([FLAT, FLAT, (99, 99.5, 92.5, 93, 105), FLAT])
         pos = dict(position(), last_checked_t=T0 + 2 * BAR)
-        self.assertIsNone(E.bar_exit(pos, df, None, "DOT")[0])
+        self.assertIsNone(E.bar_exit(pos, df, None, "AVAX")[0])
 
     def test_time_stop_after_24_hours_at_the_close(self):
         rows = [FLAT] * (S.TIME_STOP_BARS + 2)
-        px, _, why, t = E.bar_exit(position(), candles(rows), None, "DOT")
+        px, _, why, t = E.bar_exit(position(), candles(rows), None, "AVAX")
         self.assertEqual((px, why, t), (100, E.TIME_WHY, T0 + (1 + S.TIME_STOP_BARS) * BAR))
 
 
@@ -129,8 +129,8 @@ class TestEngineRun(unittest.TestCase):
         state = E.load_state()
         df = candles([FLAT] * 60)
         with mock.patch.object(S, "entry_signal", side_effect=lambda d: pd.Series([False] * (len(d) - 1) + [True])):
-            E.process_entries(self.db, state, {"DOT": df}, {"usdtinr": 90.0, "prices": {"DOT": 100.0}}, [], None)
-        self.assertEqual(state["open_positions"]["DOT"]["entry_bar_t"], int(df["t"].iloc[-1]) + BAR)
+            E.process_entries(self.db, state, {"AVAX": df}, {"usdtinr": 90.0, "prices": {"AVAX": 100.0}}, [], None)
+        self.assertEqual(state["open_positions"]["AVAX"]["entry_bar_t"], int(df["t"].iloc[-1]) + BAR)
 
     def test_entry_risks_six_percent_of_the_account(self):
         # 2026-10-24: risk per trade cut from 8% to 6% (8% added ~3-4% for a -88% worst fall vs -75%)
@@ -138,32 +138,32 @@ class TestEngineRun(unittest.TestCase):
         state = E.load_state()
         df = candles([FLAT] * 60)
         with mock.patch.object(S, "entry_signal", side_effect=lambda d: pd.Series([False] * (len(d) - 1) + [True])):
-            E.process_entries(self.db, state, {"DOT": df}, {"usdtinr": 90.0, "prices": {"DOT": 100.0}}, [], None)
-        p = state["open_positions"]["DOT"]
+            E.process_entries(self.db, state, {"AVAX": df}, {"usdtinr": 90.0, "prices": {"AVAX": 100.0}}, [], None)
+        p = state["open_positions"]["AVAX"]
         want_usd = state["trading_capital"] * 0.06 / S.STOPLOSS / 90.0          # risk 6% of the account / the 7% stop, in USD
         self.assertLessEqual(p["pos_usd"], want_usd)
-        self.assertGreater(p["pos_usd"], want_usd - E.CONTRACT_VALUE["DOT"] * 100.0)   # whole DOT contracts, rounded down
+        self.assertGreater(p["pos_usd"], want_usd - E.CONTRACT_VALUE["AVAX"] * 100.0)   # whole contracts, rounded down
 
     def test_exit_is_booked_at_the_live_price_and_recorded(self):
         state = E.load_state()
-        state["open_positions"]["DOT"] = position()
+        state["open_positions"]["AVAX"] = position()
         self.db.init_account(E.ACCOUNT_ID, capital=100_000)
-        self.db.open_position("P", "DOT", "long", 10.0, 100.0, 93.0, 115.0, 100.0, account_id=E.ACCOUNT_ID)
+        self.db.open_position("P", "AVAX", "long", 10.0, 100.0, 93.0, 115.0, 100.0, account_id=E.ACCOUNT_ID)
         df = candles([FLAT, FLAT, (99.0, 101.5, 98.8, 101.2, 100.5)])
         lines = []
-        E.process_exits(self.db, state, {"DOT": df}, {"usdtinr": 90.0, "prices": {"DOT": 101.25}}, lines, None)
-        self.assertNotIn("DOT", state["open_positions"])
+        E.process_exits(self.db, state, {"AVAX": df}, {"usdtinr": 90.0, "prices": {"AVAX": 101.25}}, lines, None)
+        self.assertNotIn("AVAX", state["open_positions"])
         self.assertIn("Exit 101.2500", lines[0])
         gross = (101.25 - 100) / 100 * 1000 * 90
-        fees = 1000 * 2 * (S.TAKER + S.SLIP.get("DOT", 0.00015)) * 90
+        fees = 1000 * 2 * (S.TAKER + S.SLIP.get("AVAX", 0.00015)) * 90
         self.assertAlmostEqual(state["trading_capital"], 100_000 + gross - fees, places=4)
 
     def test_no_exit_moves_the_checked_mark_forward(self):
         state = E.load_state()
-        state["open_positions"]["DOT"] = position()
+        state["open_positions"]["AVAX"] = position()
         df = candles([FLAT, FLAT, FLAT])
-        E.process_exits(self.db, state, {"DOT": df}, {"usdtinr": 90.0, "prices": {}}, [], None)
-        self.assertEqual(state["open_positions"]["DOT"]["last_checked_t"], T0 + 2 * BAR)
+        E.process_exits(self.db, state, {"AVAX": df}, {"usdtinr": 90.0, "prices": {}}, [], None)
+        self.assertEqual(state["open_positions"]["AVAX"]["last_checked_t"], T0 + 2 * BAR)
 
 
 class TestFxFallbackIsLoud(unittest.TestCase):
@@ -228,14 +228,14 @@ class TestLedgerSurvivesACrash(unittest.TestCase):
         self.assertEqual([p.name for p in self.tmp.iterdir() if p.name.endswith(".tmp")], [])
 
     def test_a_position_already_closed_in_the_database_is_not_booked_twice(self):
-        self.db.open_position("P", "DOT", "long", 10.0, 100.0, 93.0, 115.0, 100.0, account_id=E.ACCOUNT_ID)
+        self.db.open_position("P", "AVAX", "long", 10.0, 100.0, 93.0, 115.0, 100.0, account_id=E.ACCOUNT_ID)
         self.db.close_position("P", 101.0, "stop", 10.0, 9.0, 1.0)      # the run that died before saving the state file
-        state = {"trading_capital": 100_000.0, "open_positions": {"DOT": position()}, "completed_trades_count": 0,
+        state = {"trading_capital": 100_000.0, "open_positions": {"AVAX": position()}, "completed_trades_count": 0,
                  "winning_trades_count": 0, "total_fees_paid": 0.0}
         df = candles([FLAT, FLAT, (99.0, 101.5, 98.8, 101.2, 100.5)])
         lines = []
-        E.process_exits(self.db, state, {"DOT": df}, {"usdtinr": 90.0, "prices": {"DOT": 101.25}}, lines, None)
-        self.assertNotIn("DOT", state["open_positions"])
+        E.process_exits(self.db, state, {"AVAX": df}, {"usdtinr": 90.0, "prices": {"AVAX": 101.25}}, lines, None)
+        self.assertNotIn("AVAX", state["open_positions"])
         self.assertEqual(state["trading_capital"], 100_000.0, "a re-run must not credit the same exit again")
         self.assertEqual(len(self.db.get_trades(account_id=E.ACCOUNT_ID)), 0)
 
@@ -243,27 +243,27 @@ class TestLedgerSurvivesACrash(unittest.TestCase):
         """2026-10-30 review: the trade row was written, then the run died before saving the state (e.g. an error while looking for
         entries). The next run dropped the position without booking it twice -- but also never added its profit to the capital, and
         then overwrote the database's capital with that stale number. Now it credits the recorded trade's result once."""
-        self.db.open_position("P", "DOT", "long", 10.0, 100.0, 93.0, 115.0, 100.0, account_id=E.ACCOUNT_ID)
+        self.db.open_position("P", "AVAX", "long", 10.0, 100.0, 93.0, 115.0, 100.0, account_id=E.ACCOUNT_ID)
         self.db.close_position("P", 105.0, "target", 500.0, 450.0, 50.0)
-        self.db.record_trade(position_id="P", symbol="DOT", direction="long", qty=10.0, entry_price=100.0, exit_price=105.0,
+        self.db.record_trade(position_id="P", symbol="AVAX", direction="long", qty=10.0, entry_price=100.0, exit_price=105.0,
                              entry_dt="2026-10-30T01:00:00+05:30", exit_dt="2026-10-30T02:00:00+05:30", hold_minutes=60, exit_reason="target",
                              gross_pnl=500.0, costs_dict={"total": 50.0}, net_pnl=450.0, capital_after=100_450.0,
                              account_id=E.ACCOUNT_ID, strategy=E.STRATEGY_NAME)
-        state = {"trading_capital": 100_000.0, "open_positions": {"DOT": position()}, "completed_trades_count": 0,
+        state = {"trading_capital": 100_000.0, "open_positions": {"AVAX": position()}, "completed_trades_count": 0,
                  "winning_trades_count": 0, "total_fees_paid": 0.0}
         df = candles([FLAT, FLAT, (99.0, 101.5, 98.8, 101.2, 100.5)])
-        E.process_exits(self.db, state, {"DOT": df}, {"usdtinr": 90.0, "prices": {"DOT": 101.25}}, [], None)
-        self.assertNotIn("DOT", state["open_positions"])
+        E.process_exits(self.db, state, {"AVAX": df}, {"usdtinr": 90.0, "prices": {"AVAX": 101.25}}, [], None)
+        self.assertNotIn("AVAX", state["open_positions"])
         self.assertEqual(state["trading_capital"], 100_450.0)
         self.assertEqual((state["completed_trades_count"], state["winning_trades_count"], state["total_fees_paid"]), (1, 1, 50.0))
         self.assertEqual(len(self.db.get_trades(account_id=E.ACCOUNT_ID)), 1)          # still one trade row
 
     def test_a_normal_exit_is_booked_once(self):
-        self.db.open_position("P", "DOT", "long", 10.0, 100.0, 93.0, 115.0, 100.0, account_id=E.ACCOUNT_ID)
-        state = {"trading_capital": 100_000.0, "open_positions": {"DOT": position()}, "completed_trades_count": 0,
+        self.db.open_position("P", "AVAX", "long", 10.0, 100.0, 93.0, 115.0, 100.0, account_id=E.ACCOUNT_ID)
+        state = {"trading_capital": 100_000.0, "open_positions": {"AVAX": position()}, "completed_trades_count": 0,
                  "winning_trades_count": 0, "total_fees_paid": 0.0}
         df = candles([FLAT, FLAT, (99.0, 101.5, 98.8, 101.2, 100.5)])
-        E.process_exits(self.db, state, {"DOT": df}, {"usdtinr": 90.0, "prices": {"DOT": 101.25}}, [], None)
+        E.process_exits(self.db, state, {"AVAX": df}, {"usdtinr": 90.0, "prices": {"AVAX": 101.25}}, [], None)
         self.assertEqual(len(self.db.get_trades(account_id=E.ACCOUNT_ID)), 1)
         self.assertGreater(state["completed_trades_count"], 0)
 
@@ -315,7 +315,7 @@ class TestPortfolioCaps(unittest.TestCase):
             df = candles([FLAT] * 60)
             with mock.patch.object(S, "entry_signal", side_effect=lambda d: pd.Series([False] * (len(d) - 1) + [True])):
                 lines = []
-                E.process_entries(db, state, {"DOT": df, "ADA": df}, {"usdtinr": 90.0, "prices": {"DOT": 100.0, "ADA": 100.0}}, lines, None)
+                E.process_entries(db, state, {"AVAX": df, "LTC": df}, {"usdtinr": 90.0, "prices": {"AVAX": 100.0, "LTC": 100.0}}, lines, None)
         # each entry is ~0.86x the account, so the second would take the book past 1.5x and must be refused
         self.assertEqual(len(state["open_positions"]), 1)
         self.assertTrue(any("portfolio notional cap" in ln and "skipped" in ln for ln in lines))

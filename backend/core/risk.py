@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import os
 
-from core.registry import market_of
+from core.symbols import market_of
 
 
 class RiskGates:
