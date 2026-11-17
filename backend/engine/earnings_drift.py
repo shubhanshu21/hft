@@ -126,10 +126,10 @@ def fill(db, broker, now: datetime, lookup, lines: list) -> None:
         if s not in px:
             continue
         free, slot = float(db.get_account(ACCOUNT)["current_capital"]) - locked_cash(db), sleeve_value(db) / S.K
-        qty = int(min(slot, free) // px[s])
+        qty = S.share_qty(px[s], slot, free)
         buys.remove(s)
         if qty < 1:
-            why = (f"one share ({_inr(px[s])}) costs more than its 1/{S.K} slot ({_inr(slot)})" if free >= slot
+            why = (f"one share ({_inr(px[s])}) costs more than {S.ONE_SHARE_SLOTS} of its 1/{S.K} slots ({_inr(slot)} each)" if free >= px[s]
                    else f"not enough free cash ({_inr(free)})")
             lines.append(f"earnings drift: {s} skipped -- {why}")
             continue

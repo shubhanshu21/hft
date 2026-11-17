@@ -43,6 +43,14 @@ MIN_REACTION, MIN_VOL_SURGE = 0.04, 2.0
 K, HOLD_DAYS = 10, 40          # 10 stocks since 2026-10-29 (was 5): see the docstring
 MIN_BREADTH_PCT = 50.0
 SLEEVE_CAPITAL = 100_000.0
+ONE_SHARE_SLOTS = 2               # 2026-11-16: a share dearer than its slot is still bought (1 share) up to this many slots -- skipping
+                                  # a valid signal cost money: Rs1L Oct 2022-Nov 2026 Rs2.03L (-16%) -> Rs2.13L (-14%); only ~3 times in 4 years
+
+
+def share_qty(price: float, slot: float, free: float) -> int:
+    """Whole shares for one slot; one share when a single share is dearer than the slot but within ONE_SHARE_SLOTS slots and the cash."""
+    q = int(min(slot, free) // price)
+    return 1 if q < 1 and price <= min(free, ONE_SHARE_SLOTS * slot) else q
 UNIVERSE, LIQ_DAYS, MIN_HISTORY, MIN_PRICE = 200, 126, 125, 20.0      # the day's 200 most-traded stocks (126-day median traded value)
 SPLIT_LOW, SPLIT_HIGH = 0.6, 1.7   # an overnight open/prev-close outside this is a split / bonus / demerger, not a market move
 SLIP_BP = 5.0
@@ -208,7 +216,7 @@ def backtest(start="2022-10-03", end=None, capital=100_000.0, ind: dict | None =
                 if not e > 0:
                     continue
                 equity = cash + sum(p["q"] * p["last"] for p in pos.values())
-                q = int(min(equity / K, cash) / e)
+                q = share_qty(e, equity / K, cash)
                 if q < 1:
                     continue
                 cash -= q * e; pos[s] = dict(q=q, e=e, i0=i, d0=d, last=e, k=len(rep["days"])); traded.add(s)

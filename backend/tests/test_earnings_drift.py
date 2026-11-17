@@ -181,13 +181,26 @@ class TestTenSlots(Base):
         self.assertNotIn("W00", {p["symbol"] for p in pos})                     # the weakest reaction waits
         self.assertTrue(all(p["qty"] * p["entry_price"] <= S.SLEEVE_CAPITAL / 10 for p in pos))
 
-    def test_a_share_dearer_than_the_slot_says_so(self):
+    def test_one_share_up_to_two_slots_is_bought(self):
+        """2026-11-16: DIVISLAB (Rs11,760) was skipped for a Rs10k slot. One share up to 2 slots is bought (backtest Rs2.03L -> 2.13L)."""
+        with mock.patch.object(E, "_indicators", return_value=make_ind()):
+            E.plan(self.db, self.at(8, 50).date(), set())
+        E.fill(self.db, Broker({"GOOD": 15_000.0}), self.at(9, 30), self.lookup, [])     # Rs1L free, slot Rs10k
+        self.assertEqual([p["qty"] for p in self.db.get_open_positions(E.ACCOUNT)], [1])
+
+    def test_a_share_dearer_than_two_slots_says_so(self):
         with mock.patch.object(E, "_indicators", return_value=make_ind()):
             E.plan(self.db, self.at(8, 50).date(), set())
         lines = []
-        E.fill(self.db, Broker({"GOOD": 15_000.0}), self.at(9, 30), self.lookup, lines)   # Rs1L free, slot Rs10k
+        E.fill(self.db, Broker({"GOOD": 25_000.0}), self.at(9, 30), self.lookup, lines)
         self.assertEqual(self.db.get_open_positions(E.ACCOUNT), [])
-        self.assertIn("costs more than its 1/10 slot", " ".join(lines))
+        self.assertIn("costs more than 2 of its 1/10 slots", " ".join(lines))
+
+    def test_share_qty_rule(self):
+        self.assertEqual(S.share_qty(100.0, 10_000, 50_000), 100)     # normal: whole shares within the slot
+        self.assertEqual(S.share_qty(15_000.0, 10_000, 50_000), 1)    # dearer than a slot, within 2: one share
+        self.assertEqual(S.share_qty(15_000.0, 10_000, 12_000), 0)    # not enough cash
+        self.assertEqual(S.share_qty(25_000.0, 10_000, 50_000), 0)    # more than 2 slots
 
 
 class TestSharedAccount(Base):
