@@ -86,6 +86,12 @@ class TestMatch(Base):
             for body in P.bodies(aid, 100_000):
                 api.validate(body | {"start": "2026-11-01", "end": "2026-11-18"})
 
+    def test_mcx_size_reaches_the_backtest(self):
+        from engine import backtest_api as api
+        with mock.patch.dict("os.environ", {"MCX_TREND_CARRY_EXPOSURE": "2.0"}):
+            body = P.bodies("MCX_TREND_CARRY", 250_000)[0]
+            self.assertEqual(api.validate(body | {"start": "2026-11-01", "end": "2026-11-18"})["params"]["leverage"], 2.0)
+
     def test_recent_differences_only(self):
         r = {"account": "X", "only_paper": [{"sym": "OLD", "day": "2026-10-30"}, {"sym": "NEW", "day": "2026-11-17"}],
              "only_backtest": [{"sym": "MISS", "day": "2026-11-16"}]}

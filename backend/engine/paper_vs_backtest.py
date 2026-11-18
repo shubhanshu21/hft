@@ -38,7 +38,7 @@ def bodies(account: str, capital: float) -> list[dict]:
                  "tax": "business"}]
     if account == "MCX_TREND_CARRY":
         return [{"market": "commodity", "strategy": "trend_carry", "capital": capital,
-                 "leverage": float(os.environ.get("MCX_TREND_CARRY_EXPOSURE", 1.5))}]
+                 "exposure": float(os.environ.get("MCX_TREND_CARRY_EXPOSURE", 1.5))}]   # validate reads "exposure" (a "leverage" key was ignored)
     if account == "RESULTS_GAP":
         from markets.equity.strategies.tf_daily.earnings_drift import strategy as ed
         from markets.equity.strategies.tf_intraday.results_gap import strategy as rg
