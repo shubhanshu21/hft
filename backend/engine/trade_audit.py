@@ -233,7 +233,7 @@ def main(argv=None) -> int:
         if new:
             from services.utils import telegram
             new_text, _ = format_report(new)
-            telegram.send(f"🔎 <b>TRADE AUDIT</b> ({d0}..{d1})\n{new_text}")
+            telegram.send(telegram.message("🔍", f"CHECK · Trade audit ({d0:%d %b} to {d1:%d %b})", ["These trades look wrong and are worth a look:", new_text]))
             _save_state(args.state, seen | {r.trade["position_id"] for r in new})
     return 1 if n_flagged else 0
 

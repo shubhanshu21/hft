@@ -169,7 +169,7 @@ def main(argv=None) -> int:
                 failed = True
                 try:
                     from services.utils import telegram
-                    telegram.send(f"🔴 <b>DB BACKUP UNUSABLE</b> ({name}) — {exc}")
+                    telegram.send(telegram.problem("Database backup", f"The newest backup ({name}) cannot be opened: {exc}", "python3 -m engine.backup_db --verify"))
                 except Exception:
                     pass
                 continue

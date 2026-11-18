@@ -189,9 +189,10 @@ def enter(db, broker, now: datetime, holidays: set[date], lookup, lines: list) -
                                                           "entry_slot": f"{now:%H:%M}", "entry_date": str(today), "late": late,
                                                           "mkt_first15": mkt15, "runup20": _runup(b["symbol"], today),
                                                           "leverage": lev, "upstox_leverage": allowed}))
-        lines.append(f"BOUGHT {b['symbol']} {qty} @ {b['ltp']:,.2f} = {_inr(qty * b['ltp'])} (opened {b['gap_vs_mkt']:+.1%} vs market after results, "
-                     f"still rising at {now:%H:%M})"
-                     + ("  [DELAYED: the 09:30 quote fetch failed, so this is the 09:30 rule applied at a later price]" if late else ""))
+        from services.utils import telegram as T
+        why = (f"results day: opened {b['gap_vs_mkt']:+.1%} above the market and still rising at {now:%H:%M} · day trade, sold at 15:20"
+               + (" · DELAYED: 09:30 prices failed, bought at the retry" if late else ""))
+        lines.append("BOUGHT " + T.bought_block(b["symbol"], f"{qty} shares", b["ltp"], qty * b["ltp"], why))
     _save_state(st)
 
 
@@ -242,7 +243,8 @@ def _close(db, broker, p: dict, now: datetime, reason: str, lines: list) -> bool
     hold = (now - datetime.fromisoformat(p["entry_time"])).total_seconds() / 60
     db.record_trade(p["position_id"], p["symbol"], "long", qty, entry, px, p["entry_time"], now.isoformat(), hold, reason, gross, c, net, cap,
                     account_id=ACCOUNT, strategy=NAME, close=True)
-    lines.append(f"SOLD {p['symbol']} {qty} {entry:,.2f} -> {px:,.2f}: {'+' if net >= 0 else ''}{_inr(net)} after fees")
+    from services.utils import telegram as T
+    lines.append("SOLD " + T.sold_block(p["symbol"], f"{qty} shares", entry, px, net, c["total"], T.why_text(reason)))
     return True
 
 
@@ -276,14 +278,17 @@ def run(db, broker, now: datetime, holidays: set[date], lookup, send=print) -> l
                f"FALLBACK: no liquid-stock list (too few NSE daily files), trading the fixed {len(S.market_panel())}-stock list today")
         msg = f"results {n if n.startswith('calendar') else 'calendar refreshed: ' + n}; NSE daily files added: {b}; {who}"
         if not liquid and send:                                       # quietly trading the hindsight list would undo the fairness fix
-            send("📈 <b>RESULTS GAP</b>\n" + msg)
+            from services.utils import telegram as T
+            send(T.problem("Results gap", "No list of liquid stocks today (too few NSE daily files), so it trades the old fixed list.", ""))
         try:                                                          # earnings_drift's orders for today's open (same account)
             ed = ED.plan(db, now.date(), holidays)
         except Exception as e:
             ed = [f"earnings drift: plan FAILED ({type(e).__name__}: {e!s:.100}) -- no swing orders today"]
         if ed and send:
-            send("📈 <b>EARNINGS DRIFT</b>\n" + "\n".join(ed))
+            from services.utils import telegram as T
+            send(T.message("🗓", "Equity · plan for today's open (earnings drift)", ed))
         return [msg, *ed]
+    capital_before = float(db.get_account(ACCOUNT)["current_capital"])
     try:                                           # earnings_drift's opening fills first: results_gap sizes from the cash left
         ED.fill(db, broker, now, lookup, lines)
     except Exception as e:
@@ -293,8 +298,13 @@ def run(db, broker, now: datetime, holidays: set[date], lookup, send=print) -> l
     elif t >= dtime(15, 15):
         exit_all(db, broker, now, lines)
     if lines and send:
+        from services.utils import telegram as T
         acc = db.get_account(ACCOUNT)
-        send("📈 <b>RESULTS GAP</b>\n" + "\n".join(lines) + f"\nAccount: {_inr(float(acc['current_capital']))}")
+        sold = any(ln.startswith("SOLD ") for ln in lines); bought = sum(ln.startswith("BOUGHT ") for ln in lines)
+        icon = T.trade_icon([float(acc["current_capital"]) - capital_before] if sold else [], bought)
+        title = "SOLD · Equity" if sold and not bought else "BOUGHT · Equity" if bought and not sold else "Equity"
+        blocks = [ln.split(" ", 1)[1] if ln.startswith(("SOLD ", "BOUGHT ")) else ln for ln in lines]
+        send(T.message(icon, title, blocks, value=float(acc["current_capital"]), start=float(acc["initial_capital"])))
     _save_state(_state())                                          # heartbeat for the monitor / paper page
     return lines
 

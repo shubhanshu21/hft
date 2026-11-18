@@ -109,10 +109,6 @@ def is_authorized_chat(chat_id: str) -> bool:
     return ENABLED and str(chat_id) == str(_CHAT_ID)
 
 
-def alert_error(context: str, exc: Exception) -> None:
-    send(f"🔴 <b>ERROR</b> — {context}\n<code>{type(exc).__name__}: {exc}</code>")
-
-
 def inr(v: float) -> str:
     """Indian digit grouping without the sign: 100000 -> '1,00,000'."""
     n = str(int(round(abs(v))))
@@ -123,57 +119,89 @@ def inr(v: float) -> str:
     return (head + "," + tail) if head else tail
 
 
-def _rs(v: float) -> str:
+# ---------------------------------------------------------------------------------------------------------------------------
+# One simple message format for every alert (2026-11-18, user: "make telegram alerts simple so that i can properly check them").
+#   🟢 BOUGHT · <account>            ✅ / ❌ SOLD · <account>          📊 <account> · <what>          ⚠️ PROBLEM · <what>
+# Each trade is a short block: the stock and size, the money, why, and the stop; every message ends with the account value.
+# ---------------------------------------------------------------------------------------------------------------------------
+WHY = {   # stored exit reasons -> plain words
+    "stop": "hit the stop-loss", "end_of_day": "day trade, sold at 15:20", "missed_exit": "sold at the next run (the 15:20 sale was missed)",
+    "held_40_days": "held 40 trading days, as planned", "dead_money": "still below the buy price after 20 trading days",
+    "rebalance": "no longer in the top 3", "rebalance_next_contract": "moved to the next month's contract",
+    "roll_before_expiry": "contract about to expire, moved to the next month", "trimmed": "position made smaller at the re-check",
+}
+
+
+def price(v: float) -> str:
+    """Prices with enough digits: DOGE 0.06819, AVAX 7.942, SBIN 812.40."""
+    v = float(v)
+    return f"{v:,.5g}" if abs(v) < 1 else f"{v:,.4f}".rstrip("0").rstrip(".") if abs(v) < 10 else f"{v:,.2f}"
+
+
+_p = price      # the blocks' parameters are called `price`, so they use this alias
+
+
+def rupees(v: float) -> str:
+    """₹1,23,456 (no sign)."""
+    return f"₹{inr(v)}"
+
+
+def signed_rupees(v: float) -> str:
     return f"{'+' if v >= 0 else '−'}₹{inr(v)}"
 
 
-def _size(symbol: str, qty: int, lot: int) -> str:
-    """'2 lots = 2,000 EUR' for currency futures, '35 shares' for equity."""
-    if lot and lot > 1:
-        return f"{qty} lot{'s' if qty != 1 else ''} = {inr(qty * lot)} {symbol[:3]}"
-    return f"{qty} share{'s' if qty != 1 else ''}"
+def why_text(reason: str) -> str:
+    r = str(reason or "")
+    low = r.lower()
+    if low.startswith("take profit"):
+        return f"hit the {r[r.find('(') + 1:r.find(')')]} profit target" if "(" in r else "hit the profit target"
+    if low.startswith("stop loss"):
+        return "hit the stop-loss"
+    if low.startswith("exit signal"):
+        return "price back up to its normal level"
+    if low.startswith("time stop"):
+        return "24 hours passed"
+    return WHY.get(r, r.replace("_", " "))
 
 
-def alert_entry(sig: dict, capital: float, free: float | None = None) -> None:
-    """A new paper trade: what was bought, how much money is at stake, where the stop is and what it would lose there."""
-    long_ = sig["direction"] == "long"
-    qty = sig.get("lots", sig["qty"])
-    lot = sig.get("lot_size") or (round(sig["trade_value"] / (qty * sig["entry_price"])) if qty and sig["entry_price"] else 1)
-    risk = abs(sig["entry_price"] - sig["sl"]) * qty * lot
-    tp = sig.get("tp")
-    margin = sig.get("margin_used")
-    if lot > 1 and margin:
-        money = f"Margin blocked: ₹{inr(margin)} ({sig['trade_value'] / margin:.0f}x of ₹{inr(sig['trade_value'])})"
-    else:
-        money = f"Money used: ₹{inr(sig['trade_value'])}"
-    send(
-        f"📥 <b>{'BUY' if long_ else 'SELL'} {sig['symbol']}</b> ({sig.get('strategy', '')})\n"
-        f"{_size(sig['symbol'], qty, lot)} @ ₹{sig['entry_price']:,.2f}\n"
-        f"Stop: ₹{sig['sl']:,.2f} (loss there ≈ ₹{inr(risk)}" + (f", {sig['risk_pct']:g}% risk)" if sig.get("risk_pct") else ")") + "\n"
-        "Target: " + (f"₹{tp:,.2f}" if tp else "none, the strategy's exit rule decides") + "\n"
-        f"{money}\n"
-        f"Account: ₹{inr(capital)}" + (f" · free after this: ₹{inr(free)}" if free is not None else "")
-    )
+def bought_block(sym: str, size: str, price: float, money: float, why: str = "", stop: float | None = None, risk: float | None = None) -> str:
+    lines = [f"<b>{sym}</b> · {size} at {_p(price)} = {rupees(money)}"]
+    if why:
+        lines.append(f"Why: {why}")
+    if stop:
+        lines.append(f"Stop: {_p(stop)}" + (f" (most it can lose ≈ {rupees(risk)})" if risk else ""))
+    return "\n".join(lines)
 
 
-def alert_exit(sym: str, pos: dict, exit_p: float, reason: str, net_pnl: float, capital: float, gross: float | None = None,
-               fees: float | None = None, now=None, lot_size: int | None = None) -> None:
-    """A closed paper trade: buy and sell price, how long it was held, profit before and after fees, and the account after it."""
-    qty = pos.get("lots", pos.get("qty", 1))
-    lot = lot_size or pos.get("lot_size") or 1
-    held = ""
-    t0 = pos.get("entry_time")
-    if now is not None and hasattr(t0, "strftime"):
-        try:
-            d = now - t0
-            held = f" · held {d.days} day{'s' if d.days != 1 else ''}" if d.days >= 1 else f" · held {d.seconds // 3600}h {d.seconds % 3600 // 60}m"
-        except TypeError:
-            pass
-    money = f"Before fees {_rs(gross)} · fees ₹{inr(fees)} · " if gross is not None and fees is not None else ""
-    send(
-        f"{'✅' if net_pnl >= 0 else '❌'} <b>{'SOLD' if pos['direction'] == 'long' else 'BOUGHT BACK'} {sym}</b> ({pos.get('strategy', '')}) — "
-        f"{str(reason).replace('_', ' ')}\n"
-        f"{_size(sym, qty, lot)} @ ₹{pos['entry_price']:,.2f} → ₹{exit_p:,.2f}{held}\n"
-        f"{money}<b>profit {_rs(net_pnl)}</b>\n"
-        f"Account now: ₹{inr(capital)}"
-    )
+def sold_block(sym: str, size: str, buy: float, sell: float, profit: float, fees: float | None = None, why: str = "", held: str = "") -> str:
+    lines = [f"<b>{sym}</b> · {size} · {_p(buy)} → {_p(sell)}",
+             f"{'Profit' if profit >= 0 else 'Loss'}: <b>{signed_rupees(profit)}</b>" + (f" after {rupees(fees)} fees" if fees is not None else "")]
+    if why or held:
+        lines.append("Why: " + " · ".join(x for x in (why, f"held {held}" if held else "") if x))
+    return "\n".join(lines)
+
+
+def account_line(value: float, start: float | None = None) -> str:
+    if not start:
+        return f"Account: <b>{rupees(value)}</b>"
+    pct = f"{(value / start - 1) * 100:+.1f}%".replace("-", "−")          # the same minus sign as the rupee amounts
+    return f"Account: <b>{rupees(value)}</b> ({pct} since start)"
+
+
+def message(icon: str, title: str, blocks: list[str], value: float | None = None, start: float | None = None) -> str:
+    """'<icon> <title>', the blocks one blank line apart, then the account value."""
+    parts = [f"{icon} <b>{title}</b>", *[b for b in blocks if b]]
+    if value is not None:
+        parts.append(account_line(value, start))
+    return "\n\n".join(parts)
+
+
+def trade_icon(sold_profits: list[float], bought: int) -> str:
+    """🟢 only buys · ✅ sold at a profit · ❌ sold at a loss · 📊 nothing traded."""
+    if sold_profits:
+        return "✅" if sum(sold_profits) >= 0 else "❌"
+    return "🟢" if bought else "📊"
+
+
+def problem(what: str, detail: str, check: str = "") -> str:
+    return message("⚠️", f"PROBLEM · {what}", [detail, f"Check: <code>{check}</code>" if check else ""])

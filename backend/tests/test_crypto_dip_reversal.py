@@ -153,7 +153,7 @@ class TestEngineRun(unittest.TestCase):
         lines = []
         E.process_exits(self.db, state, {"AVAX": df}, {"usdtinr": 90.0, "prices": {"AVAX": 101.25}}, lines, None)
         self.assertNotIn("AVAX", state["open_positions"])
-        self.assertIn("Exit 101.2500", lines[0])
+        self.assertIn("100.00 → 101.25", lines[0])
         gross = (101.25 - 100) / 100 * 1000 * 90
         fees = 1000 * 2 * (S.TAKER + S.SLIP.get("AVAX", 0.00015)) * 90
         self.assertAlmostEqual(state["trading_capital"], 100_000 + gross - fees, places=4)

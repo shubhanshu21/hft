@@ -334,9 +334,9 @@ def process_exits(db: TradingDB, state: dict, candles_map: dict, live_info: dict
                          entry_dt=pos["entry_time"], exit_dt=datetime.now(IST).isoformat(), hold_minutes=hours * 60, exit_reason=why,
                          gross_pnl=gross_inr, costs_dict={"brokerage": fee_inr, "slippage": 0.0, "total": fee_inr}, net_pnl=net_inr,
                          capital_after=state["trading_capital"], account_id=ACCOUNT_ID, strategy=STRATEGY_NAME, close=True)
-        sign = "+" if net_inr >= 0 else ""
-        lines.append(f"CLOSED LONG {coin}: {why}\nEntry {entry_px:,.4f} -> Exit {px:,.4f} USDT\nNet PnL: {sign}{_inr(net_inr)} (fees {_inr(fee_inr)})\n"
-                      f"Trading capital: {_inr(state['trading_capital'])}")
+        from services.utils import telegram as T
+        held = f"{int(hours)}h {int(hours * 60) % 60}m" if hours < 48 else f"{hours / 24:.0f} days"
+        lines.append("SOLD " + T.sold_block(coin, f"{pos['qty']:.4g} {coin}", entry_px, px, net_inr, fee_inr, T.why_text(why), held))
         del state["open_positions"][coin]
 
 
@@ -414,13 +414,13 @@ def process_entries(db: TradingDB, state: dict, candles_map: dict, live_info: di
         db.open_position(position_id=pos_id, symbol=coin, direction="long", qty=qty, entry_price=entry_px, current_stop=sl_px,
                           target_price=entry_px * (1 + S.ROI), breakeven_price=entry_px, account_id=ACCOUNT_ID,
                           instrument_key=f"B-{coin}_USDT", strategy=STRATEGY_NAME, state=json.dumps({"risk_pct": risk_pct, "real": real}))
-        tag = "Delta demo order" if real else "simulated fill"
         clamp_note = (f" -- demo account's margin only covered {_inr(pos_usd * fx)} of the intended {_inr(intended_pos_usd * fx)}"
                        if real and pos_usd < intended_pos_usd * 0.999 else "")
-        lines.append(f"ENTERED LONG {coin}: dip-reversal signal ({tag}){clamp_note}\nEntry {entry_px:,.4f} | Stop {sl_px:,.4f} | Target {open_pos[coin]['tp_price']:,.4f}\n"
-                      f"Size {_inr(pos_usd * fx)} | Risk {_inr(risk_inr)} ({risk_pct:.1%}, market vol scale {vol_scale:.2f}x)"
-                      + (f"\nCRASH-AWARE: {sum(signals.values())} coins dipping at once (market-wide) -- trade shrunk to {crowd:.0%} of normal size"
-                         if crowd < 1 else ""))
+        from services.utils import telegram as T
+        why = f"sharp dip, buying the bounce (target {open_pos[coin]['tp_price']:,.4f})" + (" · real Delta demo order" if real else "") + clamp_note
+        if crowd < 1:
+            why += f" · {sum(signals.values())} coins dipped at once, so a smaller trade ({crowd:.0%})"
+        lines.append("BOUGHT " + T.bought_block(coin, f"{qty:.4g} {coin}", entry_px, pos_usd * fx, why, stop=sl_px, risk=risk_inr))
 
 
 def run_iteration(db: TradingDB, send_fn=None) -> dict:
@@ -443,21 +443,27 @@ def run_iteration(db: TradingDB, send_fn=None) -> dict:
     if not candles_map:
         lines.append("Binance 5m candle feed unavailable -- no position was checked and no entry was taken this run.")
         if send_fn:                                   # a skipped run is news: without this the 5-minute engine could skip silently
-            send_fn("⚠️ <b>CRYPTO DIP-REVERSAL</b> -- the Binance 5m candle feed failed, so this run checked nothing.")
+            from services.utils import telegram as T
+            send_fn(T.problem("Crypto", "Could not get prices from Binance, so this 5-minute check was skipped (open trades were not checked).",
+                              "journalctl --user -u hft-crypto-dip-reversal.service -n 30"))
         return {"lines": lines, "state": state}
     broker = _delta()
+    capital_before = state["trading_capital"]
     process_exits(db, state, candles_map, live_info, lines, broker)
     process_entries(db, state, candles_map, live_info, lines, broker)
     save_state(state)
     db.update_capital(ACCOUNT_ID, state["trading_capital"])
     db.record_snapshot(ACCOUNT_ID)
     if lines and send_fn:
-        now_dt = datetime.now(IST)
-        wr = state["winning_trades_count"] / max(1, state["completed_trades_count"]) * 100
-        header = f"CRYPTO DIP-REVERSAL ({now_dt:%d %b %H:%M} IST)\n"
-        footer = (f"\nCapital: {_inr(state['trading_capital'])} | Open: {len(state['open_positions'])}/{S.MAX_CONCURRENT} | "
-                  f"Trades: {state['completed_trades_count']} (win {wr:.1f}%)")
-        send_fn(header + "\n".join(lines) + footer)
+        from services.utils import telegram as T
+        sold = [ln for ln in lines if ln.startswith("SOLD ")]
+        bought = [ln for ln in lines if ln.startswith("BOUGHT ")]
+        icon = T.trade_icon([state["trading_capital"] - capital_before] if sold else [], len(bought))
+        title = "SOLD · Crypto" if sold and not bought else "BOUGHT · Crypto" if bought and not sold else "Crypto"
+        blocks = [ln.split(" ", 1)[1] if ln.startswith(("SOLD ", "BOUGHT ")) else ln for ln in lines]
+        blocks.append(f"Open trades: {len(state['open_positions'])} of {S.MAX_CONCURRENT}")
+        acct = db.get_account(ACCOUNT_ID) or {}
+        send_fn(T.message(icon, title, blocks, value=state["trading_capital"], start=acct.get("initial_capital")))
     return {"lines": lines, "state": state}
 
 

@@ -270,3 +270,12 @@ class TestEquityBreakout(Base):
         self.assertTrue(st["ok"]); self.assertIn("next at Tue 09:08", st["text"])
         st = M.engine_status("EQUITY_BREAKOUT", MON_10, sh=fake_sh(bo=("success", FRI_0908)))
         self.assertFalse(st["ok"]); self.assertIn("did not start", st["text"])
+
+
+class TestSimpleFormat(unittest.TestCase):
+    def test_alert_is_area_problem_and_check_command(self):
+        t = M.alert_text("crypto_failed", "Crypto engine's last run FAILED (exit-code). Check: journalctl --user -u hft-crypto-dip-reversal.service -n 50")
+        self.assertEqual(t, "⚠️ <b>PROBLEM · Crypto engine</b>\n\nCrypto engine's last run FAILED (exit-code).\n\n"
+                            "Check: <code>journalctl --user -u hft-crypto-dip-reversal.service -n 50</code>")
+        self.assertIn("(still not fixed)", M.alert_text("bo_missed", "Breakout did not start.", again=True))
+        self.assertEqual(M.fixed_text("upstox_login"), "✅ <b>FIXED · Upstox login</b>\n\nThe problem is fixed: working normally again.")

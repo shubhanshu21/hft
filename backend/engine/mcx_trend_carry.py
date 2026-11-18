@@ -91,13 +91,15 @@ def run(broker, db, now: datetime, report: bool = True, send=None) -> dict:
     open_pos = db.get_open_positions(ACCOUNT)
     keys = set(contracts["instrument_key"]) | {p["instrument_key"] for p in open_pos if p.get("instrument_key")}
     ltp = {k: v for k, v in (broker.get_ltp_batch(sorted(keys)) or {}).items() if v}
-    lines, now_s = [], now.isoformat()
+    from services.utils import telegram as T
+    lines, now_s, sold_net = [], now.isoformat(), []
+    lots_txt = lambda n: f"{int(n)} lot" + ("" if int(n) == 1 else "s")
 
     def close(p, reason):
         nonlocal capital
         px = ltp.get(p["instrument_key"])
         if not px:
-            lines.append(f"• {p['symbol']}: no live price, kept open")
+            lines.append(f"⚠️ {p['symbol']}: no live price, kept open")
             return False
         stt = json.loads(p.get("state") or "{}")
         c = compute_mcx_costs(stt.get("family", p["symbol"]), "long", p["entry_price"], px, p["qty"])
@@ -105,7 +107,8 @@ def run(broker, db, now: datetime, report: bool = True, send=None) -> dict:
         hold = (now - datetime.fromisoformat(p["entry_time"])).total_seconds() / 60
         db.record_trade(p["position_id"], p["symbol"], "long", p["qty"], p["entry_price"], px, p["entry_time"], now_s, hold, reason, c["gross"], c,
                         c["net"], capital, account_id=ACCOUNT, strategy=NAME, close=True)
-        lines.append(f"• SOLD {p['symbol']} {p['qty']} lot(s) {p['entry_price']:,.2f} → {px:,.2f}: {'+' if c['net'] >= 0 else ''}{_inr(c['net'])} after fees")
+        sold_net.append(c["net"])
+        lines.append("Sold " + T.sold_block(p["symbol"], lots_txt(p["qty"]), p["entry_price"], px, c["net"], c["total"], T.why_text(reason)))
         return True
 
     def trim(p, lots, reason):
@@ -116,7 +119,7 @@ def run(broker, db, now: datetime, report: bool = True, send=None) -> dict:
             return close(p, reason)
         px = ltp.get(p["instrument_key"])
         if not px:
-            lines.append(f"• {p['symbol']}: no live price, kept {have} lot(s)")
+            lines.append(f"⚠️ {p['symbol']}: no live price, kept {have} lot(s)")
             return False
         stt = json.loads(p.get("state") or "{}")
         c = compute_mcx_costs(stt.get("family", p["symbol"]), "long", p["entry_price"], px, lots)
@@ -126,14 +129,15 @@ def run(broker, db, now: datetime, report: bool = True, send=None) -> dict:
         db.record_trade(p["position_id"], p["symbol"], "long", lots, p["entry_price"], px, p["entry_time"], now_s, hold, reason, c["gross"], c,
                         c["net"], capital, account_id=ACCOUNT, strategy=NAME,
                         keep_qty=left, state_updates={"margin_used": round(float(stt.get("margin_used") or 0) * left / have, 2)})
-        lines.append(f"• SOLD {lots} of {have} lot(s) {p['symbol']} {p['entry_price']:,.2f} → {px:,.2f}: {'+' if c['net'] >= 0 else ''}{_inr(c['net'])} after fees")
+        sold_net.append(c["net"])
+        lines.append("Sold " + T.sold_block(p["symbol"], f"{lots} of {lots_txt(have)}", p["entry_price"], px, c["net"], c["total"], T.why_text(reason)))
         return True
 
     def add(p, signal, lots):
         """Buy `lots` more of the contract already held, averaging the entry price (one row per commodity, like the backtest)."""
         px = ltp.get(p["instrument_key"])
         if not px:
-            lines.append(f"• {p['symbol']}: no live price, not added to")
+            lines.append(f"⚠️ {p['symbol']}: no live price, not added to")
             return False
         have = int(p["qty"])
         stt = json.loads(p.get("state") or "{}")
@@ -141,25 +145,25 @@ def run(broker, db, now: datetime, report: bool = True, send=None) -> dict:
         avg = (p["entry_price"] * have + px * lots) / (have + lots)
         db.set_position_qty(p["position_id"], have + lots, entry_price=avg,
                             state_updates={"margin_used": round(float(stt.get("margin_used") or 0) + lots * lot_val * S.MARGIN_PCT[signal], 2)})
-        lines.append(f"• ADDED {lots} lot(s) {p['symbol']} @ {px:,.2f} = {_inr(lots * lot_val)} (now {have + lots})")
+        lines.append("Bought " + T.bought_block(p["symbol"], f"{lots_txt(lots)} more (now {have + lots})", px, lots * lot_val, "still in the top 3, gets more money"))
         return True
 
     def buy(signal, weight, contract, lots=None):
         px = ltp.get(contract["instrument_key"])
         if not px:
-            lines.append(f"• {S.TRADE[signal]}: no live price, skipped")
+            lines.append(f"⚠️ {S.TRADE[signal]}: no live price, skipped")
             return None
         lots = lots if lots is not None else S.lots_for(val if val is not None else capital, exposure, weight, px, signal)
         lot_val = px * lot_units(S.TRADE[signal])
         if lots < 1:
-            lines.append(f"• {S.TRADE[signal]} (weight {weight:.0%}): one lot is {_inr(lot_val)}, more than its share -- kept in cash")
+            lines.append(f"{S.TRADE[signal]}: in the top 3, but one lot ({_inr(lot_val)}) is more than its {weight:.0%} share of the money, so it stays in cash")
             return None
         pid = f"POS_MCXTC_{now.strftime('%Y%m%d_%H%M%S')}_{contract['tradingsymbol']}"
         state = {"family": S.TRADE[signal], "signal": signal, "weight": round(weight, 4), "expiry": str(contract["expiry"].date()),
                  "lot_units": lot_units(S.TRADE[signal]), "margin_used": round(lots * lot_val * S.MARGIN_PCT[signal], 2), "signal_day": str(signal_day.date())}
         db.open_position(pid, contract["tradingsymbol"], "long", lots, px, 0.0, 0.0, 0.0, account_id=ACCOUNT,
                          instrument_key=contract["instrument_key"], strategy=NAME, state=json.dumps(state))
-        lines.append(f"• BOUGHT {contract['tradingsymbol']} {lots} lot(s) @ {px:,.2f} = {_inr(lots * lot_val)} (weight {weight:.0%})")
+        lines.append("Bought " + T.bought_block(contract["tradingsymbol"], lots_txt(lots), px, lots * lot_val, f"in the top 3 · gets {weight:.0%} of the money"))
         return pid
 
     did = None
@@ -181,19 +185,19 @@ def run(broker, db, now: datetime, report: bool = True, send=None) -> dict:
             for sig, wt in sorted(w.items(), key=lambda x: -x[1]):
                 c = contract_for(sig, now.date(), contracts)
                 if c is None:
-                    lines.append(f"• {S.TRADE[sig]}: no contract alive past the next few days, skipped")
+                    lines.append(f"⚠️ {S.TRADE[sig]}: no contract alive past the next few days, skipped")
                     continue
                 px = ltp.get(c["instrument_key"])
                 p = held.get(sig)
                 if not px:                                            # never sell a holding into a contract we cannot price (2026-10-29)
-                    lines.append(f"• {S.TRADE[sig]}: no live price for {c['tradingsymbol']}, " + (f"kept {p['symbol']}" if p is not None else "skipped"))
+                    lines.append(f"⚠️ {S.TRADE[sig]}: no live price for {c['tradingsymbol']}, " + (f"kept {p['symbol']}" if p is not None else "skipped"))
                     ok = False
                     continue
                 want = S.lots_for(val, exposure, wt, px, sig)
                 if p is not None and p["instrument_key"] == c["instrument_key"]:
                     have = int(p["qty"])
                     if want == have:
-                        lines.append(f"• KEPT {p['symbol']} {have} lot(s) (still in the top {S.TOP_N}, weight {wt:.0%})")
+                        lines.append(f"Kept <b>{p['symbol']}</b> · {lots_txt(have)} (still in the top {S.TOP_N})")
                     elif want < have:                                 # trim the difference only (backtest: "smaller share")
                         ok = trim(p, have - want, "rebalance_resize") and ok
                     else:                                             # add the difference only
@@ -215,7 +219,7 @@ def run(broker, db, now: datetime, report: bool = True, send=None) -> dict:
             if due_to_roll(stt.get("expiry"), now.date(), ROLL_DAYS):
                 c = contract_for(stt["signal"], now.date() + timedelta(days=ROLL_DAYS + 1), contracts)
                 if c is not None and not ltp.get(c["instrument_key"]):   # no price for the next contract: keep the old one, retry next run
-                    lines.append(f"• {p['symbol']}: roll due but no live price for {c['tradingsymbol']} yet, kept")
+                    lines.append(f"⚠️ {p['symbol']}: roll due but no live price for {c['tradingsymbol']} yet, kept")
                     continue
                 if c is not None and close(p, "roll_before_expiry"):
                     buy(stt["signal"], stt.get("weight", 0.0), c, lots=p["qty"])
@@ -225,27 +229,26 @@ def run(broker, db, now: datetime, report: bool = True, send=None) -> dict:
 
     # mark to market
     open_pos = db.get_open_positions(ACCOUNT)
-    open_pnl, margin, rows = 0.0, 0.0, []
+    open_pnl, rows = 0.0, []
     for p in open_pos:
         stt = json.loads(p.get("state") or "{}")
         px = ltp.get(p["instrument_key"])
         u = stt.get("lot_units", 1)
-        margin += float(stt.get("margin_used") or 0.0)
         if px:
             pnl = (px - p["entry_price"]) * p["qty"] * u
             open_pnl += pnl
-            rows.append(f"• {p['symbol']} {p['qty']} lot(s) {p['entry_price']:,.2f} → {px:,.2f}: <b>{'+' if pnl >= 0 else ''}{_inr(pnl)}</b>")
+            rows.append(f"{p['symbol']} {lots_txt(p['qty'])}: {T.signed_rupees(pnl)}")
         else:
-            rows.append(f"• {p['symbol']} {p['qty']} lot(s) @ {p['entry_price']:,.2f}: no live price")
+            rows.append(f"{p['symbol']} {lots_txt(p['qty'])}: no live price")
     db.record_snapshot(ACCOUNT)
     value = capital + open_pnl
     exposure_now = sum((ltp.get(p["instrument_key"]) or p["entry_price"]) * p["qty"] * json.loads(p.get("state") or "{}").get("lot_units", 1) for p in open_pos)
-    head = {"rebalance": f"🛢 <b>MCX TREND+CARRY: 2-weekly re-check</b> (signals from the {signal_day.date():%d %b} close)",
-            "roll": "🛢 <b>MCX TREND+CARRY: contract roll</b>"}.get(did, f"🛢 <b>MCX TREND+CARRY</b> ({now:%d %b %H:%M} IST)")
-    msg = (head + "\n" + ("\n".join(lines) + "\n\n" if lines else "")
-           + f"Account value: <b>{_inr(value)}</b> (started {_inr(float(acc['initial_capital']))}; booked {_inr(capital)} + open {'+' if open_pnl >= 0 else ''}{_inr(open_pnl)})\n"
-           + f"Holding {_inr(exposure_now)} of contracts ({exposure_now / value:.1f}x the account) · margin ≈ {_inr(margin)}\n"
-           + ("\n".join(rows) if rows else "No open positions."))
+    title = {"rebalance": f"MCX · re-check every 2 weeks ({signal_day.date():%d %b} close)",
+             "roll": "MCX · contract moved to next month"}.get(did, f"MCX · check {now:%d %b %H:%M}")
+    blocks = [ln.split(" ", 1)[1] if ln.startswith(("Sold ", "Bought ")) else ln for ln in lines]
+    blocks.append("Holding: " + (" · ".join(rows) if rows else "nothing") + (f"\nContracts worth {_inr(exposure_now)} ({exposure_now / value:.1f}x the account)" if rows else ""))
+    bought_n = sum(ln.startswith("Bought ") for ln in lines)
+    msg = T.message(T.trade_icon(sold_net, bought_n), title, blocks, value=value, start=float(acc["initial_capital"]))
     if report or did:
         send(msg)
     return {"did": did, "value": value, "capital": capital, "open_pnl": open_pnl, "lines": lines, "message": msg}

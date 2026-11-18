@@ -31,6 +31,7 @@ from datetime import date, datetime, timedelta, timezone
 import pandas as pd
 
 from core.atomic_io import write_json
+from services.utils import telegram as T
 from core.paths import DB_DIR
 from markets.equity.strategies.tf_daily.breakout_pair import strategy as S
 
@@ -100,9 +101,12 @@ class Session:
         st = {"sleeve": sleeve, "stop": stop, "hi": entry, "entry_day": str(self.now.date()), "n": 0, "done_through": None, "atr_at_entry": atr}
         self.db.open_position(pid, sym, "long", q, entry, stop, 0.0, 0.0, account_id=ACCOUNT, instrument_key=key,
                               strategy=S.SLEEVES[sleeve]["name"], state=json.dumps(st))
-        msg = (f"🟢 <b>BREAKOUT BUY</b> {sym} ({why})\n{q} shares @ ₹{entry:,.2f} = {_inr(q * entry)}\n"
-               f"stop ₹{stop:,.2f} (risk {_inr(q * (entry - stop))}) · sleeve {sleeve}, {len(self.positions(sleeve))}/{K} slots")
-        self.lines.append(f"BUY {sym} {q} @ {entry:,.2f} ({why})"); self.send(msg); self.log(msg)
+        plain = {"55-day high": "closed at a new 55-day high", "quiet-day breakout": "broke out above a very quiet day's high"}.get(why, why)
+        acc = self.db.get_account(ACCOUNT)
+        msg = T.message("🟢", "BOUGHT · Breakout", [T.bought_block(sym, f"{q} shares", entry, q * entry, f"{plain} · swing trade, trailing stop",
+                                                                   stop=stop, risk=q * (entry - stop))],
+                        value=float(acc["current_capital"]), start=float(acc["initial_capital"]))
+        self.lines.append(f"bought {sym}"); self.send(msg); self.log(msg)
         return True
 
     def sell(self, p: dict, price: float, reason: str) -> None:
@@ -113,9 +117,12 @@ class Session:
         self.db.record_trade(p["position_id"], p["symbol"], "long", p["qty"], p["entry_price"], price, p["entry_time"], self.now.isoformat(), hold,
                              reason, c["gross"], c, c["net"], capital, account_id=ACCOUNT, strategy=p["strategy"])
         self.db.update_capital(ACCOUNT, capital)
-        msg = (f"{'✅' if c['net'] >= 0 else '🔻'} <b>BREAKOUT SELL</b> {p['symbol']} ({reason.replace('_', ' ')})\n"
-               f"{p['qty']} shares ₹{p['entry_price']:,.2f} → ₹{price:,.2f}: <b>{'+' if c['net'] >= 0 else ''}{_inr(c['net'])}</b> after {_inr(c['total'])} fees")
-        self.lines.append(f"SELL {p['symbol']} {reason} {'+' if c['net'] >= 0 else ''}{c['net']:,.0f}"); self.send(msg); self.log(msg)
+        days = (self.now.date() - datetime.fromisoformat(p["entry_time"]).date()).days
+        msg = T.message("✅" if c["net"] >= 0 else "❌", "SOLD · Breakout",
+                        [T.sold_block(p["symbol"], f"{int(p['qty'])} shares", p["entry_price"], price, c["net"], c["total"], T.why_text(reason),
+                                      f"{days} day{'s' if days != 1 else ''}" if days > 0 else "")],
+                        value=capital, start=float(self.acc["initial_capital"]))
+        self.lines.append(f"sold {p['symbol']} {T.signed_rupees(c['net'])}"); self.send(msg); self.log(msg)
 
     # ------------------------------------------------------------------ before the open
     def prepare(self, ind: dict) -> dict:
@@ -134,7 +141,7 @@ class Session:
                     with self.db._get_conn() as con:
                         con.execute("UPDATE positions SET qty = ?, entry_price = ? WHERE position_id = ?", (round(p["qty"] / f), p["entry_price"] * f, p["position_id"]))
                     st["stop"] *= f; st["hi"] *= f
-                    self.send(f"⚠️ BREAKOUT: {s} split/bonus detected, holding rescaled by {f:.3f}")
+                    self.send(T.problem("Breakout", f"{s}: a split or bonus was found, so the holding was adjusted (x{f:.3f}). Worth a look."))
             days = C.index[(C.index >= pd.Timestamp(st["entry_day"])) & (C.index <= last)]
             if st.get("done_through"):
                 days = days[days > pd.Timestamp(st["done_through"])]
@@ -181,7 +188,8 @@ def session(db, broker, send=None, log=print, sleep=time.sleep, clock=lambda: da
     buying = fresh and cand["healthy"]
     log(f"last day {plan['last'].date()} (fresh={fresh}), breadth {cand['breadth']:.1f}%, d55 {cand['d55'][:8]}, nr7 {[s for s, _ in cand['nr7']][:8]}, dead {plan['dead']}")
     if not fresh:
-        ses.send(f"⚠️ BREAKOUT: price archive ends {plan['last'].date()}, expected {expected_last_day(clock().date())} -- no new buys today, stops still watched")
+        ses.send(T.problem("Breakout", f"Price data ends {plan['last'].date()}, it should reach {expected_last_day(clock().date())}. "
+                                         "No new buys today; stops are still watched.", "journalctl --user -u hft-daily-data-topup.service -n 40"))
     write_json(STATE, {"day": str(clock().date()), "breadth": round(cand["breadth"], 1), "healthy": bool(cand["healthy"]), "fresh": bool(fresh),
                        "last_day": str(plan["last"].date()), "d55": cand["d55"][:8], "nr7": [[s, round(t, 2)] for s, t in cand["nr7"][:8]],
                        "dead": plan["dead"]})
@@ -250,12 +258,13 @@ def _step(ses, q, prices, plan, d55, pending_nr7, keys_all, opened) -> bool:
 def _summary(ses, db, held, q, cand) -> None:
     acc = db.get_account(ACCOUNT)
     open_pnl = sum(((q.get(p["symbol"]) or {}).get("ltp") or p["entry_price"]) * p["qty"] - p["entry_price"] * p["qty"] for p in held)
-    rows = [f"• {p['symbol']} {p['qty']} @ ₹{p['entry_price']:,.2f} → ₹{((q.get(p['symbol']) or {}).get('ltp') or p['entry_price']):,.2f}, stop ₹{p['current_stop']:,.2f}"
+    rows = [f"{p['symbol']}: {T.signed_rupees((((q.get(p['symbol']) or {}).get('ltp') or p['entry_price']) - p['entry_price']) * p['qty'])}"
             for p in held]
-    why = ("market healthy" if cand["healthy"] else f"market not healthy ({cand['breadth']:.0f}% of the 200 stocks above their 50-day average, needs {S.MIN_BREADTH_PCT:.0f}%): no new buys")
-    ses.send(f"📈 <b>EQUITY BREAKOUT</b> ({ses.now:%d %b})\nAccount: <b>{_inr(acc['current_capital'] + open_pnl)}</b> (booked {_inr(acc['current_capital'])}, "
-             f"open {'+' if open_pnl >= 0 else ''}{_inr(open_pnl)})\n{why}\n" + ("\n".join(ses.lines) + "\n" if ses.lines else "No trades today.\n")
-             + ("\n".join(rows) if rows else "No open positions."))
+    market = (f"Market healthy ({cand['breadth']:.0f}% of the 200 most-traded stocks above their 50-day average)" if cand["healthy"] else
+              f"Market weak ({cand['breadth']:.0f}% above their 50-day average, needs {S.MIN_BREADTH_PCT:.0f}%), so no new buys")
+    blocks = [market, "Today: " + (", ".join(ses.lines) if ses.lines else "no trades"), "Holding: " + (" · ".join(rows) if rows else "nothing")]
+    ses.send(T.message("📊", f"Breakout · end of day {ses.now:%d %b}", blocks, value=float(acc["current_capital"]) + open_pnl,
+                       start=float(acc["initial_capital"])))
 
 
 def main(argv=None) -> int:

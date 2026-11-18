@@ -166,7 +166,9 @@ def main(argv=None) -> int:
     res.update(sent_day=prev.get("sent_day"), sent=prev.get("sent"))
     if a.telegram and diffs and not already:
         from services.utils import telegram
-        telegram.send("🔍 <b>Paper vs backtest</b>: trades that differ in the last few days\n" + "\n".join(f"• {d}" for d in diffs[:15]))
+        telegram.send(telegram.message("🔍", "CHECK · Paper vs backtest", ["These trades differ from what the strategy's backtest did "
+                                                                              "in the last few days -- open the account page for why:",
+                                                                              "\n".join(f"• {d}" for d in diffs[:15])]))
         res.update(sent_day=res["as_of"][:10], sent=diffs)
     write_json(OUT, res)
     print("\n".join(report(res)))

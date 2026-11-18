@@ -164,7 +164,7 @@ class TestEngine(EngineCase):
     def test_the_retried_entry_says_it_was_late(self):
         E.run(self.db, FakeBroker({}), self.at(9, 30), set(), self.lookup, send=None)
         out = E.run(self.db, FakeBroker(quotes(BIG)), self.at(9, 40), set(), self.lookup, send=None)
-        self.assertTrue(any("DELAYED" in ln and "BOUGHT WIN" in ln for ln in out))
+        self.assertTrue(any("DELAYED" in ln and ln.startswith("BOUGHT <b>WIN</b>") for ln in out))
 
     def test_it_gives_the_day_up_once_the_retry_window_closes(self):
         E.run(self.db, FakeBroker({}), self.at(9, 30), set(), self.lookup, send=None)

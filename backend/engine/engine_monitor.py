@@ -235,6 +235,25 @@ def _upstox_token_ok() -> bool:
         return False
 
 
+AREA = {"crypto": "Crypto engine", "mcx": "MCX engine", "rg": "Equity engine (results gap)", "bo": "Breakout engine", "upstox": "Upstox login"}
+
+
+def _area(key: str) -> str:
+    return AREA.get(key.split("_")[0], key.replace("_", " "))
+
+
+def alert_text(key: str, msg: str, again: bool = False) -> str:
+    """The simple alert format (2026-11-18): '⚠️ PROBLEM · <area>', what is wrong, then the command to look with."""
+    from services.utils import telegram as T
+    detail, _, check = msg.partition(" Check: ")
+    return T.problem(_area(key), detail.strip() + (" (still not fixed)" if again else ""), check.strip())
+
+
+def fixed_text(key: str) -> str:
+    from services.utils import telegram as T
+    return T.message("✅", f"FIXED · {_area(key)}", ["The problem is fixed: working normally again."])
+
+
 def check(now: datetime | None = None, *, sh=_systemctl, crypto_state: Path = CRYPTO_STATE, token_ok=None, notify=None,
           state_path: Path = STATE_PATH, dry_run: bool = False, journal=None) -> dict:
     """One pass: find problems, send new / reminder / fixed messages. Returns {"problems": {...}, "sent": [...]}."""
@@ -251,10 +270,10 @@ def check(now: datetime | None = None, *, sh=_systemctl, crypto_state: Path = CR
     for key, msg in found.items():
         last = seen.get(key)
         if last is None or now - datetime.fromisoformat(last) >= timedelta(hours=REMIND_H):
-            sent.append(f"⚠️ <b>ENGINE CHECK</b> — {msg}" + ("" if last is None else " (still not fixed)"))
+            sent.append(alert_text(key, msg, again=last is not None))
             seen[key] = now.isoformat()
     for key in [k for k in seen if k not in found]:
-        sent.append(f"✅ <b>ENGINE CHECK</b> — fixed: {key.replace('_', ' ')}.")
+        sent.append(fixed_text(key))
         del seen[key]
     if not dry_run:
         for m in sent:

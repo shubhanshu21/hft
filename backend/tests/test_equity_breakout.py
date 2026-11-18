@@ -113,7 +113,9 @@ class TestSession(unittest.TestCase):
         self.assertEqual(self.trades(), [("HELD", 93.5, "stop")])        # trailing stop raised to 100 - 3.25*2 = 93.5, sold there
         self.assertEqual(self._other(), before)                           # RESULTS_GAP untouched
         self.assertGreater(len(locks), 10)                                # locked per step, not once for the whole session
-        self.assertIn("EQUITY BREAKOUT", sent[-1])
+        self.assertIn("Breakout · end of day", sent[-1])
+        self.assertTrue(any(m.startswith("🟢 <b>BOUGHT · Breakout</b>") and "<b>DFIVE</b> · 166 shares at 100.00" in m for m in sent))
+        self.assertTrue(any(m.startswith("❌ <b>SOLD · Breakout</b>") and "hit the stop-loss" in m for m in sent))
         st = json.loads(E.STATE.read_text())                              # the account page's "Today" box
         self.assertEqual((st["day"], st["healthy"], st["d55"], st["nr7"]), ("2026-11-17", True, ["DFIVE"], [["NRSEVEN", 105.0]]))
         booked = self.db.get_account(E.ACCOUNT)["current_capital"]

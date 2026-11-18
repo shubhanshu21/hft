@@ -111,7 +111,7 @@ class TestRun(RunCase):
         out = self.run_once()                                               # due again: same targets, same prices -> same lots
         self.assertEqual(out["did"], "rebalance")
         self.assertIn(gold["position_id"], {p["position_id"] for p in self.db.get_open_positions(M.ACCOUNT)})
-        self.assertTrue(any("KEPT" in line for line in out["lines"]))
+        self.assertTrue(any(line.startswith("Kept") for line in out["lines"]))
         self.assertEqual(self.db.get_trades(account_id=M.ACCOUNT), [])      # nothing sold, so no fees paid
 
     def test_a_dropped_holding_is_sold(self):

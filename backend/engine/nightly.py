@@ -115,10 +115,10 @@ def main() -> int:
             from services.utils import telegram
             parts = []
             if failed:
-                parts.append("Failed steps: " + ", ".join(failed))
+                parts.append("These nightly steps failed: " + ", ".join(failed))
             if stale:
-                parts.append("Stale archives:\n  " + "\n  ".join(stale))
-            telegram.send("🛠 <b>NIGHTLY JOB</b> needs attention\n" + "\n".join(parts))
+                parts.append("These price files are out of date:\n" + "\n".join(f"• {x}" for x in stale))
+            telegram.send(telegram.problem("Nightly data download", "\n\n".join(parts), "journalctl --user -u hft-daily-data-topup.service -n 80"))
         except Exception as exc:
             print(f"could not send Telegram alert: {exc}")
     return 1 if failed else 0

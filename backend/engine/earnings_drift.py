@@ -16,6 +16,7 @@ from datetime import date, datetime, time as dtime, timedelta, timezone
 
 
 from core.atomic_io import read_json, write_json
+from services.utils import telegram as T
 from core.paths import DB_DIR
 from markets.equity.strategies.tf_daily.earnings_drift import strategy as S
 
@@ -64,7 +65,7 @@ def plan(db, today: date, holidays: set[date]) -> list[str]:
     while want.weekday() >= 5 or want in holidays:
         want -= timedelta(days=1)
     if last is None or last < want:
-        lines.append(f"earnings drift: daily data not up to date (last day {last}, needs {want}) -- no new buys today")
+        lines.append(f"⚠️ Earnings drift: price data is not up to date (it ends {last}, needs {want}), so no new buys today")
     else:
         sig = S.signals(ind)
         held = {p["symbol"] for p in _mine(db)}
@@ -77,14 +78,14 @@ def plan(db, today: date, holidays: set[date]) -> list[str]:
         # than 2 slots) is replaced by the next -- as the backtest does (2026-11-18; the slot used to stay empty)
         buy = [s for s in cands if s not in held] if slots > 0 else []
         if float(ind["breadth"].iloc[-1]) < S.MIN_BREADTH_PCT:
-            lines.append(f"earnings drift: market not healthy ({float(ind['breadth'].iloc[-1]):.0f}% of the 200 stocks above their 50-day average) -- no buys")
+            lines.append(f"Earnings drift: no buys -- the market is weak ({float(ind['breadth'].iloc[-1]):.0f}% of the 200 most-traded stocks are above their 50-day average, needs 50%)")
         for s in buy[:slots]:
             r = sig[(sig.sym == s) & sig.signal_day.isin(days)].iloc[0]
-            lines.append(f"earnings drift: BUY {s} at the open (results {r.meeting:%d %b}: {r.reaction:+.1%} vs the market on {r.surge:.1f}x volume)")
+            lines.append(f"BUY {s} at the open -- results {r.meeting:%d %b} beat the market by {r.reaction:+.1%} on {r.surge:.1f}x the usual volume")
         if buy[slots:]:
-            lines.append(f"earnings drift: next in line if one is skipped: {', '.join(buy[slots:])}")
+            lines.append(f"next in line if one is skipped: {', '.join(buy[slots:])}")
     for pid in sell:
-        lines.append(f"earnings drift: SELL {db.get_position(pid)['symbol']} at the open (held {S.HOLD_DAYS} trading days)")
+        lines.append(f"SELL {db.get_position(pid)['symbol']} at the open -- held {S.HOLD_DAYS} trading days, as planned")
     breadth = round(float(ind["breadth"].iloc[-1]), 1) if len(ind["breadth"]) else None
     write_json(STATE, {"day": str(today), "sell": sell, "buy": buy, "breadth": breadth, "fresh": not (last is None or last < want),
                        "last_day": str(last), "candidates": cands[:20] if last is not None and last >= want else []})   # evidence if paper and backtest disagree
@@ -106,7 +107,7 @@ def fill(db, broker, now: datetime, lookup, lines: list) -> None:
     sells = {pid: why for pid, why in st["sell"].items() if (p := db.get_position(pid)) and p.get("status") == "OPEN"}
     buys = list(st.get("buy") or [])
     if now.time() > BUY_UNTIL and buys:
-        lines.append(f"earnings drift: no opening price for {', '.join(buys)} by {BUY_UNTIL:%H:%M} -- not bought today")
+        lines.append(f"⚠️ Earnings drift: no opening price for {', '.join(buys)} by {BUY_UNTIL:%H:%M}, so not bought today")
         buys = []
     keys = {db.get_position(pid)["symbol"]: db.get_position(pid)["instrument_key"] for pid in sells}
     keys.update({s: lookup(s) for s in buys if lookup(s)})
@@ -122,7 +123,7 @@ def fill(db, broker, now: datetime, lookup, lines: list) -> None:
         hold = (now - datetime.fromisoformat(p["entry_time"])).total_seconds() / 60
         db.record_trade(pid, p["symbol"], "long", qty, entry, x, p["entry_time"], now.isoformat(), hold, why, gross, c, net, cap,
                         account_id=ACCOUNT, strategy=S.NAME, close=True)
-        lines.append(f"earnings drift: SOLD {p['symbol']} {qty} {entry:,.2f} -> {x:,.2f} at the open: {'+' if net >= 0 else ''}{_inr(net)} after fees")
+        lines.append("SOLD " + T.sold_block(p["symbol"], f"{qty} shares", entry, x, net, c["total"], f"swing trade, {T.why_text(why)}"))
         sells.pop(pid)
     held = {p["symbol"] for p in _mine(db)}
     for s in list(buys):
@@ -138,9 +139,9 @@ def fill(db, broker, now: datetime, lookup, lines: list) -> None:
         if qty < 1:
             why = (f"one share ({_inr(px[s])}) costs more than {S.ONE_SHARE_SLOTS} of its 1/{S.K} slots ({_inr(slot)} each)" if free >= px[s]
                    else f"not enough free cash ({_inr(free)})")
-            lines.append(f"earnings drift: {s} skipped -- {why}")
+            lines.append(f"Earnings drift: {s} skipped -- {why}")
             continue
         db.open_position(f"POS_ED_{now:%Y%m%d}_{s}", s, "long", qty, px[s], 0.0, 0.0, px[s], account_id=ACCOUNT, instrument_key=keys[s],
                          strategy=S.NAME, state=json.dumps({"entry_date": str(now.date()), "fill": "official open (pre-open auction)"}))
-        lines.append(f"earnings drift: BOUGHT {s} {qty} @ {px[s]:,.2f} (today's open) = {_inr(qty * px[s])}, sell after {S.HOLD_DAYS} trading days")
+        lines.append("BOUGHT " + T.bought_block(s, f"{qty} shares", px[s], qty * px[s], f"results beat the market · swing trade, sold after {S.HOLD_DAYS} trading days"))
     write_json(STATE, {**st, "sell": sells, "buy": buys})
