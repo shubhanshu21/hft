@@ -53,6 +53,12 @@ export default function PaperPage({ accountId }) {
     const s = chart.addAreaSeries({ lineColor: colors.accent, topColor: "rgba(37,99,235,.22)", bottomColor: "rgba(37,99,235,0)", lineWidth: 2,
       priceFormat: { type: "custom", formatter: (v) => `₹${Math.round(v).toLocaleString("en-IN")}` } });
     s.setData(d.equity.map((e) => ({ time: e.date, value: e.current_capital })));
+    const exp = Object.entries(d.vs_backtest?.expected ?? {});
+    if (exp.length) {                                              // the backtest over the same days, checked nightly
+      const b = chart.addLineSeries({ color: colors.muted ?? "#64748b", lineWidth: 2, lineStyle: 2, priceLineVisible: false, lastValueVisible: false,
+        priceFormat: { type: "custom", formatter: (v) => `₹${Math.round(v).toLocaleString("en-IN")}` } });
+      b.setData(exp.map(([time, value]) => ({ time, value })));
+    }
     chart.timeScale().fitContent();
     return () => chart.remove();
   }, [d, colors]);
@@ -99,9 +105,12 @@ export default function PaperPage({ accountId }) {
       <div className="desk-grid">
         <Pane title="Account value by day" meta={loadedAt ? `updated ${loadedAt.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })} · every minute` : ""} className="g-chart">
           {d.equity.length ? <div ref={box} className="tv-box" /> : <p className="none">The first point appears after today's close.</p>}
+          {d.vs_backtest?.expected && <p className="chart-key"><i className="k-real" />this account <i className="k-bt" />its backtest over the same days (checked nightly)</p>}
         </Pane>
         <Pane title="Engine" meta={ACCOUNT_SHORT[d.account_id]} className="g-alloc">
           <div className={`engine-line ${d.engine?.ok === false ? "bad" : "good"}`}><i className={`led ${d.engine?.ok === false ? "bad" : "good"}`} />{d.engine?.text}</div>
+          {d.plan?.length > 0 && <div className="today-plan"><span className="k">Today</span><ul>{d.plan.map((line) => <li key={line}>{line}</li>)}</ul></div>}
+          <VsBacktest v={d.vs_backtest} />
           <p className="about">{ABOUT[d.account_id]}</p>
           <p className="note">Practice money, live prices from {crypto ? "Delta Exchange India" : "Upstox"}. Open trades are valued every minute; the account changes only when a trade is sold.</p>
           {acc.business_value != null && <p className="note">If all sold now: {inr(acc.pretax_value)} before tax · {inr(acc.business_value)} as business income · {inr(acc.strict_value)} under the strict crypto rule.</p>}
@@ -145,6 +154,22 @@ export default function PaperPage({ accountId }) {
           </Pane>
         )}
       </div>
+    </div>
+  );
+}
+
+const day = (s) => new Date(s).toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+function VsBacktest({ v }) {
+  if (!v) return null;
+  if (v.note) return <p className="note">Paper vs backtest: {v.note}.</p>;
+  const diff = [...v.only_paper.map((x) => `${x.sym} ${day(x.day)}: paper bought, backtest did not`),
+    ...v.only_backtest.map((x) => `${x.sym} ${day(x.day)}: backtest bought, paper did not`)];
+  return (
+    <div className={`vs-bt ${diff.length ? "warn" : "ok"}`}>
+      <span className="k">Paper vs backtest, since {day(v.start)}</span>
+      <p>{v.matched} buy{v.matched === 1 ? "" : "s"} match{v.matched === 1 ? "es" : ""}{v.avg_fill_gap_pct != null ? `, fills ${v.avg_fill_gap_pct >= 0 ? "+" : ""}${v.avg_fill_gap_pct}% vs the backtest on average` : ""}.
+        {diff.length ? ` ${diff.length} differ:` : " Nothing differs."}</p>
+      {diff.length > 0 && <ul>{diff.map((t) => <li key={t}>{t}</li>)}</ul>}
     </div>
   );
 }

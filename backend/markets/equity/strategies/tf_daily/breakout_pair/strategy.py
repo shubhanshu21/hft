@@ -72,7 +72,7 @@ def load(symbols=None, since="2022-01-01") -> dict[str, pd.DataFrame]:
 
 def indicators(p: dict) -> dict:
     """Everything the rules need, as date x stock frames (row t uses data up to and including day t)."""
-    O, H, L, C, VAL = p["O"], p["H"], p["L"], p["C"], p["VAL"]
+    H, L, C, VAL = p["H"], p["L"], p["C"], p["VAL"]
     ema = lambda n: C.ewm(span=n, adjust=False, min_periods=n).mean()
     e50, e200 = ema(50), ema(200)
     tr = pd.concat([H - L, (H - C.shift()).abs(), (L - C.shift()).abs()]).groupby(level=0).max().reindex(C.index)

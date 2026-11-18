@@ -1,12 +1,13 @@
-import { useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import { readCollapsed, saveCollapsed } from "./lib/palette.js";
 import Sidebar from "./components/layout/Sidebar.jsx";
 import TopBar from "./components/layout/TopBar.jsx";
 import StatusBar from "./components/layout/StatusBar.jsx";
 import CommandPalette from "./components/layout/CommandPalette.jsx";
-import ResultsPage from "./pages/ResultsPage.jsx";
-import NewBacktestPage from "./pages/NewBacktestPage.jsx";
-import PaperPage from "./pages/PaperPage.jsx";
+// loaded when first opened: the Desk page opens without the chart library and the backtest pages (2026-11-18)
+const ResultsPage = lazy(() => import("./pages/ResultsPage.jsx"));
+const NewBacktestPage = lazy(() => import("./pages/NewBacktestPage.jsx"));
+const PaperPage = lazy(() => import("./pages/PaperPage.jsx"));
 import TodayPage from "./pages/TodayPage.jsx";
 import { useHashRoute } from "./hooks/useHashRoute.js";
 
@@ -27,8 +28,10 @@ export default function App() {
       <div className="app-main">
         <TopBar />
         <main className="page">
-          {page === "today" ? <TodayPage /> : page === "new" ? <NewBacktestPage /> : page === "paper" ? <PaperPage accountId={id} /> :
-            <ResultsPage runId={id ? decodeURIComponent(id) : undefined} />}
+          <Suspense fallback={<p className="none">Loading…</p>}>
+            {page === "today" ? <TodayPage /> : page === "new" ? <NewBacktestPage /> : page === "paper" ? <PaperPage accountId={id} /> :
+              <ResultsPage runId={id ? decodeURIComponent(id) : undefined} />}
+          </Suspense>
         </main>
         <StatusBar />
       </div>

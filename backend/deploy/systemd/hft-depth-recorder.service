@@ -3,6 +3,7 @@ Description=HFT order-book recorder (Upstox 5-level depth for the paper-traded c
 After=network-online.target
 
 [Service]
+Environment=PYTHONUNBUFFERED=1
 Type=simple
 WorkingDirectory=/var/www/html/hft/backend
 ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m engine.depth_recorder

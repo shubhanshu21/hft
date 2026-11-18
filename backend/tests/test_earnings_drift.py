@@ -181,6 +181,21 @@ class TestTenSlots(Base):
         self.assertNotIn("W00", {p["symbol"] for p in pos})                     # the weakest reaction waits
         self.assertTrue(all(p["qty"] * p["entry_price"] <= S.SLEEVE_CAPITAL / 10 for p in pos))
 
+    def test_a_skipped_stock_is_replaced_by_the_next_like_the_backtest(self):
+        """2026-11-18: with 9 held and 2 signals, the strongest (too dear even for 1 share) used to leave the slot empty; the backtest
+        buys the next candidate, and so does the engine now."""
+        ind, ev = self.many(2)                                                   # W01 strongest, then W00
+        for i in range(9):
+            self.hold(f"H{i}", 10, 100.0, "2026-10-20")
+        with mock.patch.object(E, "_indicators", return_value=ind), mock.patch.object(S, "results_events", return_value=ev):
+            lines = E.plan(self.db, self.at(8, 50).date(), set())
+        self.assertIn("BUY W01", " ".join(lines)); self.assertIn("next in line if one is skipped: W00", " ".join(lines))
+        E.fill(self.db, Broker({"W01": 50_000.0, "W00": 100.0}), self.at(9, 30), self.lookup, [])
+        mine = {p["symbol"] for p in self.db.get_open_positions(E.ACCOUNT)}
+        self.assertIn("W00", mine); self.assertNotIn("W01", mine); self.assertEqual(len(mine), 10)
+        E.fill(self.db, Broker({"W01": 100.0}), self.at(9, 40), self.lookup, [])     # full: a later retry buys nothing more
+        self.assertEqual(len(self.db.get_open_positions(E.ACCOUNT)), 10)
+
     def test_one_share_up_to_two_slots_is_bought(self):
         """2026-11-16: DIVISLAB (Rs11,760) was skipped for a Rs10k slot. One share up to 2 slots is bought (backtest Rs2.03L -> 2.13L)."""
         with mock.patch.object(E, "_indicators", return_value=make_ind()):

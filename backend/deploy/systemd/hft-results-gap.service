@@ -2,6 +2,7 @@
 Description=Results-day gap-up paper trading (equity intraday: buy 09:30, sell 15:20 IST; paper only, no real orders)
 
 [Service]
+Environment=PYTHONUNBUFFERED=1
 Type=oneshot
 WorkingDirectory=/var/www/html/hft/backend
 ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m engine.results_gap

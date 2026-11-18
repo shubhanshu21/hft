@@ -30,10 +30,13 @@ from datetime import date, datetime, timedelta, timezone
 
 import pandas as pd
 
+from core.atomic_io import write_json
+from core.paths import DB_DIR
 from markets.equity.strategies.tf_daily.breakout_pair import strategy as S
 
 IST = timezone(timedelta(hours=5, minutes=30))
 ACCOUNT = "EQUITY_BREAKOUT"
+STATE = DB_DIR / "equity_breakout_state.json"          # today's plan, for the account page's "Today" box (2026-11-18)
 POLL_S = 60
 OPEN_AT, CLOSE_AT = (9, 15, 30), (15, 30, 30)
 SLEEVE_OF = {cfg["name"]: k for k, cfg in S.SLEEVES.items()}
@@ -179,6 +182,9 @@ def session(db, broker, send=None, log=print, sleep=time.sleep, clock=lambda: da
     log(f"last day {plan['last'].date()} (fresh={fresh}), breadth {cand['breadth']:.1f}%, d55 {cand['d55'][:8]}, nr7 {[s for s, _ in cand['nr7']][:8]}, dead {plan['dead']}")
     if not fresh:
         ses.send(f"⚠️ BREAKOUT: price archive ends {plan['last'].date()}, expected {expected_last_day(clock().date())} -- no new buys today, stops still watched")
+    write_json(STATE, {"day": str(clock().date()), "breadth": round(cand["breadth"], 1), "healthy": bool(cand["healthy"]), "fresh": bool(fresh),
+                       "last_day": str(plan["last"].date()), "d55": cand["d55"][:8], "nr7": [[s, round(t, 2)] for s, t in cand["nr7"][:8]],
+                       "dead": plan["dead"]})
     pending_nr7 = dict(cand["nr7"]) if buying else {}
     d55 = list(cand["d55"]) if buying else []
     opened = False

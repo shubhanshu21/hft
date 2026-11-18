@@ -363,6 +363,77 @@ def _value_breakout(p: dict, live: dict) -> None:
     p.update(profit_now=c["gross"], net_if_sold=c["net"], fees_if_sold=c["total"], move_pct=round((price / p["entry_price"] - 1) * 100, 3))
 
 
+def _read_state(name: str, state_dir=None) -> dict:
+    from core.paths import DB_DIR
+    try:
+        return json.loads(((state_dir or DB_DIR) / name).read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def _health(breadth) -> str:
+    return f"market health {breadth:.0f}% of the 200 most-traded stocks above their 50-day average (needs 50%)"
+
+
+def today_plan(account: str, now: datetime | None = None, state_dir=None) -> list[str]:
+    """Plain sentences for the account page's "Today" box: what the engine decided this morning and WHY (2026-11-18), read from the
+    engines' own state files. [] when there is nothing from today (weekend, before the morning run)."""
+    today = str((now or datetime.now(IST)).date())
+    out: list[str] = []
+    if account == "EQUITY_BREAKOUT":
+        st = _read_state("equity_breakout_state.json", state_dir)
+        if st.get("day") != today:
+            return []
+        would = [f"{s} (55-day high)" for s in st.get("d55") or []] + [f"{s} if it trades above Rs{t:,.2f}" for s, t in st.get("nr7") or []]
+        if not st.get("fresh", True):
+            out.append(f"No new buys today: the price data ends {st.get('last_day')}, a day short. Stops are still watched.")
+        elif not st.get("healthy"):
+            out.append(f"No new buys today: {_health(st.get('breadth') or 0)}. Waiting for the market to recover; stops are still watched.")
+            if would:
+                out.append("In a healthy market it would have bought: " + ", ".join(would) + ".")
+        else:
+            out.append(f"Buying today ({_health(st.get('breadth') or 0)}): " + (", ".join(would) if would else "no stock gave a signal") + ".")
+        if st.get("dead"):
+            out.append("Selling at the open (still below the buy price after 20 trading days): " + ", ".join(st["dead"]) + ".")
+    elif account == "RESULTS_GAP":
+        rg = _read_state("results_gap_state.json", state_dir)
+        chk = rg.get("last_check") or {}
+        if rg.get("entry_date") == today or rg.get("entered_on") == today:
+            n, sig = chk.get("candidates"), chk.get("signals") or []
+            if chk.get("market_gap") is None:
+                out.append("Results gap: no usable prices at 09:30, so no stock could be checked.")
+            elif sig:
+                out.append("Results gap: bought " + ", ".join(str(x.get("symbol", x)) if isinstance(x, dict) else str(x) for x in sig) + " at 09:30, sold at 15:20.")
+            else:
+                out.append(f"Results gap: {n or 0} liquid stock(s) had results; none opened 7%+ above the market and kept rising, so no buy.")
+        ed = _read_state("earnings_drift_state.json", state_dir)
+        if ed.get("day") == today:
+            b = ed.get("breadth")
+            if ed.get("fresh") is False:
+                out.append("Earnings drift: price data not up to date, no new buys today.")
+            elif b is not None and b < 50:
+                out.append(f"Earnings drift: no new buys, {_health(b)}.")
+            elif ed.get("buy"):
+                out.append("Earnings drift: buying at the open " + ", ".join(ed["buy"]) + ".")
+            else:
+                out.append("Earnings drift: no stock beat the market by 4%+ on 2x volume after results, so no buy.")
+    return out
+
+
+def backtest_check(account: str, path=None) -> dict | None:
+    """The nightly paper-vs-backtest result for this account (engine/paper_vs_backtest.py), trimmed for the page; None if not run yet."""
+    from engine.paper_vs_backtest import OUT
+    try:
+        res = json.loads((path or OUT).read_text())
+        r = res["accounts"][account]
+    except (OSError, ValueError, KeyError):
+        return None
+    if "expected" not in r:
+        return {"as_of": res.get("as_of"), "note": r.get("note") or r.get("error")}
+    return {"as_of": res.get("as_of"), "start": r["start"], "expected": r["expected"], "matched": len(r["matched"]),
+            "only_paper": r["only_paper"][-10:], "only_backtest": r["only_backtest"][-10:], "avg_fill_gap_pct": r.get("avg_fill_gap_pct")}
+
+
 def _value_crypto(p: dict, live: dict) -> None:
     """An open crypto position in USD, profit in rupees at the USD/INR reference rate, 'if sold now'."""
     from engine.crypto_dip_reversal import fetch_live_prices
@@ -434,7 +505,12 @@ def paper_summary(account: str = "CRYPTO_DIP_REVERSAL") -> dict:
         engine = engine_status(account)
     except Exception as e:                                        # a status probe must never break the page
         engine = {"ok": None, "text": f"engine status unavailable ({type(e).__name__})"}
-    return {"available": True, "account_id": account, "accounts": tabs, "account": acc, "positions": pos, "trades": trades, "equity": snaps, "engine": engine,
+    try:
+        plan = today_plan(account)
+    except Exception:                                             # the "Today" box must never break the page
+        traceback.print_exc(); plan = []
+    vs = backtest_check(account)
+    return {"available": True, "account_id": account, "accounts": tabs, "account": acc, "positions": pos, "trades": trades, "equity": snaps, "engine": engine, "plan": plan, "vs_backtest": vs,
             "stats": {"closed": len(trades), "wins": sum(1 for t in trades if (t["net_pnl"] or 0) > 0), "net": round(sum(t["net_pnl"] or 0 for t in trades)),
                       "fees": round(sum(t["total_friction"] or 0 for t in trades))}}
 
@@ -484,6 +560,45 @@ def overview(now: datetime | None = None, summary=None) -> dict:
     return {"as_of": now.isoformat(timespec="seconds"), "accounts": accounts, "totals": totals, "recent": recent[:12]}
 
 
+def run_strategy(market: str, strategy: str, p: dict, progress=lambda i, n: None) -> dict:
+    """One backtest with validated params `p`, in the website's replay shape (days, equity, events, ...). Shared by the Backtest page
+    (work) and the nightly paper-vs-backtest check (engine/paper_vs_backtest.py). Raises BacktestError."""
+    if market == "crypto":
+        from markets.crypto.strategies.tf_5min.dip_reversal import strategy as dr
+        try:
+            return dr.web_backtest(p["capital"], p["start"], p["end"], symbols=p.get("symbols"), leverage=p.get("leverage", 3.0), tax=p.get("tax", "business"),
+                                            risk_pct=(p["risk_pct"] / 100 if "risk_pct" in p else None), progress=progress)
+        except ValueError as e:
+            raise BacktestError(str(e))
+    elif strategy == "results_gap":                    # equity intraday: its own backtest over the cached 5-minute summary
+        from markets.equity.strategies.tf_intraday.results_gap import strategy as rg
+        try:
+            return rg.backtest(p["capital"], p["start"], p["end"], leverage=p["leverage"], progress=progress)
+        except ValueError as e:
+            raise BacktestError(str(e))
+    elif strategy == "earnings_drift":                 # equity swing: ranks the day's 200 most-traded NSE stocks itself
+        from markets.equity.strategies.tf_daily.earnings_drift import strategy as ed
+        try:
+            return ed.web_backtest(p["capital"], p["start"], p["end"], slippage_bp=p["slippage_bp"], progress=progress)
+        except ValueError as e:
+            raise BacktestError(str(e))
+    elif strategy == "breakout_pair":                  # equity swing, own account EQUITY_BREAKOUT (re-added 2026-11-17)
+        from markets.equity.strategies.tf_daily.breakout_pair import strategy as bp
+        try:
+            return bp.web_backtest(p["capital"], p["start"], p["end"], risk_pct=p["risk_pct"], slippage_bp=p["slippage_bp"])
+        except ValueError as e:
+            raise BacktestError(str(e))
+    elif market == "commodity":                        # trend_carry: every 2 weeks, all 8 commodities ranked together, its own backtest
+        from markets.commodity import futures_eod
+        from markets.commodity.strategies.tf_daily.trend_carry import strategy as tc
+        try:
+            return tc.backtest(futures_eod.load(), p["capital"], p["start"], p["end"], exposure=p["leverage"], symbols=p["symbols"])
+        except ValueError as e:
+            raise BacktestError(str(e))
+    else:
+        raise BacktestError(f"No backtest for {market}/{strategy}")
+
+
 def work(run: dict) -> None:
     global _running
     try:
@@ -492,40 +607,7 @@ def work(run: dict) -> None:
         p = run["params"]
         def progress(i, n):
             run["progress"] = round(i / n * 100)
-        if run["market"] == "crypto":
-            from markets.crypto.strategies.tf_5min.dip_reversal import strategy as dr
-            try:
-                run["result"] = dr.web_backtest(p["capital"], p["start"], p["end"], symbols=p.get("symbols"), leverage=p.get("leverage", 3.0), tax=p.get("tax", "business"),
-                                                risk_pct=(p["risk_pct"] / 100 if "risk_pct" in p else None), progress=progress)
-            except ValueError as e:
-                raise BacktestError(str(e))
-        elif run["strategy"] == "results_gap":                    # equity intraday: its own backtest over the cached 5-minute summary
-            from markets.equity.strategies.tf_intraday.results_gap import strategy as rg
-            try:
-                run["result"] = rg.backtest(p["capital"], p["start"], p["end"], leverage=p["leverage"], progress=progress)
-            except ValueError as e:
-                raise BacktestError(str(e))
-        elif run["strategy"] == "earnings_drift":                 # equity swing: ranks the day's 200 most-traded NSE stocks itself
-            from markets.equity.strategies.tf_daily.earnings_drift import strategy as ed
-            try:
-                run["result"] = ed.web_backtest(p["capital"], p["start"], p["end"], slippage_bp=p["slippage_bp"], progress=progress)
-            except ValueError as e:
-                raise BacktestError(str(e))
-        elif run["strategy"] == "breakout_pair":                  # equity swing, own account EQUITY_BREAKOUT (re-added 2026-11-17)
-            from markets.equity.strategies.tf_daily.breakout_pair import strategy as bp
-            try:
-                run["result"] = bp.web_backtest(p["capital"], p["start"], p["end"], risk_pct=p["risk_pct"], slippage_bp=p["slippage_bp"])
-            except ValueError as e:
-                raise BacktestError(str(e))
-        elif run["market"] == "commodity":                        # trend_carry: every 2 weeks, all 8 commodities ranked together, its own backtest
-            from markets.commodity import futures_eod
-            from markets.commodity.strategies.tf_daily.trend_carry import strategy as tc
-            try:
-                run["result"] = tc.backtest(futures_eod.load(), p["capital"], p["start"], p["end"], exposure=p["leverage"], symbols=p["symbols"])
-            except ValueError as e:
-                raise BacktestError(str(e))
-        else:
-            raise BacktestError(f"No backtest for {run['market']}/{run['strategy']}")
+        run["result"] = run_strategy(run["market"], run["strategy"], p, progress)
         try:                                                             # the strategy's own lines / RSI band / results days for the chart
             from engine.chart_overlays import overlays
             if run["market"] != "crypto":                             # calm_coins brings its own volatility band

@@ -3,6 +3,7 @@ Description=HFT backtest API for the web frontend (127.0.0.1:8000, nginx publish
 After=network-online.target
 
 [Service]
+Environment=PYTHONUNBUFFERED=1
 Type=simple
 WorkingDirectory=/var/www/html/hft/backend
 ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m engine.backtest_api

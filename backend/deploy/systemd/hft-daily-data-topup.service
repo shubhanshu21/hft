@@ -2,6 +2,7 @@
 Description=Nightly maintenance: real MCX / NSE currency / NSE equity data top-up, DB backup, trade audit, archive-freshness check
 
 [Service]
+Environment=PYTHONUNBUFFERED=1
 Type=oneshot
 WorkingDirectory=/var/www/html/hft/backend
 # ONE command that runs every step and carries on past a failing one (systemd would stop a oneshot at the first failing

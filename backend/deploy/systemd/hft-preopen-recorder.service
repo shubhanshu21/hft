@@ -2,6 +2,7 @@
 Description=Record NSE pre-open auction quotes 09:00-09:16 IST (research data only, no orders)
 
 [Service]
+Environment=PYTHONUNBUFFERED=1
 Type=oneshot
 WorkingDirectory=/var/www/html/hft/backend
 ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m engine.preopen_recorder

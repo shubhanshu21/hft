@@ -71,6 +71,8 @@ class TestSession(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.db = TradingDB(Path(self.tmp.name) / "t.db")
+        patcher = mock.patch.object(E, "STATE", Path(self.tmp.name) / "bo_state.json")      # never the real var/db state file
+        patcher.start(); self.addCleanup(patcher.stop)
         # another account's rows must come out byte-for-byte the same
         self.db.init_account("RESULTS_GAP", name="rg", capital=100_000, leverage=1.0, risk_pct=1.0)
         self.db.open_position("POS_RG_X", "OTHER", "long", 5, 50.0, 0.0, 0.0, 0.0, account_id="RESULTS_GAP", strategy="earnings_drift")
@@ -112,6 +114,8 @@ class TestSession(unittest.TestCase):
         self.assertEqual(self._other(), before)                           # RESULTS_GAP untouched
         self.assertGreater(len(locks), 10)                                # locked per step, not once for the whole session
         self.assertIn("EQUITY BREAKOUT", sent[-1])
+        st = json.loads(E.STATE.read_text())                              # the account page's "Today" box
+        self.assertEqual((st["day"], st["healthy"], st["d55"], st["nr7"]), ("2026-11-17", True, ["DFIVE"], [["NRSEVEN", 105.0]]))
         booked = self.db.get_account(E.ACCOUNT)["current_capital"]
         self.assertAlmostEqual(booked, 100_000 + S.costs(100.0, 93.5, 10)["net"], places=2)
 
