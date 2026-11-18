@@ -76,7 +76,18 @@ def load(symbols=None, since="2022-01-01") -> dict[str, pd.DataFrame]:
         o[s], h[s], l[s], c[s] = x["open"] * adj, x["high"] * adj, x["low"] * adj, x["close"] * adj
         v[s] = (x["close"] * x["volume"]).astype(float)
     mk = lambda d: pd.DataFrame(d).sort_index().loc[since:].astype(float)
-    return {"O": mk(o), "H": mk(h), "L": mk(l), "C": mk(c), "VAL": mk(v)}
+    return trim_partial_days({"O": mk(o), "H": mk(h), "L": mk(l), "C": mk(c), "VAL": mk(v)})
+
+
+def trim_partial_days(p: dict) -> dict:
+    """Drop trailing days that fewer than half the stocks of the day before have (2026-11-18): a day only a few stocks have yet made
+    the live engines think the data was current and compute that day's signals from almost nobody. Dropped, the day is reported as
+    missing ("not up to date") instead. Only for broad loads (>= 20 stocks the day before)."""
+    n = p["C"].notna().sum(axis=1)
+    k = len(n)
+    while k > 1 and n.iloc[k - 2] >= 20 and n.iloc[k - 1] < 0.5 * n.iloc[k - 2]:
+        k -= 1
+    return p if k == len(n) else {key: v.iloc[:k] for key, v in p.items()}
 
 
 def data_range() -> dict:

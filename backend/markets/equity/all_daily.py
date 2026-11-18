@@ -15,7 +15,7 @@ import csv
 import gzip
 import re
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 import pandas as pd
 
@@ -70,6 +70,53 @@ def topup_one(broker, sym: str, key: str, today: date) -> int:
     return len(out) - len(have)
 
 
+def bhav_ohlcv(text: str) -> pd.DataFrame:
+    """NSE sec_bhavdata_full -> EQ rows with the day's open/high/low/close and traded quantity (empty on anything else)."""
+    import io
+    try:
+        df = pd.read_csv(io.StringIO(text), skipinitialspace=True)
+        df.columns = [c.strip() for c in df.columns]
+        df = df[df["SERIES"].astype(str).str.strip() == "EQ"]
+        out = pd.DataFrame({"SYMBOL": df["SYMBOL"].astype(str).str.strip(), "open": pd.to_numeric(df["OPEN_PRICE"], errors="coerce"),
+                            "high": pd.to_numeric(df["HIGH_PRICE"], errors="coerce"), "low": pd.to_numeric(df["LOW_PRICE"], errors="coerce"),
+                            "close": pd.to_numeric(df["CLOSE_PRICE"], errors="coerce"), "volume": pd.to_numeric(df["TTL_TRD_QNTY"], errors="coerce")})
+        return out.dropna().set_index("SYMBOL")
+    except (ValueError, KeyError, pd.errors.ParserError):
+        return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
+
+
+def fill_from_bhav(days: list[date], symbols: list[str], get=None, data_dir=None, log=print) -> int:
+    """2026-11-18: Upstox publishes a day's daily candle only some time the NEXT day, so at the 00:30 / 06:30 runs nearly every stock
+    lacked yesterday's bar while a few had it -- the strategies then saw a "fresh" archive with an almost empty last day and found
+    no signals (KALYANKJIL 13 Nov was missed this way). NSE's own bhavcopy for the day is out that evening: append its bar to each
+    stock whose archive ends before it. Upstox's own candle replaces the row on a later run (same timestamp, keep="last").
+    Returns the number of bars added."""
+    import requests
+    from engine.research_data import NSE_API_HEADERS
+    get = get or (lambda url: requests.get(url, headers=NSE_API_HEADERS, timeout=30))
+    data_dir = data_dir or DATA_DIR
+    added = 0
+    for d in sorted(days):
+        try:
+            r = get(f"https://archives.nseindia.com/products/content/sec_bhavdata_full_{d:%d%m%Y}.csv")
+            bhav = bhav_ohlcv(r.text) if r.status_code == 200 else bhav_ohlcv("")
+        except Exception as exc:
+            log(f"bhavcopy {d}: {exc!s:.100}"); continue
+        if bhav.empty:
+            log(f"bhavcopy {d}: not published (yet)"); continue
+        for sym in symbols:
+            path = data_dir / f"{sym}_daily.csv.gz"
+            have = _read(path)
+            if have.empty or sym not in bhav.index or str(have["timestamp"].iloc[-1])[:10] >= str(d):
+                continue
+            b = bhav.loc[sym]
+            row = pd.DataFrame([{"timestamp": f"{d}T00:00:00+05:30", "open": b["open"], "high": b["high"], "low": b["low"],
+                                 "close": b["close"], "volume": int(b["volume"]), "oi": None}])
+            pd.concat([have, row]).to_csv(path, index=False, compression="gzip")
+            added += 1
+    return added
+
+
 def run(max_minutes: float = 40.0, extra: list[str] | None = None, log=print) -> int:
     from engine.research_data import broker
     DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -87,6 +134,16 @@ def run(max_minutes: float = 40.0, extra: list[str] | None = None, log=print) ->
             failed += 1
             log(f"{s}: {exc!s:.120}")
     log(f"all_daily: {done} stocks refreshed ({len(pool)} in the liquid pool), {added} new rows, {failed} failed, {time.monotonic() - t0:.0f}s")
+    try:                                              # the last 3 trading days, from NSE, wherever Upstox has not caught up yet
+        from engine.nightly import last_trading_day
+        from services.utils.market_holidays import get_trading_holidays
+        from zoneinfo import ZoneInfo
+        hol, d, days = get_trading_holidays(), datetime.now(ZoneInfo("Asia/Kolkata")).date(), []
+        for _ in range(3):
+            d = last_trading_day(d, hol); days.append(d)
+        log(f"all_daily: {fill_from_bhav(days, pool, log=log)} missing bars filled from NSE bhavcopies ({', '.join(map(str, sorted(days)))})")
+    except Exception as exc:
+        log(f"all_daily: bhavcopy fill failed: {exc!s:.120}")
     return 1 if failed > max(10, done // 10) else 0
 
 

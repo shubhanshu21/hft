@@ -67,7 +67,8 @@ def load(symbols=None, since="2022-01-01") -> dict[str, pd.DataFrame]:
         o[s], h[s], l[s], c[s] = x["open"] * adj, x["high"] * adj, x["low"] * adj, x["close"] * adj
         v[s] = (x["close"] * x["volume"]).astype(float)
     mk = lambda d: pd.DataFrame(d).sort_index().loc[since:].astype(float)
-    return {"O": mk(o), "H": mk(h), "L": mk(l), "C": mk(c), "VAL": mk(v)}
+    from markets.equity.strategies.tf_daily.earnings_drift.strategy import trim_partial_days     # a day few stocks have yet: dropped
+    return trim_partial_days({"O": mk(o), "H": mk(h), "L": mk(l), "C": mk(c), "VAL": mk(v)})
 
 
 def indicators(p: dict) -> dict:
