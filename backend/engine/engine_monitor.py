@@ -9,6 +9,8 @@ clears -- state in var/db/engine_monitor_state.json):
                its last run exited successfully.
   * MCX     -- hft-mcx-trend-carry.timer active; the service finished a run after the latest scheduled slot (Mon-Fri 09:10 and 23:40 IST,
                MCX_GRACE_MIN allowed) and that run succeeded.
+  * equity breakout -- hft-equity-breakout.timer active; on an NSE trading day the 09:08 session started (checked from 09:25 IST);
+               no failed run today. The session is one long run 09:08 -> 15:31, so the service is "activating" while it trades.
   * Upstox  -- in the half hour before each MCX run, the login token is refreshed if needed and must then be valid (MCX prices come
                from Upstox), so there is time to log in by hand.
 It replaced the old hft-dryrun watchdog (both removed: the service 2026-10-21, engine/watchdog.py 2026-10-30)."""
@@ -29,6 +31,7 @@ CRYPTO_STALE_MIN = 15
 MCX_SLOTS = (dtime(9, 10), dtime(23, 40))          # hft-mcx-trend-carry.timer, IST, Mon-Fri
 MCX_GRACE_MIN = 20
 RG_SLOTS = (dtime(9, 30), dtime(9, 40), dtime(15, 20))   # hft-results-gap.timer trading runs, IST, Mon-Fri (09:40 = buy retry)
+BO_START, BO_DUE = dtime(9, 8), dtime(9, 25)       # hft-equity-breakout.timer session start; alert if not started by BO_DUE
 TOKEN_WINDOW_MIN = 30                               # check the Upstox login this long before each MCX slot
 REMIND_H = 6
 
@@ -70,6 +73,33 @@ def last_run(unit: str, sh=_systemctl) -> tuple[datetime | None, str]:
     ts = out.get("ExecMainExitTimestamp", "").lstrip("@")
     when = datetime.fromtimestamp(int(ts), IST) if ts.isdigit() and int(ts) > 0 else None
     return when, out.get("Result", "")
+
+
+def last_start(unit: str, sh=_systemctl) -> datetime | None:
+    """When the service's current / last run started (None if it never ran)."""
+    out = dict(line.split("=", 1) for line in sh("show", unit, "-p", "ExecMainStartTimestamp", "--timestamp=unix").splitlines() if "=" in line)
+    ts = out.get("ExecMainStartTimestamp", "").lstrip("@")
+    return datetime.fromtimestamp(int(ts), IST) if ts.isdigit() and int(ts) > 0 else None
+
+
+def _holidays() -> set:
+    try:
+        from services.utils.market_holidays import get_trading_holidays
+        return get_trading_holidays()
+    except Exception:
+        return set()                      # weekday-only: at worst one false "missed" alert on a holiday
+
+
+def _bo_session_day(now: datetime) -> bool:
+    return now.weekday() < 5 and now.date() not in _holidays()
+
+
+def next_bo_session(now: datetime) -> datetime:
+    d = now.date() + timedelta(days=0 if now.time() < BO_START else 1)
+    hol = _holidays()
+    while d.weekday() >= 5 or d in hol:
+        d += timedelta(days=1)
+    return datetime.combine(d, BO_START, IST)
 
 
 def last_mcx_slot(now: datetime) -> datetime:
@@ -177,6 +207,17 @@ def problems(now: datetime, sh=_systemctl, crypto_state: Path = CRYPTO_STATE, to
                                    "stock. Check: journalctl --user -u hft-results-gap.service -n 30")
     except (OSError, ValueError, TypeError):
         pass
+    # equity breakout (swing): one long session a trading day, 09:08 -> 15:31 IST
+    if not unit_active("hft-equity-breakout.timer", sh):
+        out["bo_timer"] = "Equity breakout engine timer is OFF -- no breakout buys and NO STOPS are being watched."
+    elif now.time() >= BO_DUE and _bo_session_day(now):
+        start = last_start("hft-equity-breakout.service", sh)
+        if start is not None and start < datetime.combine(now.date(), BO_START, IST) - timedelta(minutes=5):   # never run yet is not a miss
+            out["bo_missed"] = f"Equity breakout engine did not start today's {BO_START:%H:%M} IST session -- stops are not being watched."
+    n = failed_runs("hft-equity-breakout.service", _today_start(now), run=journal)
+    if n:
+        out["bo_failed"] = (f"Equity breakout engine had {n} failed session(s) today -- stops are not being watched until it runs again. "
+                            "Check: journalctl --user -u hft-equity-breakout.service -n 50")
     # Upstox login, shortly before an MCX run
     if next_mcx_slot(now) - now <= timedelta(minutes=TOKEN_WINDOW_MIN):
         ok = token_ok() if token_ok else _upstox_token_ok()
@@ -288,4 +329,23 @@ def engine_status(account: str, now: datetime | None = None, sh=_systemctl, cryp
         else:
             text = (f"Running · last check {when:%a %H:%M} IST · next at {nxt:%a %H:%M} IST" if when else f"Running · next at {nxt:%a %H:%M} IST")
         return {"ok": ok, "last": when.isoformat() if when else None, "next": nxt.isoformat() if nxt else None, "text": text}
+    if account == "EQUITY_BREAKOUT":
+        on = unit_active("hft-equity-breakout.timer", sh)
+        running = sh("is-active", "hft-equity-breakout.service") in ("active", "activating")
+        start, (_, result) = last_start("hft-equity-breakout.service", sh), last_run("hft-equity-breakout.service", sh)
+        missed = (on and not running and now.time() >= BO_DUE and _bo_session_day(now) and start is not None
+                  and start < datetime.combine(now.date(), BO_START, IST) - timedelta(minutes=5))
+        ok = on and not missed and (running or result in ("", "success"))
+        nxt = next_bo_session(now) if on else None
+        if not on:
+            text = "Engine is OFF -- no breakout buys, stops not watched"
+        elif running:
+            text = f"In session since {start:%H:%M} IST · watching stops and breakouts every minute until 15:30" if start else "In session"
+        elif start is None:
+            text = f"Waiting for the first session · {nxt:%a %d %b %H:%M} IST"
+        elif not ok:
+            text = f"Today's session {'did not start' if missed else 'FAILED'} · next at {nxt:%a %H:%M} IST"
+        else:
+            text = f"Between sessions · last {start:%a %H:%M} IST · next at {nxt:%a %H:%M} IST"
+        return {"ok": ok, "last": start.isoformat() if start else None, "next": nxt.isoformat() if nxt else None, "text": text}
     return {"ok": None, "last": None, "next": None, "text": ""}

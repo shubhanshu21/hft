@@ -7,6 +7,7 @@ const BASE = process.argv[2] || "https://127.0.0.1/";
 const PAGES = [
   ["today", ["Total value", "Portfolio value", "Open positions", "Engine schedule", "Latest fills", "Paper accounts"]],
   ["paper/RESULTS_GAP", ["Results gap + earnings drift", "Account value", "Open positions", "Closed trades"]],
+  ["paper/EQUITY_BREAKOUT", ["Equity breakout pair", "Account value", "Open positions", "Closed trades"]],
   ["paper/MCX_TREND_CARRY", ["MCX trend + carry", "Account value", "Engine"]],
   ["results", ["Saved results", "Where the money went"]],
   ["new", ["Backtest builder", "What to test", "Money, fees and slippage", "Run backtest", "(data from "]],   // the Year list labels the strategy's own data start (2026-10-30 QA)

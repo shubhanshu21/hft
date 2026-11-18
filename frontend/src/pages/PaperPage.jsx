@@ -11,16 +11,18 @@ import { useCountUp } from "../hooks/useCountUp.js";
 import { inr, signed, tone, whyText } from "../lib/format.js";
 import { ACCOUNT_COLOR, ACCOUNT_SHORT } from "../lib/overview.js";
 
-const STRATEGY_LABEL = { trend_carry: "MCX trend + carry", dip_reversal: "Crypto dip-reversal", results_gap: "Results-day gap-up", earnings_drift: "Earnings drift (swing)" };
+const STRATEGY_LABEL = { trend_carry: "MCX trend + carry", dip_reversal: "Crypto dip-reversal", results_gap: "Results-day gap-up", nr7_breakout: "Quiet-day breakout", d55_breakout: "55-day high", earnings_drift: "Earnings drift (swing)" };
 const ABOUT = {
   CRYPTO_DIP_REVERSAL: "Buys a sharp dip on 9 coins' perpetual futures, 5 seconds after every 5-minute candle closes. Exits at +15%, -7%, the middle band or after 24 hours.",
   MCX_TREND_CARRY: "Holds the best 3 of 8 MCX commodities on trend and carry, re-checked every 10 trading days at 09:10 or 23:40 IST.",
   RESULTS_GAP: "Two strategies share this account. Results gap: at 09:30 it buys liquid stocks that opened 7%+ above the market after results and kept rising, and sells them at 15:20. Earnings drift: buys at the open stocks whose results jumped 4%+ vs the market on 2x volume, and sells them at the open 40 trading days later.",
+  EQUITY_BREAKOUT: "Swing breakouts on the day's 200 most-traded NSE stocks, only while at least half of them are above their 50-day average. Half the money buys quiet-day (NR7) breakouts when the price passes that day's high (up to 5 stocks); half buys stocks that closed at a 55-day high, at the next open (up to 3). Each has a trailing stop; a stock still below its buy price after 20 trading days is sold.",
 };
 const when = (s) => (s ? new Date(s).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" }) : "-");
 const qtyFmt = (q) => (q == null ? "-" : Number(q).toLocaleString("en-IN", { maximumFractionDigits: 4 }));
 const pxFmt = (p) => (p == null ? "-" : Number(p).toFixed(Math.abs(p) < 10 ? 4 : 2));   // small coin prices (DOGE 0.09) need more decimals
-const ACCOUNTS = ["MCX_TREND_CARRY", "CRYPTO_DIP_REVERSAL", "RESULTS_GAP"];
+const ACCOUNTS = ["MCX_TREND_CARRY", "CRYPTO_DIP_REVERSAL", "RESULTS_GAP", "EQUITY_BREAKOUT"];
+const EQUITY = new Set(["RESULTS_GAP", "EQUITY_BREAKOUT"]);
 
 /** Accounts (2026-10-29 layout redesign): one paper account -- a headline strip, the value chart and the engine card side by side,
  *  then blotters of open positions and closed trades. Read-only, refreshed every minute; no real orders are ever placed. */
@@ -72,7 +74,7 @@ export default function PaperPage({ accountId }) {
   const tab = d.accounts?.find((a) => a.id === d.account_id) ?? {};
   const gain = value - (acc.initial_capital ?? 0);
   const crypto = d.account_id.startsWith("CRYPTO");
-  const noun = crypto ? "Coin" : d.account_id === "RESULTS_GAP" ? "Stock" : "Contract";
+  const noun = crypto ? "Coin" : EQUITY.has(d.account_id) ? "Stock" : "Contract";
   const byStrategy = Object.values([...d.positions.map((p) => ({ k: p.strategy, openPnl: p.profit_now ?? 0, booked: 0 })),
     ...d.trades.map((t) => ({ k: t.strategy, openPnl: 0, booked: t.net_pnl ?? 0 }))].reduce((m, x) => {
     const r = m[x.k] ?? (m[x.k] = { name: x.k, label: STRATEGY_LABEL[x.k] ?? x.k, openPnl: 0, booked: 0 });
@@ -110,7 +112,7 @@ export default function PaperPage({ accountId }) {
           {!d.positions.length ? <p className="none">Nothing open right now. {ABOUT[d.account_id]}</p> : (
             <div className="table-wrap"><table className="blotter">
               <thead><tr><th>{noun}</th><th>Size</th><th className="n">Bought</th><th className="n">Last price</th><th className="n">Buyers / sellers</th><th className="n">Move</th>
-                <th className="n">Profit now</th><th className="n">If sold now</th><th className="n">{d.account_id === "RESULTS_GAP" ? "Money in it" : "Margin"}</th><th>Since</th></tr></thead>
+                <th className="n">Profit now</th><th className="n">If sold now</th><th className="n">{EQUITY.has(d.account_id) ? "Money in it" : "Margin"}</th><th>Since</th></tr></thead>
               <tbody>{d.positions.map((p) => (
                 <tr key={p.symbol} className="flash">
                   <td><b>{p.symbol}</b> <span className={`side ${p.direction === "short" ? "sell" : "buy"}`}>{p.direction === "short" ? "SELL" : "BUY"}</span></td>

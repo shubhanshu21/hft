@@ -27,7 +27,7 @@ IST = timezone(timedelta(hours=5, minutes=30))
 DB_PATH = DB_DIR / "paper_trading.db"
 # account id -> the engine's own state file (kept next to the DB)
 ACCOUNTS = {"CRYPTO_DIP_REVERSAL": "crypto_dip_reversal_state.json", "MCX_TREND_CARRY": "mcx_trend_carry_state.json",
-            "RESULTS_GAP": "results_gap_state.json"}
+            "RESULTS_GAP": "results_gap_state.json", "EQUITY_BREAKOUT": "equity_breakout_state.json"}   # breakout: all its state is in the DB
 TABLES = ("trades", "positions", "orders", "portfolio_snapshots")
 
 

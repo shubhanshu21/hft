@@ -1,0 +1,10 @@
+[Unit]
+Description=Equity breakout pair paper trading schedule
+
+[Timer]
+# 09:08 IST: loads the nightly daily archive (~1 min), then waits for the 09:15 open; the session ends itself after 15:30.
+OnCalendar=Mon..Fri *-*-* 09:08:00 Asia/Kolkata
+Persistent=false
+
+[Install]
+WantedBy=timers.target

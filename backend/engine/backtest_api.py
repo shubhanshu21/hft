@@ -99,7 +99,13 @@ def catalog() -> list[dict]:
     dip_reversal = {"market": "crypto", "name": "dip_reversal", "timeframe": "5 minutes", "supported": True, "symbols": dr.available(), "crypto": True, "scalp": True,
                      "default_symbols": list(dr.COINS), "summary": (dr.__doc__ or "").strip().split("\n")[0], "intraday": True, "default_risk_pct": dr.RISK_PCT * 100,
                      "exposure": 3.0, "exposure_min": 1.0, "exposure_max": 5.0, "default_capital": 100_000}
-    return [mcx, dip_reversal, results_gap, earnings_drift]
+    from markets.equity.strategies.tf_daily.breakout_pair import strategy as bp
+    breakout_pair = {"market": "equity", "name": "breakout_pair", "timeframe": "1 days", "supported": True, "symbols": [], "auto_universe": True,
+                     "summary": "equity / breakout_pair -- swing: half the money buys quiet-day (NR7) breakouts (up to 5), half 55-day-high breakouts "
+                                "(up to 3), from the day's 200 most-traded NSE stocks, only in a healthy market; trailing stop.",
+                     "intraday": False, "default_risk_pct": bp.RISK_PCT, "default_capital": 100_000,
+                     "data": {"text": "daily candles of every NSE stock (about 4,250), refreshed nightly", **ed.data_range()}}
+    return [mcx, dip_reversal, results_gap, earnings_drift, breakout_pair]
 
 
 def save(run: dict) -> None:
@@ -259,8 +265,10 @@ def _live_prices(keys: list[str]) -> dict:
     return prices
 
 
-PAPER_ACCOUNTS = [("MCX_TREND_CARRY", "MCX trend + carry"), ("CRYPTO_DIP_REVERSAL", "Crypto dip-reversal"), ("RESULTS_GAP", "Results gap + earnings drift")]
-ACCOUNT_STRATEGIES = {"MCX_TREND_CARRY": "trend_carry", "CRYPTO_DIP_REVERSAL": "dip_reversal", "RESULTS_GAP": "results_gap, earnings_drift"}
+PAPER_ACCOUNTS = [("MCX_TREND_CARRY", "MCX trend + carry"), ("CRYPTO_DIP_REVERSAL", "Crypto dip-reversal"), ("RESULTS_GAP", "Results gap + earnings drift"),
+                  ("EQUITY_BREAKOUT", "Equity breakout pair")]
+ACCOUNT_STRATEGIES = {"MCX_TREND_CARRY": "trend_carry", "CRYPTO_DIP_REVERSAL": "dip_reversal", "RESULTS_GAP": "results_gap, earnings_drift",
+                      "EQUITY_BREAKOUT": "breakout_pair"}
 LIVE_STRATEGIES = {n.strip() for v in ACCOUNT_STRATEGIES.values() for n in v.split(",")}      # RESULTS_GAP runs two (2026-10-29)
 
 
@@ -335,6 +343,26 @@ def _value_results_gap(p: dict, live: dict) -> None:
     p.update(profit_now=round(gross, 2), net_if_sold=round(gross - c["total"], 2), fees_if_sold=c["total"], move_pct=round((price / p["entry_price"] - 1) * 100, 3))
 
 
+def _value_breakout(p: dict, live: dict) -> None:
+    """An open EQUITY_BREAKOUT position: delivery shares (the full cost is blocked), 'if sold now' with the strategy's own fees."""
+    from markets.equity.strategies.tf_daily.breakout_pair import strategy as BP
+    try:
+        st = json.loads(p.pop("state", None) or "{}")
+    except (ValueError, TypeError):
+        st = {}
+    q = live.get(p.pop("instrument_key", None)) or {}
+    price = q.get("ltp")
+    sleeve = {"nr7": "quiet-day breakout", "d55": "55-day high"}.get(st.get("sleeve"), "breakout")
+    p.update(market="equity", lot_size=1, units=p["qty"], size_text=f"{int(p['qty'])} shares · {sleeve}, bought {st.get('entry_day', '?')}, trailing stop",
+             price_now=price, prev_close=q.get("prev_close"), price_source="live" if price else None, price_time=q.get("trade_time"),
+             bid=q.get("bid"), ask=q.get("ask"), checked_at=datetime.now(IST).isoformat(timespec="seconds") if q else None,
+             margin_used=round(p["entry_price"] * p["qty"], 2), risk_to_stop=round(max(0.0, p["entry_price"] - (p.get("current_stop") or 0)) * p["qty"], 2))
+    if price is None:
+        p.update(profit_now=None, fees_if_sold=None, net_if_sold=None, move_pct=None); return
+    c = BP.costs(p["entry_price"], price, int(p["qty"]))
+    p.update(profit_now=c["gross"], net_if_sold=c["net"], fees_if_sold=c["total"], move_pct=round((price / p["entry_price"] - 1) * 100, 3))
+
+
 def _value_crypto(p: dict, live: dict) -> None:
     """An open crypto position in USD, profit in rupees at the USD/INR reference rate, 'if sold now'."""
     from engine.crypto_dip_reversal import fetch_live_prices
@@ -389,7 +417,7 @@ def paper_summary(account: str = "CRYPTO_DIP_REVERSAL") -> dict:
     finally:
         con.close()
     live = {} if account in ("CRYPTO_CALM", "CRYPTO_DIP_REVERSAL") else _live_prices([p["instrument_key"] for p in pos if p.get("instrument_key")])   # crypto: Delta Exchange India prices
-    value = {"MCX_TREND_CARRY": _value_mcx, "RESULTS_GAP": _value_results_gap, "CRYPTO_CALM": _value_crypto, "CRYPTO_DIP_REVERSAL": _value_crypto}[account]
+    value = {"MCX_TREND_CARRY": _value_mcx, "RESULTS_GAP": _value_results_gap, "EQUITY_BREAKOUT": _value_breakout, "CRYPTO_CALM": _value_crypto, "CRYPTO_DIP_REVERSAL": _value_crypto}[account]
     for p in pos:
         value(p, live)
     if acc:
@@ -481,6 +509,12 @@ def work(run: dict) -> None:
             from markets.equity.strategies.tf_daily.earnings_drift import strategy as ed
             try:
                 run["result"] = ed.web_backtest(p["capital"], p["start"], p["end"], slippage_bp=p["slippage_bp"], progress=progress)
+            except ValueError as e:
+                raise BacktestError(str(e))
+        elif run["strategy"] == "breakout_pair":                  # equity swing, own account EQUITY_BREAKOUT (re-added 2026-11-17)
+            from markets.equity.strategies.tf_daily.breakout_pair import strategy as bp
+            try:
+                run["result"] = bp.web_backtest(p["capital"], p["start"], p["end"], risk_pct=p["risk_pct"], slippage_bp=p["slippage_bp"])
             except ValueError as e:
                 raise BacktestError(str(e))
         elif run["market"] == "commodity":                        # trend_carry: every 2 weeks, all 8 commodities ranked together, its own backtest

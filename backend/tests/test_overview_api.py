@@ -52,7 +52,7 @@ class TestOverview(unittest.TestCase):
         self.assertEqual((mcx["open_pnl"], mcx["value"], mcx["open_count"], mcx["unpriced"]), (0.0, 250000.0, 1, 1))
 
     def test_totals(self):
-        self.assertEqual(self.o["totals"], {"start": 450000.0, "value": 467728.0, "today_pnl": 3500.0, "open_count": 2})
+        self.assertEqual(self.o["totals"], {"start": 550000.0, "value": 567728.0, "today_pnl": 3500.0, "open_count": 2})
 
     def test_an_older_position_counts_only_todays_move(self):
         """2026-10-30: 'today' used to add a position's whole profit since entry, so a crude lot bought on 26 Oct showed four days of gain
@@ -98,7 +98,7 @@ class TestOverview(unittest.TestCase):
         o = A.overview(now=NOW, summary=flaky)
         mcx = next(a for a in o["accounts"] if a["id"] == "MCX_TREND_CARRY")
         self.assertIn("unavailable", mcx["error"])
-        self.assertEqual(o["totals"]["value"], 217728.0)            # the other two still add up
+        self.assertEqual(o["totals"]["value"], 317728.0)            # the other three still add up (EQUITY_BREAKOUT since 2026-11-17)
 
 
 class TestLiveFlag(unittest.TestCase):
@@ -121,7 +121,7 @@ class TestEndpoint(unittest.TestCase):
                 body = json.loads(r.read())
         finally:
             srv.shutdown(); srv.server_close()
-        self.assertEqual(len(body["accounts"]), 3)
+        self.assertEqual(len(body["accounts"]), len(A.PAPER_ACCOUNTS))
         self.assertIn("totals", body)
 
 

@@ -98,7 +98,9 @@ def main(argv=None) -> int:
     held = []
     try:
         from engine.database import TradingDB
-        held = [p["symbol"] for p in TradingDB().get_open_positions("RESULTS_GAP") if p.get("strategy") == "earnings_drift"]
+        db = TradingDB()
+        held = [p["symbol"] for p in db.get_open_positions("RESULTS_GAP") if p.get("strategy") == "earnings_drift"]
+        held += [p["symbol"] for p in db.get_open_positions("EQUITY_BREAKOUT")]     # breakout_pair trails its stops on these daily bars
     except Exception:
         pass
     return run(a.max_minutes, extra=held)

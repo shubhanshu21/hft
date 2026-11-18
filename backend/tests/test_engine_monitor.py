@@ -5,6 +5,8 @@ import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from unittest import mock
+
 from engine import engine_monitor as M
 
 IST = M.IST
@@ -15,13 +17,16 @@ MON_0910 = datetime(2026, 10, 26, 9, 10, 4, tzinfo=IST)
 
 MON_0930 = datetime(2026, 10, 26, 9, 30, 9, tzinfo=IST)
 MON_0940 = datetime(2026, 10, 26, 9, 40, 6, tzinfo=IST)     # the buy-retry slot added 2026-10-26
-ALL_TIMERS = ("hft-crypto-dip-reversal.timer", "hft-mcx-trend-carry.timer", "hft-results-gap.timer")
+ALL_TIMERS = ("hft-crypto-dip-reversal.timer", "hft-mcx-trend-carry.timer", "hft-results-gap.timer", "hft-equity-breakout.timer")
 
 
-def fake_sh(active=ALL_TIMERS, crypto=("success", None), mcx=("success", MON_0910), rg=("success", MON_0940)):
+def fake_sh(active=ALL_TIMERS, crypto=("success", None), mcx=("success", MON_0910), rg=("success", MON_0940), bo=("success", None)):
     def sh(*args):
         if args[0] == "is-active":
             return "active" if args[1] in active else "inactive"
+        if "breakout" in args[1]:                       # one long session: bo = (result, start time)
+            result, start = bo
+            return f"Result={result}\nExecMainStartTimestamp=@{int(start.timestamp()) if start else 0}"
         result, when = crypto if "crypto" in args[1] else rg if "results-gap" in args[1] else mcx
         return f"Result={result}\nExecMainExitTimestamp=@{int(when.timestamp()) if when else 0}"
     return sh
@@ -29,6 +34,8 @@ def fake_sh(active=ALL_TIMERS, crypto=("success", None), mcx=("success", MON_091
 
 class Base(unittest.TestCase):
     def setUp(self):
+        patcher = mock.patch.object(M, "_holidays", return_value=set())     # never fetch the NSE holiday list in tests
+        patcher.start(); self.addCleanup(patcher.stop)
         self.tmp = tempfile.TemporaryDirectory()
         self.dir = Path(self.tmp.name)
         self.crypto = self.dir / "crypto_state.json"
@@ -223,3 +230,43 @@ class TestResultsGapMonitor(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+MON_0908 = datetime(2026, 10, 26, 9, 8, 1, tzinfo=IST)
+FRI_0908 = datetime(2026, 10, 23, 9, 8, 1, tzinfo=IST)
+
+
+class TestEquityBreakout(Base):
+    def problems(self, now, **kw):
+        self.crypto_saved(now - timedelta(minutes=3))
+        return M.problems(now, sh=fake_sh(**kw), crypto_state=self.crypto, token_ok=lambda: True, journal=lambda cmd: "")
+
+    def test_session_started_today_is_fine(self):
+        self.assertFalse({k for k in self.problems(MON_10, bo=("success", MON_0908)) if k.startswith("bo_")})
+
+    def test_no_session_today_alerts_after_0925(self):
+        self.assertIn("bo_missed", self.problems(MON_10, bo=("success", FRI_0908)))
+        self.assertNotIn("bo_missed", self.problems(MON_0910, bo=("success", FRI_0908)))      # before 09:25: not yet
+
+    def test_holiday_and_never_run_are_not_misses(self):
+        with mock.patch.object(M, "_holidays", return_value={MON_10.date()}):
+            self.assertNotIn("bo_missed", self.problems(MON_10, bo=("success", FRI_0908)))
+        self.assertNotIn("bo_missed", self.problems(MON_10, bo=("success", None)))
+
+    def test_timer_off(self):
+        self.assertIn("bo_timer", self.problems(MON_10, active=ALL_TIMERS[:3]))
+
+    def test_failed_session_today(self):
+        self.crypto_saved(MON_10)
+        out = M.problems(MON_10, sh=fake_sh(bo=("exit-code", MON_0908)), crypto_state=self.crypto, token_ok=lambda: True,
+                         journal=lambda cmd: "hft-equity-breakout.service: Failed with result 'exit-code'." if "hft-equity-breakout.service" in cmd else "")
+        self.assertIn("bo_failed", out)
+
+    def test_status_in_session_and_between(self):
+        sh = fake_sh(active=ALL_TIMERS + ("hft-equity-breakout.service",), bo=("success", MON_0908))
+        st = M.engine_status("EQUITY_BREAKOUT", MON_10, sh=sh)
+        self.assertTrue(st["ok"]); self.assertIn("In session since 09:08", st["text"])
+        st = M.engine_status("EQUITY_BREAKOUT", MON_10.replace(hour=16), sh=fake_sh(bo=("success", MON_0908)))
+        self.assertTrue(st["ok"]); self.assertIn("next at Tue 09:08", st["text"])
+        st = M.engine_status("EQUITY_BREAKOUT", MON_10, sh=fake_sh(bo=("success", FRI_0908)))
+        self.assertFalse(st["ok"]); self.assertIn("did not start", st["text"])
