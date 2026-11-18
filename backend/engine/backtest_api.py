@@ -13,15 +13,14 @@ It only reads archived candles and runs the strategy code; it never talks to Ups
 Fees (the strategy's cost model) and slippage are always charged. One run at a time; results are saved in var/backtests/<id>.json.
 Binds to 127.0.0.1 -- nginx publishes /api/.
 
-Authentication: the whole site sits behind an nginx login since 2026-10-30 (only the server itself skips it). Calls that change saved
-data -- DELETE /api/backtests[/<id>], POST /api/backtests/<id>/label and POST /api/paper/reset -- also require an `X-API-Token` header matching BACKTEST_ADMIN_TOKEN in backend/.env (the web page asks for it once and
-keeps it in the browser). With BACKTEST_ADMIN_TOKEN unset those calls are refused outright (fail closed); reading and starting a backtest
-stay open -- a run only uses CPU -- limited to one at a time and one start per address every COOLDOWN_S seconds; saved runs are never auto-deleted.
+Authentication: none since 2026-11-18 (user: "remove this token thing i dont want it", told the risk). The site has had no login since
+2026-10-31, so anyone who opens it can rename / delete saved runs and reset a paper account -- a reset still backs up the DB first and
+needs the account name typed; a deleted saved run is gone. Reading and starting a backtest are limited to one at a time and one start per
+address every COOLDOWN_S seconds; saved runs are never auto-deleted.
 """
 from __future__ import annotations
 
 import argparse
-import hmac
 import json
 import math
 import os
@@ -45,24 +44,10 @@ CURRENCY = ["USDINR", "EURINR", "GBPINR"]
 LIMITS = {"capital": (10_000, 1_000_000_000), "slippage_bp": (0, 100), "risk_pct": (0.1, 10), "max_positions": (1, 10), "leverage": (1, 40),
           "trail_stop_pct": (0, 30), "trail_after_pct": (0, 50), "profit_trail_pct": (0, 20)}
 COOLDOWN_S = 5
-ADMIN_TOKEN_ENV = "BACKTEST_ADMIN_TOKEN"
 MAX_TRACKED_ADDRESSES = 2000
 _lock = threading.Lock()
 _running: dict | None = None
 _last_start: dict[str, float] = {}
-
-
-def admin_check(provided: str, expected: str | None = None) -> int | None:
-    """HTTP status to refuse a destructive request with, or None when it may proceed.
-
-    Fail closed: with no BACKTEST_ADMIN_TOKEN configured, nothing destructive is allowed at all (the page then says so) -- an
-    unauthenticated DELETE /api/backtests or POST /api/paper/reset is refused rather than silently accepted."""
-    expected = (os.environ.get(ADMIN_TOKEN_ENV, "") if expected is None else expected).strip()
-    if not expected:
-        return HTTPStatus.FORBIDDEN
-    if not provided or not hmac.compare_digest(str(provided).strip(), expected):
-        return HTTPStatus.UNAUTHORIZED
-    return None
 
 
 def universe(market: str) -> list[str]:
@@ -527,6 +512,14 @@ def _today_part(p: dict, today: str, crypto: bool) -> float:
     return (px - prev) * float(p.get("units") or 0) * (1 if p.get("direction", "long") == "long" else -1)
 
 
+def _recent_differ(vs: dict | None, now: datetime, days: int = 5) -> list[dict]:
+    """Paper-vs-backtest differences of the last `days` days, for the Desk's "Needs attention" line (older, explained ones stay on the
+    account page only -- e.g. DOT/ADA bought before they were dropped)."""
+    since = str((now - timedelta(days=days)).date())
+    return [{"sym": x["sym"], "day": x["day"], "side": side} for side in ("only_paper", "only_backtest")
+            for x in ((vs or {}).get(side) or []) if str(x.get("day", "")) >= since]
+
+
 def overview(now: datetime | None = None, summary=None) -> dict:
     """Every paper account at once, for the Today page. value = booked money + open profit (unpriced positions count 0);
     today_pnl = profit after fees of trades sold today (IST) + each open position's part of today (_today_part).
@@ -551,7 +544,8 @@ def overview(now: datetime | None = None, summary=None) -> dict:
                          "booked": booked, "open_pnl": open_pnl, "value": round(booked + open_pnl, 2), "today_pnl": round(sold_today + open_today, 2),
                          "open_count": len(pos), "unpriced": sum(1 for p in pos if p.get("profit_now") is None),
                          "open": [{"symbol": p["symbol"], "profit_now": p.get("profit_now"), "move_pct": p.get("move_pct")} for p in pos],
-                         "engine": s.get("engine") or {}, "market_open": tab.get("market_open"), "market_text": tab.get("market_text")})
+                         "engine": s.get("engine") or {}, "market_open": tab.get("market_open"), "market_text": tab.get("market_text"),
+                         "differ": _recent_differ(s.get("vs_backtest"), now)})
         recent += [t | {"account": aid, "account_label": label} for t in (s.get("trades") or [])[:12]]
     ok = [a for a in accounts if "error" not in a]
     totals = {"start": round(sum(a["start"] for a in ok), 2), "value": round(sum(a["value"] for a in ok), 2),
@@ -692,20 +686,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, run)
         self._send(HTTPStatus.NOT_FOUND, {"error": "not found"})
 
-    def _admin_ok(self) -> bool:
-        """Answer the caller and return False when a destructive action is not authorised."""
-        status = admin_check(self.headers.get("X-API-Token") or "")
-        if status is None:
-            return True
-        msg = (f"Destructive actions are disabled: set {ADMIN_TOKEN_ENV} in backend/.env and restart the API." if status == HTTPStatus.FORBIDDEN
-               else "A valid X-API-Token header is required for this action.")
-        self._send(status, {"error": msg})
-        return False
-
     def do_POST(self) -> None:                                     # noqa: N802
         if urlparse(self.path).path.rstrip("/") == "/api/paper/reset":   # reset ONE paper account (backup first; must type its name)
-            if not self._admin_ok():
-                return
             try:
                 body = json.loads(self.rfile.read(min(int(self.headers.get("Content-Length") or 0), 2000)) or b"{}")
             except ValueError:
@@ -717,8 +699,6 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(HTTPStatus.BAD_REQUEST, {"error": str(e)})
         m = re.fullmatch(r"/api/backtests/([0-9a-f]{12})/label", urlparse(self.path).path.rstrip("/"))
         if m:
-            if not self._admin_ok():                               # 2026-10-30 audit: renaming was the one write without the token
-                return
             run = load(m.group(1))
             if not run:
                 return self._send(HTTPStatus.NOT_FOUND, {"error": "not found"})
@@ -751,8 +731,6 @@ class Handler(BaseHTTPRequestHandler):
         self._send(HTTPStatus.ACCEPTED, {"id": run["id"], "status": run["status"]})
 
     def do_DELETE(self) -> None:                                   # noqa: N802
-        if not self._admin_ok():
-            return
         path = urlparse(self.path).path.rstrip("/")
         running = _running["id"] if _running else None
         if path == "/api/backtests":

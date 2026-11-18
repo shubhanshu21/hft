@@ -127,3 +127,18 @@ class TestEndpoint(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestNeedsAttention(unittest.TestCase):
+    def test_only_recent_differences_reach_the_desk(self):
+        vs = {"only_paper": [{"sym": "DOT", "day": "2026-10-30"}], "only_backtest": [{"sym": "KALYANKJIL", "day": "2026-11-13"}]}
+        now = datetime(2026, 11, 18, 12, 0, tzinfo=A.IST)
+        self.assertEqual(A._recent_differ(vs, now), [{"sym": "KALYANKJIL", "day": "2026-11-13", "side": "only_backtest"}])
+        self.assertEqual(A._recent_differ(None, now), [])
+
+    def test_overview_carries_them_per_account(self):
+        def summary(aid):
+            return fake_summary(aid) | ({"vs_backtest": {"only_paper": [], "only_backtest": [{"sym": "X", "day": "2026-10-28"}]}} if aid == "RESULTS_GAP" else {})
+        o = A.overview(now=NOW, summary=summary)
+        rg = next(a for a in o["accounts"] if a["id"] == "RESULTS_GAP")
+        self.assertEqual(rg["differ"], [{"sym": "X", "day": "2026-10-28", "side": "only_backtest"}])

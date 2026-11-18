@@ -1,0 +1,73 @@
+/* "3D Desk" look (2026-11-18, user: "modern UI ... 3d things"): light glass panes over a slowly drifting colour field, layered depth
+   shadows, a WebGL tower hero on the Desk, gentle tilt toward the pointer and a rise-in on page change. Light theme only (user's rule).
+   Everything that moves stops under prefers-reduced-motion. */
+:root{
+  --glass:rgba(255,255,255,.74); --glass-2:rgba(248,250,252,.62); --glass-line:rgba(255,255,255,.75);
+  --depth-1:0 1px 1px rgba(15,23,42,.04),0 2px 6px rgba(15,23,42,.04),0 12px 28px -14px rgba(15,23,42,.16);
+  --depth-2:0 2px 4px rgba(15,23,42,.05),0 10px 24px -6px rgba(15,23,42,.12),0 28px 48px -24px rgba(15,23,42,.22);
+}
+/* the colour field behind the page: the four account colours, very soft */
+.app{background:transparent}
+/* on body, under everything: on .app-main it was painted over the dark side rail */
+body::before{content:"";position:fixed;inset:-20%;z-index:-1;pointer-events:none;
+  background:
+    radial-gradient(40% 35% at 18% 12%,rgba(37,99,235,.10),transparent 70%),
+    radial-gradient(38% 32% at 85% 8%,rgba(124,58,237,.09),transparent 70%),
+    radial-gradient(42% 38% at 78% 88%,rgba(5,150,105,.08),transparent 70%),
+    radial-gradient(36% 30% at 10% 90%,rgba(217,119,6,.07),transparent 70%),
+    #f3f5f9;
+  animation:drift 38s ease-in-out infinite alternate}
+@keyframes drift{0%{transform:translate3d(0,0,0) scale(1)}50%{transform:translate3d(-3%,2%,0) scale(1.04)}100%{transform:translate3d(2%,-2%,0) scale(1.02)}}
+
+/* glass panes with depth */
+.pane,.strip,.panel,.kpi,.metric-group,.paper-hero{background:var(--glass);border:1px solid var(--glass-line);box-shadow:var(--depth-1);
+  backdrop-filter:blur(16px) saturate(140%);-webkit-backdrop-filter:blur(16px) saturate(140%)}
+.pane{border-radius:14px;transition:transform .25s cubic-bezier(.2,.7,.2,1),box-shadow .25s}
+.pane:hover{transform:translateY(-2px);box-shadow:var(--depth-2)}
+.pane-h{background:var(--glass-2);border-bottom-color:rgba(226,232,240,.8)}
+.strip{border-radius:14px}
+.strip .cell + .cell{border-left-color:rgba(226,232,240,.8)}
+
+/* Desk hero: copy on the left, the WebGL towers on the right */
+.hero3d{display:grid;grid-template-columns:minmax(240px,.9fr) 2fr;align-items:stretch;min-height:320px;margin-bottom:16px;border-radius:18px;
+  overflow:hidden;position:relative;border:1px solid var(--glass-line);box-shadow:var(--depth-2);
+  background:linear-gradient(135deg,rgba(255,255,255,.92),rgba(241,245,252,.78));backdrop-filter:blur(18px)}
+.hero3d-copy{display:flex;flex-direction:column;justify-content:center;gap:6px;padding:28px 30px;z-index:1}
+.eyebrow-k{font-size:.8rem;font-weight:600;color:var(--muted)}
+.hero3d-v{font-size:clamp(2rem,3.6vw,3.1rem);font-weight:800;letter-spacing:-.02em;line-height:1.05;color:var(--fg)}
+.hero3d-copy small{font-size:.9rem;font-weight:700}
+.hero3d-copy p{margin:10px 0 0;max-width:34ch;font-size:.86rem;line-height:1.5;color:var(--fg-2)}
+.towers{position:relative;min-height:320px;height:100%}
+.towers canvas{position:absolute;inset:0;width:100%!important;height:100%!important;display:block;outline:none}
+.tower-tag{position:absolute;transform:translate(-50%,-100%);display:flex;flex-direction:column;align-items:center;gap:1px;padding:5px 10px;
+  border-radius:10px;background:rgba(255,255,255,.86);border:1px solid rgba(255,255,255,.9);box-shadow:0 6px 18px -6px rgba(15,23,42,.25);
+  color:var(--fg);text-decoration:none;white-space:nowrap;pointer-events:auto;transition:transform .2s,box-shadow .2s;backdrop-filter:blur(8px)}
+.tower-tag span{font-size:.7rem;font-weight:700;color:var(--c)}
+.tower-tag b{font-size:.82rem;font-variant-numeric:tabular-nums}
+.tower-tag small{font-size:.7rem;font-weight:700}
+.tower-tag.on,.tower-tag:hover,.tower-tag:focus-visible{transform:translate(-50%,-100%) scale(1.12);box-shadow:0 10px 26px -8px var(--c);z-index:2}
+
+/* tilt toward the pointer (lib/tilt.js sets --rx/--ry on [data-tilt]) */
+[data-tilt]{transform:perspective(1000px) rotateX(var(--rx,0deg)) rotateY(var(--ry,0deg));transition:transform .18s ease-out;will-change:transform}
+
+/* page change: content rises in */
+.page-in > *{animation:rise .38s cubic-bezier(.2,.7,.2,1) both}
+.page-in > *:nth-child(2){animation-delay:.04s}.page-in > *:nth-child(3){animation-delay:.08s}.page-in > *:nth-child(4){animation-delay:.12s}
+@keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+
+@media (max-width:900px){
+  .hero3d{grid-template-columns:1fr;min-height:0}
+  .hero3d-copy{padding:20px 20px 0}
+  .towers{min-height:250px}
+}
+@media (prefers-reduced-motion:reduce){
+  body::before,.page-in > *{animation:none}
+  .pane:hover{transform:none}
+  [data-tilt]{transform:none}
+}
+/* the hero already shows the total, so the strip under it drops its copy */
+.hero3d + .strip{grid-template-columns:repeat(4,1fr)}
+.hero3d + .strip .lead{display:none}
+.hero3d + .strip .lead + .cell{border-left:0}
+@media (max-width:1100px){.hero3d + .strip{grid-template-columns:repeat(2,minmax(0,1fr))}.hero3d + .strip .cell:nth-child(even){border-left:0}.hero3d + .strip .cell:nth-child(odd):not(.lead){border-left:1px solid rgba(226,232,240,.8)}}
+@media (max-width:600px){.tower-tag{padding:3px 8px}.tower-tag b{display:none}}   /* phones: name + % only, so the four labels do not overlap */

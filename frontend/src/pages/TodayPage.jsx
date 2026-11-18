@@ -1,12 +1,15 @@
-import { useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import { getPaper } from "../api/client.js";
 import { inr, signed, tone, whyText } from "../lib/format.js";
-import { ACCOUNT_COLOR, ACCOUNT_SHORT, donutSlices, pctOf, statusTone } from "../lib/overview.js";
+import { ACCOUNT_COLOR, ACCOUNT_SHORT, donutSlices, nextRun, pctOf, statusTone, sumByDate } from "../lib/overview.js";
 import { minutesUntil, untilText } from "../lib/palette.js";
 import { useCountUp } from "../hooks/useCountUp.js";
 import { useOverview } from "../hooks/useOverview.js";
 import Sparkline from "../components/ui/Sparkline.jsx";
 import Pane from "../components/ui/Pane.jsx";
+
+const AccountTowers = lazy(() => import("../components/three/AccountTowers.jsx"));   // three.js only loads here
+const webgl = () => { try { const c = document.createElement("canvas"); return !!(c.getContext("webgl2") || c.getContext("webgl")); } catch { return false; } };
 
 const WHAT = { MCX_TREND_CARRY: "Commodity futures", CRYPTO_DIP_REVERSAL: "Perpetual futures", RESULTS_GAP: "NSE intraday + swing", EQUITY_BREAKOUT: "NSE swing breakouts" };
 const when = (s) => (s ? new Date(s).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" }) : "-");
@@ -26,13 +29,13 @@ export default function TodayPage() {
   }, [d]);
   useEffect(() => {                                            // the value line: each account's daily values added up (once per visit)
     if (!d || curve) return;
-    Promise.all(d.accounts.map((a) => getPaper(a.id).catch(() => ({})))).then((rs) => {
-      const lines = d.accounts.map((a, i) => [a.start, ...(rs[i].equity ?? []).map((e) => e.current_capital), a.value]);
-      const n = Math.max(...lines.map((l) => l.length));
-      setCurve(Array.from({ length: n }, (_, k) => lines.reduce((s, l) => s + l[Math.min(k, l.length - 1)], 0)));
+    const ok = d.accounts.filter((a) => !a.error);
+    Promise.all(ok.map((a) => getPaper(a.id).catch(() => ({})))).then((rs) => {
+      setCurve([d.totals.start, ...sumByDate(ok, rs.map((r) => r.equity ?? []), d.totals.value)]);   // added up by date, not by position
     });
   }, [d, curve]);
   const total = useCountUp(d?.totals.value ?? 0);
+  const [threeOk, setThreeOk] = useState(() => webgl());
 
   if (error && !d) return <div className="panel error" role="alert">{error}</div>;
   if (!d) return <div className="panel none">Loading your accounts...</div>;
@@ -42,21 +45,44 @@ export default function TodayPage() {
   const positions = ok.flatMap((a) => a.open.map((p) => ({ ...p, acct: a })));
   const slices = donutSlices(d.accounts);
   const R = 52, C = 2 * Math.PI * R;
-  const schedule = ok.map((a) => ({ a, mins: minutesUntil(a.engine?.text) })).sort((x, y) => (x.mins ?? 1e9) - (y.mins ?? 1e9));
+  const schedule = ok.map((a) => ({ a, ...nextRun(a.engine, new Date(), minutesUntil) })).sort((x, y) => (x.mins ?? 1e9) - (y.mins ?? 1e9));
+  const attention = ok.filter((a) => a.differ?.length);
   return (
     <div className="desk">
       <h1 className="sr-only">Desk</h1>
-      <section className="strip">
-        <div className="cell lead"><span className="k">Total value · 3 accounts</span><b className="big-v">{inr(total)}</b></div>
+      {threeOk && (
+        <section className="hero3d" data-tilt="1.5">
+          <div className="hero3d-copy">
+            <span className="eyebrow-k">Your paper accounts</span>
+            <b className="hero3d-v">{inr(total)}</b>
+            <small className={tone(gain)}>{signed(gain)} since start · {d.accounts.length} accounts</small>
+            <p>Each tower is one account, as tall as its money. Hover to lift it, click to open.</p>
+          </div>
+          <Suspense fallback={<div className="towers" />}>
+            <AccountTowers accounts={ok} onFail={() => setThreeOk(false)} />
+          </Suspense>
+        </section>)}
+      <section className="strip" data-tilt="1">
+        <div className="cell lead"><span className="k">Total value · {d.accounts.length} accounts</span><b className="big-v">{inr(total)}</b></div>
         <div className="cell"><span className="k">Since start</span><b className={tone(gain)}>{signed(gain)}</b><small className={tone(gain)}>{gain >= 0 ? "▲" : "▼"} {Math.abs(pctOf(t.value, t.start)).toFixed(2)}% on {inr(t.start)}</small></div>
         <div className="cell"><span className="k">Today</span><b className={t.today_pnl ? tone(t.today_pnl) : ""}>{signed(t.today_pnl)}</b><small>{d.recent.filter((r) => String(r.exit_dt).slice(0, 10) === d.as_of.slice(0, 10)).length} sold today</small></div>
         <div className="cell"><span className="k">Open positions</span><b>{t.open_count}</b><small>{positions.length ? positions.map((p) => p.symbol).join(", ") : "none"}</small></div>
         <div className="cell"><span className="k">Engines</span><b className={problems.length ? "down" : "up"}><span className={`pulse ${problems.length ? "bad" : ""}`} />{problems.length ? `${problems.length} down` : `${ok.length} / ${d.accounts.length} up`}</b><small>checked every 15 min</small></div>
       </section>
 
+      {attention.length > 0 && (
+        <div className="attention" role="status">
+          <b>Paper vs backtest:</b>
+          {attention.map((a) => (
+            <a key={a.id} href={`#/paper/${a.id}`} style={{ "--c": ACCOUNT_COLOR[a.id] }}>
+              <i />{ACCOUNT_SHORT[a.id]}: {a.differ.map((x) => `${x.sym} ${new Date(x.day).toLocaleDateString("en-IN", { day: "numeric", month: "short" })} (${x.side === "only_paper" ? "paper only" : "backtest only"})`).join(", ")}
+            </a>))}
+          <small>trades of the last 5 days that differ from the strategy's backtest -- open the account for why</small>
+        </div>)}
+
       <div className="desk-grid">
         <Pane title="Portfolio value" meta={`all accounts · since ${inr(t.start)} start`} className="g-chart">
-          {curve && curve.length > 1 ? <Sparkline className="grow" values={curve} baseline={t.start} height={230} color="#2563eb" />
+          {curve && curve.length > 1 ? <Sparkline className="grow" values={curve} baseline={t.start} height={230} color="var(--fg-2)" />
             : <p className="none">The line fills in day by day.</p>}
         </Pane>
 
@@ -91,9 +117,9 @@ export default function TodayPage() {
         </Pane>
 
         <Pane title="Engine schedule" meta="next check" className="g-sched">
-          <ul className="sched">{schedule.map(({ a, mins }) => (
+          <ul className="sched">{schedule.map(({ a, mins, label }) => (
             <li key={a.id}><i className={`led ${statusTone(a.engine)}`} /><span>{ACCOUNT_SHORT[a.id]}<small>{WHAT[a.id]}</small></span>
-              <b>{(String(a.engine?.text).match(/next at ([^·]+)/) || [])[1]?.replace(" IST", "") ?? "-"}<small>{untilText(mins)}</small></b></li>))}
+              <b>{label}<small>{untilText(mins)}</small></b></li>))}
           </ul>
         </Pane>
 

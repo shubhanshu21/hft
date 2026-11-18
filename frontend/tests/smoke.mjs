@@ -9,7 +9,7 @@ const PAGES = [
   ["paper/RESULTS_GAP", ["Results gap + earnings drift", "Account value", "Open positions", "Closed trades"]],
   ["paper/EQUITY_BREAKOUT", ["Equity breakout pair", "Account value", "Open positions", "Closed trades"]],
   ["paper/MCX_TREND_CARRY", ["MCX trend + carry", "Account value", "Engine"]],
-  ["results", ["Saved results", "Where the money went"]],
+  ["results", ["Saved results", ["Where the money went", "Play from start"]]],   // [a, b] = either text: with no saved runs the page shows the shipped example (2026-11-18)
   ["new", ["Backtest builder", "What to test", "Money, fees and slippage", "Run backtest", "(data from "]],   // the Year list labels the strategy's own data start (2026-10-30 QA)
 ];
 const SIZES = [["desktop", 1440, 900], ["phone", 390, 844]];
@@ -27,7 +27,7 @@ for (const [size, width, height] of SIZES) {
     await page.waitForLoadState("networkidle");
     await page.waitForTimeout(1500);
     const body = await page.textContent("body");
-    for (const t of texts) if (!body.includes(t)) failures.push(`${size} #/${route}: missing "${t}"`);
+    for (const t of texts) if (![].concat(t).some((x) => body.includes(x))) failures.push(`${size} #/${route}: missing "${[].concat(t).join('" or "')}"`);
     for (const e of errors) failures.push(`${size} #/${route}: console error: ${e.slice(0, 160)}`);
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
     if (size === "phone" && overflow > 1) failures.push(`${size} #/${route}: page scrolls sideways by ${overflow}px`);
@@ -41,6 +41,7 @@ for (const [size, width, height] of SIZES) {
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, ignoreHTTPSErrors: true });
   const page = await ctx.newPage();
   await page.goto(`${BASE}#/today`); await page.waitForLoadState("networkidle");
+  await page.getByText("Results gap + earnings drift").first().waitFor({ timeout: 10000 });   // accounts loaded (the 3D Desk loads more first)
   await page.keyboard.press("Control+k");
   await page.waitForSelector(".pal input", { timeout: 5000 }).catch(() => failures.push("Ctrl+K did not open the search"));
   await page.keyboard.type("gap"); await page.keyboard.press("Enter"); await page.waitForTimeout(800);

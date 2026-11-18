@@ -1,5 +1,6 @@
 import { Suspense, lazy, useEffect, useState } from "react";
 import { readCollapsed, saveCollapsed } from "./lib/palette.js";
+import { installTilt } from "./lib/tilt.js";
 import Sidebar from "./components/layout/Sidebar.jsx";
 import TopBar from "./components/layout/TopBar.jsx";
 import StatusBar from "./components/layout/StatusBar.jsx";
@@ -17,6 +18,7 @@ export default function App() {
   const [searching, setSearching] = useState(false);
   const [collapsed, setCollapsed] = useState(() => readCollapsed(typeof localStorage === "undefined" ? null : localStorage));
   const toggle = () => setCollapsed((c) => { saveCollapsed(localStorage, !c); return !c; });
+  useEffect(() => installTilt(), []);                            // cards marked data-tilt lean toward the pointer
   useEffect(() => {                                              // "[" folds / unfolds the sidebar (not while typing in a field)
     const key = (e) => { if (e.key === "[" && !/input|textarea|select/i.test(e.target.tagName) && !e.ctrlKey && !e.metaKey) toggle(); };
     window.addEventListener("keydown", key);
@@ -29,8 +31,10 @@ export default function App() {
         <TopBar />
         <main className="page">
           <Suspense fallback={<p className="none">Loading…</p>}>
+            <div className="page-in" key={`${page}/${id ?? ""}`}>
             {page === "today" ? <TodayPage /> : page === "new" ? <NewBacktestPage /> : page === "paper" ? <PaperPage accountId={id} /> :
               <ResultsPage runId={id ? decodeURIComponent(id) : undefined} />}
+            </div>
           </Suspense>
         </main>
         <StatusBar />

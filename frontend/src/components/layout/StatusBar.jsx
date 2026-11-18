@@ -9,7 +9,7 @@ export default function StatusBar() {
     <footer className="statusbar">
       <span className={bad.length || error ? "bad" : "good"}><i />{error ? "Prices unavailable" : bad.length ? `${bad.map((a) => a.label).join(", ")}: needs attention` : "All engines running"}</span>
       <span>{at ? `Updated ${at.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" })} IST · every minute` : "Loading…"}</span>
-      <span className="sb-right">Paper trading · no real orders · <kbd>Ctrl K</kbd> search</span>
+      <span className="sb-right">Paper trading · no real orders · <kbd>Ctrl K</kbd> search · <a href="https://www.tradingview.com/" target="_blank" rel="noopener noreferrer">Charts by TradingView</a></span>
     </footer>
   );
 }

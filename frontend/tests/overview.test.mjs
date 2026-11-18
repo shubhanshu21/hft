@@ -38,3 +38,32 @@ test("donut slices add up to the whole circle", () => {
   assert.ok(Math.abs(s.reduce((a, x) => a + x.share, 0) - 1) < 1e-9);
   assert.deepEqual(donutSlices([]), []);
 });
+
+import { sumByDate, nextRun } from "../src/lib/overview.js";
+
+test("portfolio line adds accounts by date; a later account counts its start money before its first day", () => {
+  const accounts = [{ start: 100 }, { start: 50 }];
+  const eq = [[{ date: "2026-10-24", current_capital: 100 }, { date: "2026-10-25", current_capital: 110 }],
+              [{ date: "2026-10-25", current_capital: 49 }]];
+  assert.deepEqual(sumByDate(accounts, eq, 170), [150, 159, 170]);
+  assert.deepEqual(sumByDate(accounts, [[], []]), []);
+});
+
+test("next run from the engine's ISO time, falling back to its text", () => {
+  const now = new Date("2026-11-18T12:00:00+05:30");
+  const r = nextRun({ next: "2026-11-19T09:08:00+05:30", text: "Waiting for the first session · Thu 19 Nov 09:08 IST" }, now);
+  assert.equal(r.mins, 21 * 60 + 8);
+  assert.match(r.label, /Thu/); assert.match(r.label, /09:08/);
+  assert.deepEqual(nextRun({ text: "Running · next at Thu 23:40 IST" }, now, () => 5), { mins: 5, label: "Thu 23:40" });
+  assert.deepEqual(nextRun(undefined, now), { mins: null, label: "-" });
+});
+
+import { towerLayout } from "../src/lib/overview.js";
+
+test("3D towers: centred row, tallest = biggest account, broken accounts left out", () => {
+  const t = towerLayout([{ id: "A", value: 200 }, { id: "B", value: 100 }, { id: "C", error: "x" }]);
+  assert.deepEqual(t.map((x) => x.id), ["A", "B"]);
+  assert.equal(t[0].x, -1.05); assert.equal(t[1].x, 1.05);
+  assert.equal(t[0].height, 4); assert.equal(t[1].height, 2.3);
+  assert.deepEqual(towerLayout([]), []);
+});

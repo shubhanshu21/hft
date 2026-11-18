@@ -6,7 +6,7 @@ import ResetAccount from "../components/paper/ResetAccount.jsx";
 import Pane from "../components/ui/Pane.jsx";
 import Pager from "../components/ui/Pager.jsx";
 import { usePaged } from "../hooks/usePaged.js";
-import { useTheme } from "../hooks/useTheme.js";
+import { useTheme, withAlpha } from "../hooks/useTheme.js";
 import { useCountUp } from "../hooks/useCountUp.js";
 import { inr, signed, tone, whyText } from "../lib/format.js";
 import { ACCOUNT_COLOR, ACCOUNT_SHORT } from "../lib/overview.js";
@@ -48,9 +48,10 @@ export default function PaperPage({ accountId }) {
   }, [account, reloadKey]);
 
   useEffect(() => {
-    if (!box.current || !d?.equity?.length) return undefined;
+    if (!box.current || (d?.equity?.length ?? 0) < 2) return undefined;
     const chart = createChart(box.current, baseOptions(colors, 260));
-    const s = chart.addAreaSeries({ lineColor: colors.accent, topColor: "rgba(37,99,235,.22)", bottomColor: "rgba(37,99,235,0)", lineWidth: 2,
+    const c = ACCOUNT_COLOR[d.account_id] ?? colors.accent;           // the account's own colour (blue is Breakout's)
+    const s = chart.addAreaSeries({ lineColor: c, topColor: withAlpha(c, 0.22), bottomColor: withAlpha(c, 0), lineWidth: 2,
       priceFormat: { type: "custom", formatter: (v) => `₹${Math.round(v).toLocaleString("en-IN")}` } });
     s.setData(d.equity.map((e) => ({ time: e.date, value: e.current_capital })));
     const exp = Object.entries(d.vs_backtest?.expected ?? {});
@@ -59,6 +60,7 @@ export default function PaperPage({ accountId }) {
         priceFormat: { type: "custom", formatter: (v) => `₹${Math.round(v).toLocaleString("en-IN")}` } });
       b.setData(exp.map(([time, value]) => ({ time, value })));
     }
+    chart.priceScale("right").applyOptions({ scaleMargins: { top: 0.12, bottom: 0.08 } });   // the top price label was cut off
     chart.timeScale().fitContent();
     return () => chart.remove();
   }, [d, colors]);
@@ -104,17 +106,23 @@ export default function PaperPage({ accountId }) {
 
       <div className="desk-grid">
         <Pane title="Account value by day" meta={loadedAt ? `updated ${loadedAt.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })} · every minute` : ""} className="g-chart">
-          {d.equity.length ? <div ref={box} className="tv-box" /> : <p className="none">The first point appears after today's close.</p>}
-          {d.vs_backtest?.expected && <p className="chart-key"><i className="k-real" />this account <i className="k-bt" />its backtest over the same days (checked nightly)</p>}
+          {d.equity.length > 1 ? <div ref={box} className="tv-box" /> : <p className="none">The line starts after the account's second day; today it is {inr(d.equity[0]?.current_capital ?? acc.initial_capital ?? 0)}.</p>}
+          {d.vs_backtest?.expected && <p className="chart-key"><i className="k-real" />this account (money booked from sold trades) <i className="k-bt" />its backtest over the same days, incl. open trades (checked nightly)</p>}
         </Pane>
         <Pane title="Engine" meta={ACCOUNT_SHORT[d.account_id]} className="g-alloc">
           <div className={`engine-line ${d.engine?.ok === false ? "bad" : "good"}`}><i className={`led ${d.engine?.ok === false ? "bad" : "good"}`} />{d.engine?.text}</div>
-          {d.plan?.length > 0 && <div className="today-plan"><span className="k">Today</span><ul>{d.plan.map((line) => <li key={line}>{line}</li>)}</ul></div>}
-          <VsBacktest v={d.vs_backtest} />
           <p className="about">{ABOUT[d.account_id]}</p>
           <p className="note">Practice money, live prices from {crypto ? "Delta Exchange India" : "Upstox"}. Open trades are valued every minute; the account changes only when a trade is sold.</p>
           {acc.business_value != null && <p className="note">If all sold now: {inr(acc.pretax_value)} before tax · {inr(acc.business_value)} as business income · {inr(acc.strict_value)} under the strict crypto rule.</p>}
           <ResetAccount accountId={d.account_id} startMoney={acc.initial_capital} onReset={(acct, typed) => resetPaper(acct, typed).then((r) => { setReloadKey((k) => k + 1); return r; })} />
+        </Pane>
+
+        <Pane title="Today" meta="what the engine decided this morning, and why" className="g-pos">
+          {d.plan?.length ? <div className="today-plan"><ul>{d.plan.map((line) => <li key={line}>{line}</li>)}</ul></div>
+            : <p className="none">{crypto ? "Checks all 9 coins after every 5-minute candle; a buy shows up under open positions." : "Nothing decided yet today -- the box fills after the engine's morning run."}</p>}
+        </Pane>
+        <Pane title="Paper vs backtest" meta="checked every night" className="g-sched">
+          {d.vs_backtest ? <VsBacktest v={d.vs_backtest} /> : <p className="none">The first check runs tonight at 00:30.</p>}
         </Pane>
 
         <Pane title={`Open positions (${d.positions.length})`} meta="profit now = the price move; if sold now also takes off fees and the buy-sell gap" className="g-full">
@@ -161,12 +169,12 @@ export default function PaperPage({ accountId }) {
 const day = (s) => new Date(s).toLocaleDateString("en-IN", { day: "numeric", month: "short" });
 function VsBacktest({ v }) {
   if (!v) return null;
-  if (v.note) return <p className="note">Paper vs backtest: {v.note}.</p>;
+  if (v.note) return <p className="none">Not compared yet: {v.note}.</p>;
   const diff = [...v.only_paper.map((x) => `${x.sym} ${day(x.day)}: paper bought, backtest did not`),
     ...v.only_backtest.map((x) => `${x.sym} ${day(x.day)}: backtest bought, paper did not`)];
   return (
     <div className={`vs-bt ${diff.length ? "warn" : "ok"}`}>
-      <span className="k">Paper vs backtest, since {day(v.start)}</span>
+      <span className="k">Since {day(v.start)}</span>
       <p>{v.matched} buy{v.matched === 1 ? "" : "s"} match{v.matched === 1 ? "es" : ""}{v.avg_fill_gap_pct != null ? `, fills ${v.avg_fill_gap_pct >= 0 ? "+" : ""}${v.avg_fill_gap_pct}% vs the backtest on average` : ""}.
         {diff.length ? ` ${diff.length} differ:` : " Nothing differs."}</p>
       {diff.length > 0 && <ul>{diff.map((t) => <li key={t}>{t}</li>)}</ul>}

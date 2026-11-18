@@ -18,7 +18,8 @@ if (typeof CanvasRenderingContext2D !== "undefined" && !CanvasRenderingContext2D
 export const baseOptions = (c, height) => ({
   height,
   autoSize: true,
-  layout: { background: { color: c.panel }, textColor: c.fg, fontFamily: CHART_FAMILY, fontSize: 12 },
+  // attributionLogo off: it sat on top of the latest value; the licence's attribution is the "Charts by TradingView" link in the status bar
+  layout: { background: { color: c.panel }, textColor: c.fg, fontFamily: CHART_FAMILY, fontSize: 12, attributionLogo: false },
   grid: { vertLines: { color: withAlpha(c.muted, 0.08) }, horzLines: { color: withAlpha(c.muted, 0.12) } },
   crosshair: { mode: CrosshairMode.Normal },
   rightPriceScale: { borderColor: c.line },

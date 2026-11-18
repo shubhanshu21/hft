@@ -4,7 +4,8 @@ import { listRuns } from "../../api/client.js";
 import { useOverview } from "../../hooks/useOverview.js";
 import { filterItems, paletteItems } from "../../lib/palette.js";
 
-/** Ctrl+K (or "/") opens a search over every page, paper account and saved backtest; arrows + Enter jump there, Esc closes. */
+/** Ctrl+K (or "/") opens a search over every page, paper account and saved backtest; arrows + Enter jump there, Esc closes.
+ *  Enter filters by what is in the box right now: on a busy device the list could still show the previous keystroke (2026-11-18). */
 export default function CommandPalette({ open, setOpen }) {
   const { data } = useOverview();
   const [runs, setRuns] = useState([]);
@@ -27,10 +28,10 @@ export default function CommandPalette({ open, setOpen }) {
     <div className="pal-back" onClick={() => setOpen(false)}>
       <div className="pal" role="dialog" aria-label="Search" onClick={(e) => e.stopPropagation()}>
         <div className="pal-in"><Icon name="search" size={18} />
-          <input ref={input} value={q} placeholder="Jump to a page, account or saved backtest…" aria-label="Search"
+          <input ref={input} autoFocus value={q} placeholder="Jump to a page, account or saved backtest…" aria-label="Search"
             onChange={(e) => { setQ(e.target.value); setSel(0); }}
             onKeyDown={(e) => { if (e.key === "ArrowDown") { e.preventDefault(); setSel((s) => Math.min(s + 1, items.length - 1)); }
-              if (e.key === "ArrowUp") { e.preventDefault(); setSel((s) => Math.max(s - 1, 0)); } if (e.key === "Enter") go(items[sel]); }} />
+              if (e.key === "ArrowUp") { e.preventDefault(); setSel((s) => Math.max(s - 1, 0)); } if (e.key === "Enter") go((e.target.value === q ? items : filterItems(paletteItems(data?.accounts ?? [], runs), e.target.value))[sel]); }} />
           <kbd>Esc</kbd></div>
         <ul className="pal-list">
           {items.length ? items.map((it, i) => (
