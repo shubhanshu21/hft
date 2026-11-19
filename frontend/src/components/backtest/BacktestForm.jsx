@@ -178,8 +178,8 @@ export default function BacktestForm({ strategies, onSubmit, busy }) {
             <div className="field"><label htmlFor="exposure">Size (x the account)</label>
               <input id="exposure" type="number" min={strategy.exposure_min} max={strategy.exposure_max} step="0.5" value={f.exposure} onChange={set("exposure")} />
               <span className="hint">How much stock each morning buys, as a multiple of your money (Upstox intraday allows up to 5x), split across that
-                morning's buys, never more than Upstox allows on that stock. The paper account uses {strategy.exposure}x. Fair test 2022-26 (liquid stocks at the time): 2x worst fall -17%, 3x -25%, 5x -43%.</span>
-              {+f.exposure >= 4 && <span className="warn" role="alert">At {f.exposure}x a bad results day hurts a lot: at 5x the worst single day was -36% and the worst fall -43%.</span>}</div>
+                morning's buys, never more than Upstox allows on that stock. The paper account uses {strategy.exposure}x. Fair test Sep 2022-Oct 2026 (stocks traded heavily for a year): 1x Rs1L -> Rs2.11L (worst fall -7%), 2x Rs4.31L (-15%), 3x Rs8.16L (-21%), 5x Rs23.8L (-34%).</span>
+              {+f.exposure >= 4 && <span className="warn" role="alert">At {f.exposure}x a bad results day hurts a lot: at 5x the worst single day was -28% and the worst fall -34%.</span>}</div>
           ) : monthly ? (
             <div className="field"><label htmlFor="exposure">Exposure (x the account)</label>
               <input id="exposure" type="number" min={strategy.exposure_min} max={strategy.exposure_max} step="0.25" value={f.exposure} onChange={set("exposure")} />
