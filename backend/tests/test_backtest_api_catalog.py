@@ -9,7 +9,7 @@ class CatalogTest(unittest.TestCase):
     def test_only_the_live_strategies_are_offered(self):
         self.assertEqual({(r["market"], r["name"]) for r in api.catalog()},
                          {("commodity", "trend_carry"), ("crypto", "dip_reversal"), ("equity", "results_gap"), ("equity", "earnings_drift"),
-                          ("equity", "breakout_pair")})
+                          ("equity", "breakout_pair"), ("equity", "momentum_12_1")})   # momentum: half of EQUITY_BREAKOUT since 2026-11-19
 
     def test_an_old_generic_strategy_is_refused(self):
         with self.assertRaisesRegex(ValueError, "Unknown market or strategy"):

@@ -14,6 +14,9 @@ A session, matching the backtest:
   * every minute until 15:30, one batch quote: a holding whose day low reached its stop is sold at the stop (as a resting stop order would
     be); an nr7 candidate whose day high reached its trigger is bought at max(open, trigger) (a resting buy-stop order);
   * after the close: a snapshot and a Telegram summary.
+Since 2026-11-19 (user: "inside Breakout, 50/50") HALF the account is equity/momentum_12_1: at the open of the first session of each month
+the holdings that left the top 20 by 12-month momentum are sold and the new top 20 bought, each 1/20 of that half (no stop, no time limit,
+no market filter; fresh data needed). The two breakout sleeves have 25% each. Every buy is also capped by the account's real free cash.
 Differences from the backtest: nr7 buys fill in the order their triggers are reached (the backtest takes them strongest first), and a
 fill price is the order level, not a 1-minute replay. If the archive is not current (the nightly job failed), no new buys are made that day.
 The account lock (engine/account_reset.py) is held only around each step that writes, never for the whole six-hour session, so the hourly
@@ -30,14 +33,19 @@ from datetime import date, datetime, timedelta, timezone
 
 import pandas as pd
 
-from core.atomic_io import write_json
+from core.atomic_io import read_json, write_json
 from services.utils import telegram as T
 from core.paths import DB_DIR
 from markets.equity.strategies.tf_daily.breakout_pair import strategy as S
+from markets.equity.strategies.tf_daily.momentum_12_1 import strategy as M
 
 IST = timezone(timedelta(hours=5, minutes=30))
 ACCOUNT = "EQUITY_BREAKOUT"
 STATE = DB_DIR / "equity_breakout_state.json"          # today's plan, for the account page's "Today" box (2026-11-18)
+MOM_STATE = DB_DIR / "equity_breakout_momentum.json"   # {"month": "YYYY-MM"} of the last momentum refresh
+BREAKOUT_SHARE = 0.5                                     # 2026-11-19: breakout sleeves 25% + 25%, momentum 50% (backtest Rs2.49L vs Rs2.17L)
+SHARE = {k: cfg["share"] * BREAKOUT_SHARE for k, cfg in S.SLEEVES.items()} | {"mom": 1 - BREAKOUT_SHARE}
+NAME = {k: cfg["name"] for k, cfg in S.SLEEVES.items()} | {"mom": M.NAME}
 POLL_S = 60
 OPEN_AT, CLOSE_AT = (9, 15, 30), (15, 30, 30)
 SLEEVE_OF = {cfg["name"]: k for k, cfg in S.SLEEVES.items()}
@@ -80,13 +88,16 @@ class Session:
 
     def sleeve_value(self, sleeve: str, prices: dict) -> tuple[float, float]:
         """(equity, cash) of one sleeve: its share of the start capital + its booked profit, minus what its open holdings cost."""
-        name = S.SLEEVES[sleeve]["name"]
         with self.db._get_conn() as con:
-            booked = con.execute("SELECT COALESCE(SUM(net_pnl), 0) FROM trades WHERE account_id = ? AND strategy = ?", (ACCOUNT, name)).fetchone()[0]
-        cash = float(self.acc["initial_capital"]) * S.SLEEVES[sleeve]["share"] + float(booked)
+            booked = con.execute("SELECT COALESCE(SUM(net_pnl), 0) FROM trades WHERE account_id = ? AND strategy = ?", (ACCOUNT, NAME[sleeve])).fetchone()[0]
+        cash = float(self.acc["initial_capital"]) * SHARE[sleeve] + float(booked)
         held = self.positions(sleeve)
         cash -= sum(p["qty"] * p["entry_price"] for p in held)
         return cash + sum(p["qty"] * (prices.get(p["symbol"]) or p["entry_price"]) for p in held), cash
+
+    def free_cash(self) -> float:
+        """The account's real cash: booked money minus what every open holding cost (a sleeve can never spend more than this)."""
+        return float(self.db.get_account(ACCOUNT)["current_capital"]) - sum(p["qty"] * p["entry_price"] for p in self.positions())
 
     def buy(self, sleeve: str, sym: str, key: str, entry: float, atr: float, prices: dict, why: str) -> bool:
         K = S.SLEEVES[sleeve]["K"]
@@ -94,7 +105,7 @@ class Session:
             return False
         stop = entry - S.STOP_ATR * atr
         equity, cash = self.sleeve_value(sleeve, prices)
-        q = S.size(equity, cash, K, entry, stop)
+        q = S.size(equity, min(cash, self.free_cash()), K, entry, stop)
         if q < 1:
             return False
         pid = f"POS_EQBO_{self.now:%Y%m%d%H%M%S}_{sym}"   # with the time: a stock stopped out and re-bought the same day gets a new row
@@ -109,7 +120,7 @@ class Session:
         self.lines.append(f"bought {sym}"); self.send(msg); self.log(msg)
         return True
 
-    def sell(self, p: dict, price: float, reason: str) -> None:
+    def sell(self, p: dict, price: float, reason: str, quiet: bool = False) -> str:
         c = S.costs(p["entry_price"], price, p["qty"])
         capital = float(self.db.get_account(ACCOUNT)["current_capital"]) + c["net"]
         self.db.close_position(p["position_id"], price, reason, c["gross"], c["net"], c["total"])
@@ -122,7 +133,44 @@ class Session:
                         [T.sold_block(p["symbol"], f"{int(p['qty'])} shares", p["entry_price"], price, c["net"], c["total"], T.why_text(reason),
                                       f"{days} day{'s' if days != 1 else ''}" if days > 0 else "")],
                         value=capital, start=float(self.acc["initial_capital"]))
-        self.lines.append(f"sold {p['symbol']} {T.signed_rupees(c['net'])}"); self.send(msg); self.log(msg)
+        self.lines.append(f"sold {p['symbol']} {T.signed_rupees(c['net'])}")
+        if quiet:                                                # a momentum refresh sends one message for all its sales
+            return T.sold_block(p["symbol"], f"{int(p['qty'])} shares", p["entry_price"], price, c["net"], c["total"], T.why_text(reason),
+                                f"{days} day{'s' if days != 1 else ''}" if days > 0 else "")
+        self.send(msg); self.log(msg)
+        return msg
+
+    def momentum_open(self, q: dict, plan: dict, keys_all: dict) -> None:
+        """First session of the month, at the open: sell momentum holdings that left the top N, buy the new ones (1/N of the momentum
+        half each, never more than its cash or the account's free cash), one SOLD and one BOUGHT message; then mark the month done."""
+        m = plan["mom"]
+        if not (m["due"] and m["buying"]):
+            return
+        sold = [self.sell(p, op, "momentum_out", quiet=True) for p in self.positions("mom")
+                if p["symbol"] not in m["targets"] and (op := (q.get(p["symbol"]) or {}).get("open"))]
+        prices = {s: v["ltp"] for s, v in q.items() if v.get("ltp")}
+        equity, cash = self.sleeve_value("mom", prices)
+        held = {p["symbol"] for p in self.positions()}
+        bought = []
+        for s in m["targets"]:
+            op = (q.get(s) or {}).get("open")
+            if s in held or not op or s not in keys_all:
+                continue
+            n = int(min(equity / M.N, cash, self.free_cash()) // op)
+            if n < 1:
+                continue
+            st = {"sleeve": "mom", "entry_day": str(self.now.date()), "stop": 0.0}
+            self.db.open_position(f"POS_EQBO_{self.now:%Y%m%d%H%M%S}_{s}", s, "long", n, op, 0.0, 0.0, 0.0, account_id=ACCOUNT,
+                                  instrument_key=keys_all[s], strategy=M.NAME, state=json.dumps(st))
+            cash -= n * op; held.add(s); self.lines.append(f"bought {s}")
+            bought.append(T.bought_block(s, f"{n} shares", op, n * op, "top 20 by 12-month momentum · kept while it stays in the top 20"))
+        acc = self.db.get_account(ACCOUNT)
+        for icon, title, blocks in (("✅", "SOLD · Breakout momentum", sold), ("🟢", "BOUGHT · Breakout momentum", bought)):
+            if blocks:
+                msg = T.message(icon, title, ["Monthly refresh of the momentum half:"] + blocks,
+                                value=float(acc["current_capital"]), start=float(acc["initial_capital"]))
+                self.send(msg); self.log(msg)
+        write_json(MOM_STATE, {"month": f"{self.now:%Y-%m}"})
 
     # ------------------------------------------------------------------ before the open
     def prepare(self, ind: dict) -> dict:
@@ -133,6 +181,8 @@ class Session:
         for p in self.positions():
             st, s = p["st"], p["symbol"]
             if s not in C.columns:
+                continue
+            if st.get("sleeve") == "mom":                       # momentum: no stop, no dead-money rule; sold only at a monthly refresh
                 continue
             ref = st.get("ref")                                  # a split while held: the archive rescales history -> rescale the holding
             if ref and pd.Timestamp(ref[0]) in C.index and C.at[pd.Timestamp(ref[0]), s] > 0:
@@ -160,7 +210,10 @@ class Session:
                 dead.append(p["symbol"])
         cand = S.candidates(ind, last)
         atr = {s: float(A.at[last, s]) for s in set(cand["d55"]) | {x for x, _ in cand["nr7"]}}
-        return {"last": last, "dead": dead, "cand": cand, "atr": atr}
+        due = M.rebalance_due((read_json(MOM_STATE) or {}).get("month"), self.now.date())
+        other = {p["symbol"] for p in self.positions() if p["st"].get("sleeve") != "mom"}
+        targets = M.targets(M.scores(ind).iloc[-1], M.N, exclude=other) if due else []
+        return {"last": last, "dead": dead, "cand": cand, "atr": atr, "mom": {"due": due, "targets": targets, "buying": False}}
 
 
 def expected_last_day(today: date) -> date:
@@ -186,13 +239,14 @@ def session(db, broker, send=None, log=print, sleep=time.sleep, clock=lambda: da
     fresh = plan["last"].date() >= expected_last_day(clock().date())
     cand = plan["cand"]
     buying = fresh and cand["healthy"]
+    plan["mom"]["buying"] = fresh                                  # momentum has no market filter, but needs current prices
     log(f"last day {plan['last'].date()} (fresh={fresh}), breadth {cand['breadth']:.1f}%, d55 {cand['d55'][:8]}, nr7 {[s for s, _ in cand['nr7']][:8]}, dead {plan['dead']}")
     if not fresh:
         ses.send(T.problem("Breakout", f"Price data ends {plan['last'].date()}, it should reach {expected_last_day(clock().date())}. "
                                          "No new buys today; stops are still watched.", "journalctl --user -u hft-daily-data-topup.service -n 40"))
     write_json(STATE, {"day": str(clock().date()), "breadth": round(cand["breadth"], 1), "healthy": bool(cand["healthy"]), "fresh": bool(fresh),
                        "last_day": str(plan["last"].date()), "d55": cand["d55"][:8], "nr7": [[s, round(t, 2)] for s, t in cand["nr7"][:8]],
-                       "dead": plan["dead"]})
+                       "dead": plan["dead"], "momentum": {"due": plan["mom"]["due"], "targets": plan["mom"]["targets"]}})
     pending_nr7 = dict(cand["nr7"]) if buying else {}
     d55 = list(cand["d55"]) if buying else []
     opened = False
@@ -201,7 +255,7 @@ def session(db, broker, send=None, log=print, sleep=time.sleep, clock=lambda: da
         if ses.now < at(ses.now, OPEN_AT):
             sleep(min(30, (at(ses.now, OPEN_AT) - ses.now).total_seconds())); continue
         held = ses.positions()
-        watch = {p["symbol"] for p in held} | set(pending_nr7) | (set(d55) if not opened else set())
+        watch = {p["symbol"] for p in held} | set(pending_nr7) | (set(d55) | set(plan["mom"]["targets"]) if not opened else set())
         keys = {s: keys_all[s] for s in watch if s in keys_all}
         try:
             q = quotes(broker, keys)
@@ -211,6 +265,8 @@ def session(db, broker, send=None, log=print, sleep=time.sleep, clock=lambda: da
         if not opened and any(not (q.get(s) or {}).get("open") for s in keys) and ses.now < at(ses.now, (9, 20, 0)):
             sleep(10); continue                                      # opening prices not published yet
         with lock():
+            if not opened:
+                ses.momentum_open(q, plan, keys_all)               # sales first: they free cash for the open's buys
             opened = _step(ses, q, prices, plan, d55, pending_nr7, keys_all, opened)
         sleep(POLL_S)
     # after the close

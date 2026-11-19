@@ -16,14 +16,14 @@ from markets.equity.strategies.tf_daily.breakout_pair import strategy as S
 
 IST = E.IST
 DAYS = pd.bdate_range(end="2026-11-16", periods=30)          # last completed day Mon 16 Nov -> the session is Tue 17 Nov
-SYMS = ["DFIVE", "NRSEVEN", "HELD"]
+SYMS = ["DFIVE", "NRSEVEN", "HELD", "MOMA", "MOMB", "MOMC"]
 
 
 def make_ind(breadth=80.0):
     f = lambda v: pd.DataFrame(v, index=DAYS, columns=SYMS, dtype=float)
     H = f(100.0); H.loc[DAYS[-1], "NRSEVEN"] = 105.0               # NRSEVEN's buy-stop trigger = its last high
     mask = lambda s: f(0.0).astype(bool).assign(**{s: [False] * (len(DAYS) - 1) + [True]})
-    return {"C": f(100.0), "H": H, "atr": f(2.0), "breadth": pd.Series(breadth, index=DAYS), "mom126": f(0.1),
+    return {"C": f(100.0), "H": H, "atr": f(2.0), "breadth": pd.Series(breadth, index=DAYS), "mom126": f(0.1), "VAL": f(1e9),
             "d55": mask("DFIVE"), "nr7": mask("NRSEVEN")}
 
 
@@ -71,8 +71,9 @@ class TestSession(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.db = TradingDB(Path(self.tmp.name) / "t.db")
-        patcher = mock.patch.object(E, "STATE", Path(self.tmp.name) / "bo_state.json")      # never the real var/db state file
-        patcher.start(); self.addCleanup(patcher.stop)
+        for name, f in (("STATE", "bo_state.json"), ("MOM_STATE", "bo_mom.json")):     # never the real var/db state files
+            patcher = mock.patch.object(E, name, Path(self.tmp.name) / f)
+            patcher.start(); self.addCleanup(patcher.stop)
         # another account's rows must come out byte-for-byte the same
         self.db.init_account("RESULTS_GAP", name="rg", capital=100_000, leverage=1.0, risk_pct=1.0)
         self.db.open_position("POS_RG_X", "OTHER", "long", 5, 50.0, 0.0, 0.0, 0.0, account_id="RESULTS_GAP", strategy="earnings_drift")
@@ -107,14 +108,15 @@ class TestSession(unittest.TestCase):
         before = self._other()
         sent, locks = self.run_day(make_ind())
         held = {p["symbol"]: p for p in self.db.get_open_positions(E.ACCOUNT)}
-        self.assertEqual(held["DFIVE"]["qty"], 166)                       # d55 at the 100 open, 1/3 of its Rs50k sleeve
+        self.assertEqual(held["DFIVE"]["qty"], 83)                        # d55 at the 100 open, 1/3 of its Rs25k sleeve (half the account
+                                                                          # is momentum since 2026-11-19, so each breakout sleeve has 25%)
         self.assertEqual(held["DFIVE"]["entry_price"], 100.0)
         self.assertEqual(held["NRSEVEN"]["entry_price"], 105.0)          # buy-stop fills at max(open, trigger)
         self.assertEqual(self.trades(), [("HELD", 93.5, "stop")])        # trailing stop raised to 100 - 3.25*2 = 93.5, sold there
         self.assertEqual(self._other(), before)                           # RESULTS_GAP untouched
         self.assertGreater(len(locks), 10)                                # locked per step, not once for the whole session
         self.assertIn("Breakout · end of day", sent[-1])
-        self.assertTrue(any(m.startswith("🟢 <b>BOUGHT · Breakout</b>") and "<b>DFIVE</b> · 166 shares at 100.00" in m for m in sent))
+        self.assertTrue(any(m.startswith("🟢 <b>BOUGHT · Breakout</b>") and "<b>DFIVE</b> · 83 shares at 100.00" in m for m in sent))
         self.assertTrue(any(m.startswith("❌ <b>SOLD · Breakout</b>") and "hit the stop-loss" in m for m in sent))
         st = json.loads(E.STATE.read_text())                              # the account page's "Today" box
         self.assertEqual((st["day"], st["healthy"], st["d55"], st["nr7"]), ("2026-11-17", True, ["DFIVE"], [["NRSEVEN", 105.0]]))
@@ -145,8 +147,83 @@ class TestSession(unittest.TestCase):
         self.assertEqual({p["symbol"] for p in self.db.get_open_positions(E.ACCOUNT)}, set())
 
 
-if __name__ == "__main__":
-    unittest.main()
+class TestMomentumSleeve(TestSession):
+    """2026-11-19 (user: "inside Breakout, 50/50"): half the account holds the top 20 by 12-month momentum, refreshed at the open of the
+    first session of each month. Scores are faked; M.N = 2 keeps the numbers small."""
+
+    def setUp(self):
+        super().setUp()
+        p = mock.patch.object(E.M, "N", 2); p.start(); self.addCleanup(p.stop)
+
+    def scores(self, **v):
+        row = pd.DataFrame(float("nan"), index=DAYS, columns=SYMS)
+        for k, x in v.items():
+            row.loc[DAYS[-1], k] = x
+        return mock.patch.object(E.M, "scores", return_value=row)
+
+    def mom(self):
+        return {p["symbol"]: p for p in self.db.get_open_positions(E.ACCOUNT) if json.loads(p["state"] or "{}").get("sleeve") == "mom"}
+
+    def add_mom(self, sym, entry=100.0, qty=10, day="2026-09-01"):
+        st = {"sleeve": "mom", "entry_day": day, "stop": 0.0}
+        self.db.open_position(f"POS_EQBO_MOM_{sym}", sym, "long", qty, entry, 0.0, 0.0, 0.0, account_id=E.ACCOUNT,
+                              instrument_key=f"NSE_EQ|{sym}", strategy=E.M.NAME, state=json.dumps(st))
+
+    def test_first_session_of_the_month_buys_the_top_n_at_the_open(self):
+        with self.scores(MOMA=0.9, MOMB=0.5, MOMC=0.1, HELD=0.95):        # HELD is a breakout holding: skipped, the next one taken
+            sent, _ = self.run_day(make_ind())
+        m = self.mom()
+        self.assertEqual(sorted(m), ["MOMA", "MOMB"])
+        self.assertEqual((m["MOMA"]["qty"], m["MOMA"]["entry_price"]), (250, 100.0))   # 1/2 of momentum's Rs50k half at the 100 open
+        self.assertEqual(m["MOMA"]["strategy"], "momentum_12_1")
+        bought = [x for x in sent if "BOUGHT · Breakout momentum" in x]
+        self.assertEqual(len(bought), 1)                                   # one message for the whole refresh
+        self.assertIn("<b>MOMA</b>", bought[0]); self.assertIn("<b>MOMB</b>", bought[0])
+        self.assertEqual(json.loads(E.MOM_STATE.read_text())["month"], "2026-11")
+        st = json.loads(E.STATE.read_text())["momentum"]
+        self.assertEqual((st["due"], st["targets"]), (True, ["MOMA", "MOMB"]))
+
+    def test_no_second_refresh_in_the_same_month(self):
+        E.MOM_STATE.write_text(json.dumps({"month": "2026-11"}))
+        with self.scores(MOMA=0.9, MOMB=0.5):
+            self.run_day(make_ind())
+        self.assertEqual(self.mom(), {})
+
+    def test_a_holding_that_left_the_top_n_is_sold_at_the_open(self):
+        E.MOM_STATE.write_text(json.dumps({"month": "2026-10"}))
+        self.add_mom("MOMC", entry=90.0)
+        with self.scores(MOMA=0.9, MOMB=0.5, MOMC=0.1):
+            sent, _ = self.run_day(make_ind())
+        self.assertEqual(sorted(self.mom()), ["MOMA", "MOMB"])
+        self.assertIn(("MOMC", 100.0, "momentum_out"), self.trades())
+        self.assertTrue(any("SOLD · Breakout momentum" in x and "left the top 20" in x for x in sent))
+
+    def test_momentum_holdings_have_no_stop_and_no_dead_money_rule(self):
+        E.MOM_STATE.write_text(json.dumps({"month": "2026-11"}))           # not a refresh day
+        self.add_mom("MOMC", entry=120.0, day=str(DAYS[0].date()))        # 30 days held, still below its buy price
+        self.run_day(make_ind())
+        self.assertIn("MOMC", self.mom())
+        self.assertEqual(self.mom()["MOMC"]["current_stop"], 0.0)
+        self.assertNotIn("MOMC", [t[0] for t in self.trades()])
+
+    def test_buys_never_spend_more_than_the_accounts_real_cash(self):
+        st = {"sleeve": "nr7", "stop": 1.0, "hi": 100.0, "entry_day": str(DAYS[-1].date()), "n": 0, "done_through": None}
+        self.db.open_position("POS_EQBO_BIG", "BIG", "long", 900, 100.0, 1.0, 0.0, 0.0, account_id=E.ACCOUNT,
+                              instrument_key="NSE_EQ|BIG", strategy="nr7_breakout", state=json.dumps(st))   # Rs90k already invested
+        with self.scores(MOMA=0.9, MOMB=0.5):
+            self.run_day(make_ind())
+        held = self.db.get_open_positions(E.ACCOUNT)
+        invested = sum(p["qty"] * p["entry_price"] for p in held)
+        self.assertLessEqual(invested, 100_000 + 1e-6)
+        self.assertLess(sum(p["qty"] for p in self.mom().values()), 100)
+
+    def test_stale_data_waits_for_the_next_session(self):
+        with mock.patch.object(E, "expected_last_day", return_value=date(2026, 11, 17)), self.scores(MOMA=0.9):
+            clock = Clock(datetime(2026, 11, 17, 9, 8, tzinfo=IST))
+            E.session(self.db, Broker(clock), send=lambda m: None, log=lambda *a: None, sleep=clock.sleep, clock=clock,
+                      ind=make_ind(), keys_all={s: f"NSE_EQ|{s}" for s in SYMS}, lock=contextlib.nullcontext)
+        self.assertEqual(self.mom(), {})
+        self.assertFalse(E.MOM_STATE.exists())                             # not marked done: tomorrow tries again
 
 
 class TestPlumbing(unittest.TestCase):
@@ -155,7 +232,7 @@ class TestPlumbing(unittest.TestCase):
     def test_registered_everywhere(self):
         from engine import account_reset, backtest_api as api
         self.assertIn(E.ACCOUNT, dict(api.PAPER_ACCOUNTS))
-        self.assertEqual(api.ACCOUNT_STRATEGIES[E.ACCOUNT], "breakout_pair")
+        self.assertEqual(api.ACCOUNT_STRATEGIES[E.ACCOUNT], "breakout_pair, momentum_12_1")
         self.assertIn(E.ACCOUNT, account_reset.ACCOUNTS)                 # backup restore takes this account's lock too
 
     def test_open_position_valued_with_delivery_fees(self):
@@ -169,6 +246,29 @@ class TestPlumbing(unittest.TestCase):
         q = {"symbol": "X", "qty": 10, "entry_price": 100.0, "current_stop": 95.0, "instrument_key": "NSE_EQ|X", "state": None}
         api._value_breakout(q, {})                                          # no live price: unpriced, never an invented one
         self.assertIsNone(q["profit_now"])
+
+    def test_momentum_holding_valued_and_explained(self):
+        from engine import backtest_api as api
+        p = {"symbol": "X", "qty": 10, "entry_price": 100.0, "current_stop": 0.0, "instrument_key": "NSE_EQ|X",
+             "state": json.dumps({"sleeve": "mom", "entry_day": "2026-11-20"})}
+        api._value_breakout(p, {"NSE_EQ|X": {"ltp": 110.0}})
+        self.assertIn("12-month momentum", p["size_text"]); self.assertNotIn("trailing stop", p["size_text"])
+        self.assertEqual(p["risk_to_stop"], 1000.0)                         # no stop: the whole cost is at risk
+
+    def test_today_box_explains_the_momentum_half(self):
+        from engine import backtest_api as api
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "equity_breakout_state.json").write_text(json.dumps({"day": "2026-12-01", "fresh": True, "healthy": True, "breadth": 60,
+                                                                            "d55": [], "nr7": [], "momentum": {"due": True, "targets": ["A", "B"]}}))
+            lines = api.today_plan("EQUITY_BREAKOUT", now=datetime(2026, 12, 1, 10, 0, tzinfo=IST), state_dir=Path(d))
+        self.assertTrue(any("Momentum" in x and "A, B" in x for x in lines))
+
+    def test_nightly_check_backtests_both_halves(self):
+        from engine import backtest_api as api, paper_vs_backtest as P
+        b = P.bodies("EQUITY_BREAKOUT", 100_000)
+        self.assertEqual([(x["strategy"], x["capital"]) for x in b], [("breakout_pair", 50_000.0), ("momentum_12_1", 50_000.0)])
+        for body in b:
+            api.validate(body | {"start": "2026-11-01", "end": "2026-11-18"})
 
     def test_nightly_download_keeps_breakout_holdings_fresh(self):
         from markets.equity import all_daily

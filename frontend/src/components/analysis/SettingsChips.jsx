@@ -35,6 +35,13 @@ export default function SettingsChips({ params }) {
     ["Stocks", "15 best 6-month return / volatility of the day's 200 most-traded"],
     ["Rebalance", "quarterly, keep while in the top 30"],
     ["Slippage", `${params.slippage_bp} bp`],
+  ] : params.strategy === "momentum_12_1" ? [                        // picks its own stocks; monthly refresh, no stop
+    ["Start money", `₹${Number(params.capital).toLocaleString("en-IN")}`],
+    ["Stocks", "the 300 most-traded NSE"],
+    ["Holdings", "top 20 by 12-month return (skip last month)"],
+    ["Rebalance", "first trading day of each month"],
+    ["Slippage", `${params.slippage_bp} bp`],
+    ["Exits", "only when it leaves the top 20"],
   ] : params.strategy === "breakout_pair" ? [                        // picks its own stocks; fixed holdings and exits
     ["Start money", `₹${Number(params.capital).toLocaleString("en-IN")}`],
     ["Risk per trade", `${params.risk_pct}%`],

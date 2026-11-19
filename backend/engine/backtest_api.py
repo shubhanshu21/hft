@@ -90,7 +90,12 @@ def catalog() -> list[dict]:
                                 "(up to 3), from the day's 200 most-traded NSE stocks, only in a healthy market; trailing stop.",
                      "intraday": False, "default_risk_pct": bp.RISK_PCT, "default_capital": 100_000,
                      "data": {"text": "daily candles of every NSE stock (about 4,250), refreshed nightly", **ed.data_range()}}
-    return [mcx, dip_reversal, results_gap, earnings_drift, breakout_pair]
+    momentum_12_1 = {"market": "equity", "name": "momentum_12_1", "timeframe": "1 days", "supported": True, "symbols": [], "auto_universe": True,
+                     "summary": "equity / momentum_12_1 -- swing: each month the 20 stocks with the best 12-month return (skipping the latest month) "
+                                "among the 300 most-traded NSE stocks; kept while in the top 20. Half the EQUITY_BREAKOUT account since 2026-11-19.",
+                     "intraday": False, "default_risk_pct": 2, "default_capital": 100_000,
+                     "data": {"text": "daily candles of every NSE stock (about 4,250), refreshed nightly; needs a year of history, so from 2023", **ed.data_range()}}
+    return [mcx, dip_reversal, results_gap, earnings_drift, breakout_pair, momentum_12_1]
 
 
 def save(run: dict) -> None:
@@ -253,7 +258,7 @@ def _live_prices(keys: list[str]) -> dict:
 PAPER_ACCOUNTS = [("MCX_TREND_CARRY", "MCX trend + carry"), ("CRYPTO_DIP_REVERSAL", "Crypto dip-reversal"), ("RESULTS_GAP", "Results gap + earnings drift"),
                   ("EQUITY_BREAKOUT", "Equity breakout pair")]
 ACCOUNT_STRATEGIES = {"MCX_TREND_CARRY": "trend_carry", "CRYPTO_DIP_REVERSAL": "dip_reversal", "RESULTS_GAP": "results_gap, earnings_drift",
-                      "EQUITY_BREAKOUT": "breakout_pair"}
+                      "EQUITY_BREAKOUT": "breakout_pair, momentum_12_1"}
 LIVE_STRATEGIES = {n.strip() for v in ACCOUNT_STRATEGIES.values() for n in v.split(",")}      # RESULTS_GAP runs two (2026-10-29)
 
 
@@ -337,8 +342,10 @@ def _value_breakout(p: dict, live: dict) -> None:
         st = {}
     q = live.get(p.pop("instrument_key", None)) or {}
     price = q.get("ltp")
-    sleeve = {"nr7": "quiet-day breakout", "d55": "55-day high"}.get(st.get("sleeve"), "breakout")
-    p.update(market="equity", lot_size=1, units=p["qty"], size_text=f"{int(p['qty'])} shares · {sleeve}, bought {st.get('entry_day', '?')}, trailing stop",
+    mom = st.get("sleeve") == "mom"
+    sleeve = {"nr7": "quiet-day breakout", "d55": "55-day high", "mom": "12-month momentum"}.get(st.get("sleeve"), "breakout")
+    tail = "kept while in the top 20, checked monthly" if mom else "trailing stop"
+    p.update(market="equity", lot_size=1, units=p["qty"], size_text=f"{int(p['qty'])} shares · {sleeve}, bought {st.get('entry_day', '?')}, {tail}",
              price_now=price, prev_close=q.get("prev_close"), price_source="live" if price else None, price_time=q.get("trade_time"),
              bid=q.get("bid"), ask=q.get("ask"), checked_at=datetime.now(IST).isoformat(timespec="seconds") if q else None,
              margin_used=round(p["entry_price"] * p["qty"], 2), risk_to_stop=round(max(0.0, p["entry_price"] - (p.get("current_stop") or 0)) * p["qty"], 2))
@@ -380,6 +387,12 @@ def today_plan(account: str, now: datetime | None = None, state_dir=None) -> lis
             out.append(f"Buying today ({_health(st.get('breadth') or 0)}): " + (", ".join(would) if would else "no stock gave a signal") + ".")
         if st.get("dead"):
             out.append("Selling at the open (still below the buy price after 20 trading days): " + ", ".join(st["dead"]) + ".")
+        m = st.get("momentum") or {}
+        if m.get("due") and st.get("fresh", True):
+            out.append("Momentum (half the money): monthly refresh at the open -- the top 20 by 12-month return: "
+                       + (", ".join(m.get("targets") or []) or "none") + ". Holdings that dropped out are sold.")
+        elif m:
+            out.append("Momentum (half the money): holding its top 20; the next refresh is the first session of next month.")
     elif account == "RESULTS_GAP":
         rg = _read_state("results_gap_state.json", state_dir)
         chk = rg.get("last_check") or {}
@@ -574,6 +587,12 @@ def run_strategy(market: str, strategy: str, p: dict, progress=lambda i, n: None
         from markets.equity.strategies.tf_daily.earnings_drift import strategy as ed
         try:
             return ed.web_backtest(p["capital"], p["start"], p["end"], slippage_bp=p["slippage_bp"], progress=progress)
+        except ValueError as e:
+            raise BacktestError(str(e))
+    elif strategy == "momentum_12_1":                  # equity swing, half of EQUITY_BREAKOUT since 2026-11-19
+        from markets.equity.strategies.tf_daily.momentum_12_1 import strategy as mo
+        try:
+            return mo.web_backtest(p["capital"], p["start"], p["end"], slippage_bp=p["slippage_bp"])
         except ValueError as e:
             raise BacktestError(str(e))
     elif strategy == "breakout_pair":                  # equity swing, own account EQUITY_BREAKOUT (re-added 2026-11-17)

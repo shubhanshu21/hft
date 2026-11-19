@@ -49,8 +49,9 @@ class TestMatch(Base):
         self.account("EQUITY_BREAKOUT")
         self.buy("EQUITY_BREAKOUT", "A", "2026-11-12", 101.0)
         self.buy("EQUITY_BREAKOUT", "X", "2026-11-13", 50.0)
-        bt = result(["2026-11-12", "2026-11-13"], [100_000, 102_000], {"2026-11-12": [("A", 100.0)], "2026-11-13": [("B", 20.0)]})
-        r = self.check("EQUITY_BREAKOUT", lambda body: bt)
+        bt = result(["2026-11-12", "2026-11-13"], [50_000, 52_000], {"2026-11-12": [("A", 100.0)], "2026-11-13": [("B", 20.0)]})
+        none = result(["2026-11-12", "2026-11-13"], [50_000, 50_000], {})    # the momentum half (since 2026-11-19) bought nothing here
+        r = self.check("EQUITY_BREAKOUT", lambda body: bt if body["strategy"] == "breakout_pair" else none)
         self.assertEqual([(m["sym"], m["gap_pct"]) for m in r["matched"]], [("A", 1.0)])
         self.assertEqual([x["sym"] for x in r["only_paper"]], ["X"])
         self.assertEqual([x["sym"] for x in r["only_backtest"]], ["B"])

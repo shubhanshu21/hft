@@ -44,8 +44,10 @@ def bodies(account: str, capital: float) -> list[dict]:
         from markets.equity.strategies.tf_intraday.results_gap import strategy as rg
         return [{"market": "equity", "strategy": "results_gap", "capital": capital, "exposure": rg.LEVERAGE},
                 {"market": "equity", "strategy": "earnings_drift", "capital": ed.SLEEVE_CAPITAL, "slippage_bp": 5}]
-    if account == "EQUITY_BREAKOUT":
-        return [{"market": "equity", "strategy": "breakout_pair", "capital": capital, "risk_pct": 2, "slippage_bp": 5}]
+    if account == "EQUITY_BREAKOUT":                                     # since 2026-11-19: half breakout_pair, half momentum_12_1
+        from engine.equity_breakout import BREAKOUT_SHARE
+        return [{"market": "equity", "strategy": "breakout_pair", "capital": capital * BREAKOUT_SHARE, "risk_pct": 2, "slippage_bp": 5},
+                {"market": "equity", "strategy": "momentum_12_1", "capital": capital * (1 - BREAKOUT_SHARE), "slippage_bp": 5}]
     return []
 
 

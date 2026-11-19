@@ -129,6 +129,7 @@ WHY = {   # stored exit reasons -> plain words
     "held_40_days": "held 40 trading days, as planned", "dead_money": "still below the buy price after 20 trading days",
     "rebalance": "no longer in the top 3", "rebalance_next_contract": "moved to the next month's contract",
     "roll_before_expiry": "contract about to expire, moved to the next month", "trimmed": "position made smaller at the re-check",
+    "momentum_out": "left the top 20 by 12-month momentum (monthly check)",
 }
 
 
