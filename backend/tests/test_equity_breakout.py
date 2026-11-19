@@ -178,3 +178,19 @@ class TestPlumbing(unittest.TestCase):
         with mock.patch("engine.database.TradingDB", return_value=db), mock.patch.object(all_daily, "run", return_value=0) as run:
             all_daily.main([])
         self.assertEqual(run.call_args.kwargs["extra"], ["ED1", "BO1"])
+
+
+class TestWebBacktestBenchmark(unittest.TestCase):
+    """2026-11-19: the benchmark read NIFTYBEES_daily.csv, which stopped updating on 13 Oct -- a window after that was all NaN and the
+    website/nightly backtest crashed ("cannot convert float NaN to integer"). It now uses the nightly NIFTY 50 series, carried forward."""
+
+    def test_benchmark_carries_the_last_nifty_close_forward(self):
+        import pandas as pd
+        from unittest import mock
+        from markets.equity.strategies.tf_daily.breakout_pair import strategy as BP
+        from markets.equity.strategies.tf_daily.earnings_drift import strategy as ED
+        fake = {"replay": {"days": ["2026-11-17", "2026-11-18"], "equity": [100_000, 100_000]}, "trades": pd.DataFrame(), "open": {}}
+        nifty = pd.Series([200.0, 210.0], index=pd.to_datetime(["2026-11-13", "2026-11-14"]))
+        with mock.patch.object(BP, "backtest", return_value=fake), mock.patch.object(ED, "nifty_daily", return_value=nifty):
+            rep = BP.web_backtest(100_000, "2026-11-17", "2026-11-18")
+        self.assertEqual(rep["benchmark"], [100_000, 100_000])

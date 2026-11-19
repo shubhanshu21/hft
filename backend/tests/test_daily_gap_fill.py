@@ -75,3 +75,18 @@ class TestTrim(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestRunFillsEveryStock(unittest.TestCase):
+    """2026-11-19: run() filled the bhavcopy day for the 400-stock liquid pool only, while trim_partial_days compares a day with ALL
+    ~2,500 stocks of the day before -- 17/18 Nov (1,036 / 439 stocks) were dropped and the swing engines again saw data ending 16 Nov."""
+
+    def test_bhav_fill_covers_every_instrument(self):
+        from unittest.mock import patch
+        seen = {}
+        with patch.object(A, "instruments", return_value={"AAA": "k1", "BBB": "k2", "CCC": "k3"}), \
+             patch.object(A, "liquid_pool", return_value=["AAA"]), patch.object(A, "topup_one", return_value=0), \
+             patch("engine.research_data.broker", return_value=None), \
+             patch.object(A, "fill_from_bhav", side_effect=lambda days, syms, log=None: seen.setdefault("syms", sorted(syms)) and 0):
+            A.run(max_minutes=0, log=lambda *a: None)
+        self.assertEqual(seen["syms"], ["AAA", "BBB", "CCC"])

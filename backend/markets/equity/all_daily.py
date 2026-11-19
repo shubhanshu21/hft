@@ -134,14 +134,14 @@ def run(max_minutes: float = 40.0, extra: list[str] | None = None, log=print) ->
             failed += 1
             log(f"{s}: {exc!s:.120}")
     log(f"all_daily: {done} stocks refreshed ({len(pool)} in the liquid pool), {added} new rows, {failed} failed, {time.monotonic() - t0:.0f}s")
-    try:                                              # the last 3 trading days, from NSE, wherever Upstox has not caught up yet
+    try:                                              # the last 3 trading days, from NSE, wherever Upstox has not caught up yet -- EVERY stock: trim_partial_days counts them all
         from engine.nightly import last_trading_day
         from services.utils.market_holidays import get_trading_holidays
         from zoneinfo import ZoneInfo
         hol, d, days = get_trading_holidays(), datetime.now(ZoneInfo("Asia/Kolkata")).date(), []
         for _ in range(3):
             d = last_trading_day(d, hol); days.append(d)
-        log(f"all_daily: {fill_from_bhav(days, pool, log=log)} missing bars filled from NSE bhavcopies ({', '.join(map(str, sorted(days)))})")
+        log(f"all_daily: {fill_from_bhav(days, list(keys), log=log)} missing bars filled from NSE bhavcopies ({', '.join(map(str, sorted(days)))})")
     except Exception as exc:
         log(f"all_daily: bhavcopy fill failed: {exc!s:.120}")
     return 1 if failed > max(10, done // 10) else 0

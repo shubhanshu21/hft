@@ -227,13 +227,13 @@ def web_backtest(capital: float, start: str, end: str, risk_pct: float = RISK_PC
         raise ValueError("No trading days in the chosen dates (daily data starts January 2022; signals need ~200 days of history, so from late 2022)")
     t = r["trades"]
     closed = [{"net": x.net, "fees": x.fees, "slip": x.slip, "gross": x.gross, "days": (x.exit_day - x.entry_day).days} for x in t.itertuples()] if len(t) else []
-    nb = pd.read_csv(ARCHIVE_ROOT / "equity" / "NIFTYBEES_daily.csv")
-    nb.index = pd.to_datetime(nb["timestamp"].str[:10])
-    n = nb["close"].reindex(pd.to_datetime(rep["days"])).ffill().bfill()
+    from markets.equity.strategies.tf_daily.earnings_drift import strategy as ED   # NIFTYBEES_daily.csv stopped updating 2026-10-13
+    nd = ED.nifty_daily()
+    n = nd.reindex(nd.index.union(pd.to_datetime(rep["days"]))).ffill().reindex(pd.to_datetime(rep["days"])).bfill()
     rep["benchmark"] = [round(capital * v / n.iloc[0]) for v in n]
     rep["metrics"] = metrics(rep["equity"], capital, closed, len(rep["days"]), len(r["open"])) | {
         "note": "Picks from the 200 most-traded NSE stocks of each day (no fixed list). Half the money: quiet-day (NR7) breakouts, up to 5 stocks; "
                 "half: 55-day-high breakouts, up to 3 stocks. Buys only while >= 50% of those 200 stocks are above their 50-day average. "
-                "Benchmark = NIFTY 50 (NIFTYBEES)."}
+                "Benchmark = NIFTY 50."}
     rep["skipped_symbols"] = []
     return rep

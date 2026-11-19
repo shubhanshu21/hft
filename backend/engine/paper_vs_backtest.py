@@ -103,7 +103,11 @@ def check_account(con, account: str, today: date, run=None) -> dict:
         except BacktestError as e:
             if "No trading days" in str(e):                             # a brand-new account: nothing to compare yet
                 return {"account": account, "start": start, "note": "too few trading days yet to compare"}
-            raise
+            if "No trade in the chosen dates" not in str(e):
+                raise
+            # 2026-11-19: MCX at 1x buys nothing since 24 Oct (Rs2.5L is below most lots) -- the backtest's answer is "no trades,
+            # money unchanged", not an error; paper's own buys then show as differences
+            res = {"days": [start, str(today)], "equity": [float(body["capital"])] * 2, "events": [[], []]}
         buys += backtest_buys(res)
         curves.append((float(body["capital"]), daily_equity(res)))
     expected: dict[str, float] = {}

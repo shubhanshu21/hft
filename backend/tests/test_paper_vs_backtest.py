@@ -86,6 +86,20 @@ class TestMatch(Base):
             for body in P.bodies(aid, 100_000):
                 api.validate(body | {"start": "2026-11-01", "end": "2026-11-18"})
 
+    def test_backtest_with_no_trade_is_flat_money_not_an_error(self):
+        """2026-11-19: MCX at 1x made no trade since 24 Oct; the nightly check crashed on it instead of showing paper's extra lot."""
+        self.account("MCX_TREND_CARRY", 250_000)
+        self.buy("MCX_TREND_CARRY", "CRUDEOILM26DECFUT", "2026-11-16", 8208.0, {"family": "CRUDEOILM"})
+        def none(body):
+            raise BacktestError("No trade in the chosen dates (trend_carry needs about a year of history)")
+        r = self.check("MCX_TREND_CARRY", none)
+        self.assertEqual(r["expected"], {"2026-11-10": 250_000, "2026-11-18": 250_000})
+        self.assertEqual([x["sym"] for x in r["only_paper"]], ["CRUDEOILM"])
+        def other(body):
+            raise BacktestError("something else broke")
+        with self.assertRaises(BacktestError):
+            self.check("MCX_TREND_CARRY", other)
+
     def test_mcx_size_reaches_the_backtest(self):
         from engine import backtest_api as api
         with mock.patch.dict("os.environ", {"MCX_TREND_CARRY_EXPOSURE": "2.0"}):
