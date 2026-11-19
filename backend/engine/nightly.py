@@ -33,7 +33,8 @@ STEPS = [                            # (name, argv, exit codes that count as suc
     ("commodity daily series", [PY, "-m", "markets.commodity.daily_series"], {0}),     # daily gold / crude series for research (runs after "mcx data")
     ("crypto data", [PY, "-m", "markets.crypto.data"], {0}),                    # 5-min candles + funding: crypto dip_reversal's size scale and
                                                                                 # backtests (lost with the calm_coins timer 2026-10-20; re-added 2026-10-24)
-    ("paper vs backtest", [PY, "-m", "engine.paper_vs_backtest", "--telegram"], {0}),   # after every data step: each account's backtest over its own days
+    ("paper vs backtest", [PY, "-m", "engine.paper_vs_backtest", "--telegram"], {0}),
+    ("results gap review", [PY, "-m", "engine.results_gap", "--review"], {0}),     # 2026-11-19: tells Telegram if the 3x day trades lose on average   # after every data step: each account's backtest over its own days
     ("db backup", [PY, "-m", "engine.backup_db"], {0}),
     ("db backup verify", [PY, "-m", "engine.backup_db", "--verify"], {0}),      # open the newest backup: a backup nobody has opened is a hope
     ("trade audit", [PY, "-m", "engine.trade_audit"], {0, 1}),          # 1 = flagged trades: alerted by the audit itself

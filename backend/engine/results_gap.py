@@ -340,14 +340,43 @@ def run(db, broker, now: datetime, holidays: set[date], lookup, send=print) -> l
     return lines
 
 
+REVIEW_SINCE = "2026-11-20"        # first trading day at 3x again (user's choice 2026-11-19)
+REVIEW_MIN = 5
+REVIEW_STATE = DB_DIR / "results_gap_review.json"
+
+
+def review_live(db, send=None, state_path=None) -> str | None:
+    """Nightly (2026-11-19): when REVIEW_MIN+ live day trades since the switch to 3x average below zero, tell Telegram once per trade
+    count, suggesting 2x or 1x. Nothing is changed automatically and no stop or cap is added (the user's rule)."""
+    from services.utils import telegram as T
+    state_path = state_path or REVIEW_STATE
+    with db._get_conn() as con:
+        nets = [r[0] for r in con.execute("SELECT net_pnl FROM trades WHERE account_id = ? AND strategy = ? AND entry_dt >= ?",
+                                          (ACCOUNT, "results_gap", REVIEW_SINCE))]
+    st = read_json(state_path) or {}
+    if len(nets) < REVIEW_MIN or sum(nets) >= 0 or st.get("alerted_count") == len(nets):
+        return None
+    avg = sum(nets) / len(nets)
+    msg = T.message("⚠️", f"CHECK · Results gap at {S.LEVERAGE:g}x", [
+        f"The last {len(nets)} day trades since {REVIEW_SINCE} average {T.signed_rupees(avg)} a trade ({T.signed_rupees(sum(nets))} in total).",
+        "The backtest expects them to make money. Worth going back to 2x or 1x until they do: RESULTS_GAP_LEVERAGE in backend/.env."])
+    (send or T.send)(msg)
+    write_json(state_path, {"alerted_count": len(nets), "avg": round(avg, 2)})
+    return msg
+
+
 def main(argv=None) -> int:
     from engine.account_reset import account_lock
     from engine.database import TradingDB
     ap = argparse.ArgumentParser()
     ap.add_argument("--status", action="store_true")
     ap.add_argument("--no-telegram", action="store_true")
+    ap.add_argument("--review", action="store_true", help="nightly: Telegram if the live day trades since the 3x switch lose on average")
     a = ap.parse_args(argv)
     db = TradingDB()
+    if a.review:
+        print(review_live(db, send=print if a.no_telegram else None) or "results gap review: nothing to report")
+        return 0
     if a.status:
         init_account(db)
         print(db.get_account(ACCOUNT), *db.get_open_positions(ACCOUNT), _state(), sep="\n")

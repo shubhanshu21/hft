@@ -141,13 +141,14 @@ class Session:
         return msg
 
     def momentum_open(self, q: dict, plan: dict, keys_all: dict) -> None:
-        """First session of the month, at the open: sell momentum holdings that left the top N, buy the new ones (1/N of the momentum
-        half each, never more than its cash or the account's free cash), one SOLD and one BOUGHT message; then mark the month done."""
+        """At the open. First session of the month: sell momentum holdings that left the top N, buy the new ones (1/N of the momentum
+        half each, never more than its cash or the account's free cash), one SOLD and one BOUGHT message; save the month and its list.
+        Later sessions (2026-11-19): buy any of that month's list still missing when cash has freed up -- buys only, no re-ranking."""
         m = plan["mom"]
-        if not (m["due"] and m["buying"]):
+        if not (m["buying"] and m["targets"]):
             return
         sold = [self.sell(p, op, "momentum_out", quiet=True) for p in self.positions("mom")
-                if p["symbol"] not in m["targets"] and (op := (q.get(p["symbol"]) or {}).get("open"))]
+                if m["due"] and p["symbol"] not in m["targets"] and (op := (q.get(p["symbol"]) or {}).get("open"))]
         prices = {s: v["ltp"] for s, v in q.items() if v.get("ltp")}
         equity, cash = self.sleeve_value("mom", prices)
         held = {p["symbol"] for p in self.positions()}
@@ -167,10 +168,11 @@ class Session:
         acc = self.db.get_account(ACCOUNT)
         for icon, title, blocks in (("✅", "SOLD · Breakout momentum", sold), ("🟢", "BOUGHT · Breakout momentum", bought)):
             if blocks:
-                msg = T.message(icon, title, ["Monthly refresh of the momentum half:"] + blocks,
+                msg = T.message(icon, title, ["Monthly refresh of the momentum half:" if m["due"] else "Filling empty momentum slots from this month's list:"] + blocks,
                                 value=float(acc["current_capital"]), start=float(acc["initial_capital"]))
                 self.send(msg); self.log(msg)
-        write_json(MOM_STATE, {"month": f"{self.now:%Y-%m}"})
+        if m["due"]:
+            write_json(MOM_STATE, {"month": f"{self.now:%Y-%m}", "targets": m["targets"]})
 
     # ------------------------------------------------------------------ before the open
     def prepare(self, ind: dict) -> dict:
@@ -210,10 +212,13 @@ class Session:
                 dead.append(p["symbol"])
         cand = S.candidates(ind, last)
         atr = {s: float(A.at[last, s]) for s in set(cand["d55"]) | {x for x, _ in cand["nr7"]}}
-        due = M.rebalance_due((read_json(MOM_STATE) or {}).get("month"), self.now.date())
+        ms = read_json(MOM_STATE) or {}
+        due = M.rebalance_due(ms.get("month"), self.now.date())
         other = {p["symbol"] for p in self.positions() if p["st"].get("sleeve") != "mom"}
-        targets = M.targets(M.scores(ind).iloc[-1], M.N, exclude=other) if due else []
-        return {"last": last, "dead": dead, "cand": cand, "atr": atr, "mom": {"due": due, "targets": targets, "buying": False}}
+        held = {p["symbol"] for p in self.positions("mom")}
+        targets = M.targets(M.scores(ind).iloc[-1], M.N, exclude=other) if due else [s for s in ms.get("targets", []) if s not in other]
+        topup = [] if due else [s for s in targets if s not in held]
+        return {"last": last, "dead": dead, "cand": cand, "atr": atr, "mom": {"due": due, "targets": targets, "topup": topup, "buying": False}}
 
 
 RELOGIN_EVERY_S = 600
@@ -269,7 +274,7 @@ def session(db, broker, send=None, log=print, sleep=time.sleep, clock=lambda: da
                                          "No new buys today; stops are still watched.", "journalctl --user -u hft-daily-data-topup.service -n 40"))
     write_json(STATE, {"day": str(clock().date()), "breadth": round(cand["breadth"], 1), "healthy": bool(cand["healthy"]), "fresh": bool(fresh),
                        "last_day": str(plan["last"].date()), "d55": cand["d55"][:8], "nr7": [[s, round(t, 2)] for s, t in cand["nr7"][:8]],
-                       "dead": plan["dead"], "momentum": {"due": plan["mom"]["due"], "targets": plan["mom"]["targets"]}})
+                       "dead": plan["dead"], "momentum": {"due": plan["mom"]["due"], "targets": plan["mom"]["targets"], "topup": plan["mom"]["topup"]}})
     pending_nr7 = dict(cand["nr7"]) if buying else {}
     d55 = list(cand["d55"]) if buying else []
     opened = False

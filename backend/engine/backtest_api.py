@@ -346,6 +346,8 @@ def today_plan(account: str, now: datetime | None = None, state_dir=None) -> lis
         if m.get("due") and st.get("fresh", True):
             out.append("Momentum (half the money): monthly refresh at the open -- the top 20 by 12-month return: "
                        + (", ".join(m.get("targets") or []) or "none") + ". Holdings that dropped out are sold.")
+        elif m.get("topup"):
+            out.append("Momentum (half the money): buying the rest of this month's top 20 at the open as cash frees up: " + ", ".join(m["topup"]) + ".")
         elif m:
             out.append("Momentum (half the money): holding its top 20; the next refresh is the first session of next month.")
     elif account == "RESULTS_GAP":

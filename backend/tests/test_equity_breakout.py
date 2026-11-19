@@ -217,6 +217,25 @@ class TestMomentumSleeve(TestSession):
         self.assertLessEqual(invested, 100_000 + 1e-6)
         self.assertLess(sum(p["qty"] for p in self.mom().values()), 100)
 
+    def test_later_sessions_fill_empty_slots_from_this_months_list(self):
+        """2026-11-19: the first refresh had cash for only ~half of the top 20; later sessions buy the rest of THAT month's list as cash
+        frees (buys only -- nothing is sold, the list is not re-ranked, the month stays done)."""
+        E.MOM_STATE.write_text(json.dumps({"month": "2026-11", "targets": ["MOMA", "MOMB"]}))
+        self.add_mom("MOMA", entry=100.0, qty=10)
+        with self.scores(MOMC=0.99):                                        # today's ranking is ignored until next month
+            sent, _ = self.run_day(make_ind())
+        m = self.mom()
+        self.assertEqual(sorted(m), ["MOMA", "MOMB"])
+        self.assertEqual(m["MOMA"]["qty"], 10)                              # the existing holding is not touched
+        self.assertTrue(any("BOUGHT · Breakout momentum" in x and "<b>MOMB</b>" in x for x in sent))
+        self.assertEqual(json.loads(E.MOM_STATE.read_text()), {"month": "2026-11", "targets": ["MOMA", "MOMB"]})
+        self.assertEqual(json.loads(E.STATE.read_text())["momentum"]["topup"], ["MOMB"])
+
+    def test_the_refresh_saves_its_list_for_the_month(self):
+        with self.scores(MOMA=0.9, MOMB=0.5):
+            self.run_day(make_ind())
+        self.assertEqual(json.loads(E.MOM_STATE.read_text()), {"month": "2026-11", "targets": ["MOMA", "MOMB"]})
+
     def test_stale_data_waits_for_the_next_session(self):
         with mock.patch.object(E, "expected_last_day", return_value=date(2026, 11, 17)), self.scores(MOMA=0.9):
             clock = Clock(datetime(2026, 11, 17, 9, 8, tzinfo=IST))

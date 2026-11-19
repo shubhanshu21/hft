@@ -482,3 +482,52 @@ class TestKeepAsSwing(EngineCase):
         self.assertEqual(E.ED._entry_day(mine[0]), _d(2026, 10, 26))
         self.assertLess(E.ED.S.trading_days_held(_d(2026, 10, 26), _d(2026, 12, 18), set()), E.ED.S.HOLD_DAYS)
         self.assertGreaterEqual(E.ED.S.trading_days_held(_d(2026, 10, 26), _d(2026, 12, 21), set()), E.ED.S.HOLD_DAYS)
+
+
+class TestLiveReview(unittest.TestCase):
+    """2026-11-19: back to 3x at the user's choice. The nightly job tells Telegram ONCE when 5+ live day trades since the switch average
+    below zero (no stop or cap -- the user's rule), and again only after more trades."""
+
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+        from engine.database import TradingDB
+        self.tmp = tempfile.TemporaryDirectory(); d = Path(self.tmp.name)
+        self.db = TradingDB(d / "t.db"); self.state = d / "review.json"
+        self.db.init_account(E.ACCOUNT, name="rg", capital=100_000, leverage=3.0, risk_pct=0.0)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def trade(self, day, net, strategy="results_gap"):
+        import sqlite3
+        with sqlite3.connect(self.db.db_path) as con:
+            con.execute("INSERT INTO trades (position_id, account_id, symbol, direction, qty, entry_price, exit_price, entry_dt, exit_dt, exit_reason,"
+                        " gross_pnl, brokerage, stt, stamp_duty, exchange_txn_fee, sebi_charges, gst, slippage, total_friction, net_pnl, capital_after,"
+                        " created_at, strategy) VALUES (?, ?, 'X', 'long', 1, 1, 1, ?, ?, 'end_of_day', 0, 0, 0, 0, 0, 0, 0, 0, 0, ?, 0, 'now', ?)",
+                        (f"P{day}{net}", E.ACCOUNT, f"{day}T09:30:00+05:30", f"{day}T15:20:00+05:30", net, strategy))
+
+    def review(self):
+        sent = []
+        E.review_live(self.db, send=sent.append, state_path=self.state)
+        return sent
+
+    def test_alerts_once_after_five_losing_on_average(self):
+        self.trade("2026-11-03", -37000)                                   # before the 3x switch: not counted
+        for i, net in enumerate((-4000, 2000, -3000, 1000)):
+            self.trade(f"2026-11-2{i + 1}", net)
+        self.assertEqual(self.review(), [])                                # only 4 since the switch
+        self.trade("2026-11-26", -2500)
+        self.trade("2026-11-26", 9000, strategy="earnings_drift")           # the swing part is not judged here
+        sent = self.review()
+        self.assertEqual(len(sent), 1)
+        from services.utils import telegram as T
+        self.assertIn("5 day trades", sent[0]); self.assertIn(T.signed_rupees(-1300), sent[0]); self.assertIn("2x", sent[0])
+        self.assertEqual(self.review(), [])                                # once per count
+        self.trade("2026-11-27", -100)
+        self.assertEqual(len(self.review()), 1)                            # a new trade, still losing: tell again
+
+    def test_no_alert_while_they_make_money(self):
+        for i, net in enumerate((4000, -1000, 3000, -500, 2000)):
+            self.trade(f"2026-11-2{i + 1}", net)
+        self.assertEqual(self.review(), [])
