@@ -101,3 +101,45 @@ class TestLoginFlow(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSnapDriverChoice(unittest.TestCase):
+    """2026-11-19: snap Chromium 157's bundled chromedriver needs GLIBC 2.42; run directly it died at start and the morning had no token.
+    The login now tries driver/browser pairs in order: the snap's launcher (with the in-snap browser -- it cannot exec /snap/bin),
+    the bundled driver, then Selenium Manager -- and moves on when one will not start."""
+
+    def test_snap_order(self):
+        with patch.object(m.Path, "exists", lambda p: str(p) in (m._SNAP_DRIVER_LAUNCHER, m._SNAP_CHROMIUM_DRIVER)):
+            got = m._driver_choices(m._SNAP_CHROMIUM_BINARY)
+        self.assertEqual(got, [(m._SNAP_DRIVER_LAUNCHER, m._SNAP_CHROME_INSIDE), (m._SNAP_CHROMIUM_DRIVER, m._SNAP_CHROMIUM_BINARY),
+                               (None, m._SNAP_CHROMIUM_BINARY)])
+        with patch.object(m.Path, "exists", lambda p: False):
+            self.assertEqual(m._driver_choices(m._SNAP_CHROMIUM_BINARY), [(None, m._SNAP_CHROMIUM_BINARY)])
+
+    def test_non_snap_browser_uses_selenium_manager(self):
+        self.assertEqual(m._driver_choices("/usr/bin/google-chrome"), [(None, "/usr/bin/google-chrome")])
+
+    def test_falls_through_to_the_next_driver_when_one_will_not_start(self):
+        from selenium.common.exceptions import WebDriverException
+        tried = []
+        def chrome(options, service):
+            tried.append(service.path if service else None)
+            if len(tried) < 3:
+                raise WebDriverException("Service unexpectedly exited. Status code was: 1")
+            return "DRIVER"
+        pairs = [("/a/driver", "/a/chrome"), ("/b/driver", "/b/chrome"), (None, "/c/chrome")]
+        with patch.object(m, "_driver_choices", return_value=pairs), patch.object(m.webdriver, "Chrome", chrome), \
+             patch.object(m, "_repair_stale_snap_symlink"), patch.object(m, "_kill_stray_chrome_for_profile"), \
+             patch.object(m, "_CHROMIUM_PROFILE_DIR", Path(tempfile.mkdtemp())):
+            self.assertEqual(m._setup_driver(), "DRIVER")
+        self.assertEqual(tried, ["/a/driver", "/b/driver", None])
+
+    def test_all_failing_raises_the_last_error(self):
+        from selenium.common.exceptions import WebDriverException
+        def chrome(options, service):
+            raise WebDriverException("nope")
+        with patch.object(m, "_driver_choices", return_value=[(None, "/x")]), patch.object(m.webdriver, "Chrome", chrome), \
+             patch.object(m, "_repair_stale_snap_symlink"), patch.object(m, "_kill_stray_chrome_for_profile"), \
+             patch.object(m, "_CHROMIUM_PROFILE_DIR", Path(tempfile.mkdtemp())):
+            with self.assertRaises(WebDriverException):
+                m._setup_driver()

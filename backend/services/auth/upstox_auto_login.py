@@ -127,6 +127,10 @@ def token_status() -> dict:
 
 _SNAP_CHROMIUM_BINARY = "/snap/bin/chromium"
 _SNAP_CHROMIUM_DRIVER = "/snap/chromium/current/usr/lib/chromium-browser/chromedriver"
+# 2026-11-19: snap Chromium 157's bundled driver needs GLIBC 2.42 -- run directly against the host libc it dies at start. The snap's own
+# launcher runs that same driver inside the snap runtime; confined there it cannot exec /snap/bin/chromium, so it gets the in-snap browser.
+_SNAP_DRIVER_LAUNCHER = "/snap/bin/chromium.chromedriver"
+_SNAP_CHROME_INSIDE = "/snap/chromium/current/usr/lib/chromium-browser/chrome"
 
 
 def _find_chromium_binary() -> str | None:
@@ -137,28 +141,19 @@ def _find_chromium_binary() -> str | None:
     return None
 
 
-def _find_chromium_driver(binary: str | None) -> str | None:
-    """
-    For the snap-packaged Chromium specifically, use the EXACT chromedriver
-    bundled inside that same snap revision, not whatever Selenium Manager
-    would otherwise auto-download.
-
-    Verified directly that these CAN drift apart: Selenium Manager
-    resolved chromedriver 151.0.7922.138 while the installed snap
-    Chromium was 151.0.7922.108 (a different patch build) — a real gap,
-    worth pinning shut on general principle, though it turned out NOT to
-    be the cause of a since-diagnosed ~2min stall during login (that was
-    ordinary network latency to Upstox's servers from this host, not a
-    driver/browser issue — see auth.upstox_auto_login's module docstring
-    and rsi_monitor._AUTO_LOGIN_TIMEOUT_SEC). For any OTHER browser (a
-    real Chrome/Chromium install, not the snap), Selenium Manager's own
-    version-matching is trustworthy as normal — only the snap needs this
-    override, since the pip-installed `selenium` package can't see which
-    exact chromedriver snapd bundled alongside it.
-    """
-    if binary == _SNAP_CHROMIUM_BINARY and Path(_SNAP_CHROMIUM_DRIVER).exists():
-        return _SNAP_CHROMIUM_DRIVER
-    return None
+def _driver_choices(binary: str | None) -> list[tuple[str | None, str | None]]:
+    """(chromedriver, browser) pairs to try in order; None driver = Selenium Manager finds one. 2026-11-19: a snap refresh broke the
+    bundled driver (GLIBC 2.42) and the login died -- now if one pair will not start, the next is tried.
+    Snap: its own launcher (driver run in the snap runtime, so it must start the in-snap browser), then the bundled driver as before,
+    then Selenium Manager. Any other browser: Selenium Manager only."""
+    if binary != _SNAP_CHROMIUM_BINARY:
+        return [(None, binary)]
+    out = []
+    if Path(_SNAP_DRIVER_LAUNCHER).exists():
+        out.append((_SNAP_DRIVER_LAUNCHER, _SNAP_CHROME_INSIDE))
+    if Path(_SNAP_CHROMIUM_DRIVER).exists():
+        out.append((_SNAP_CHROMIUM_DRIVER, binary))
+    return out + [(None, binary)]
 
 
 def _profile_dir_for(binary: str | None) -> Path:
@@ -176,7 +171,6 @@ def _profile_dir_for(binary: str | None) -> Path:
 
 
 _CHROMIUM_BINARY = _find_chromium_binary()
-_CHROMIUM_DRIVER = _find_chromium_driver(_CHROMIUM_BINARY)
 _CHROMIUM_PROFILE_DIR = _profile_dir_for(_CHROMIUM_BINARY)
 
 
@@ -263,27 +257,23 @@ def _repair_stale_snap_symlink() -> None:
 def _setup_driver() -> webdriver.Chrome:
     _repair_stale_snap_symlink()
     _CHROMIUM_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
-    _kill_stray_chrome_for_profile()
-
-    options = Options()
-    options.add_argument("--headless=new")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu")
-    options.add_argument(f"--user-data-dir={_CHROMIUM_PROFILE_DIR}")
-    options.add_argument("--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36")
-
-    if _CHROMIUM_BINARY:
-        options.binary_location = _CHROMIUM_BINARY
-
-    # For the snap Chromium, pin the exact chromedriver bundled in that
-    # same snap revision instead of Selenium Manager's own resolution —
-    # see _find_chromium_driver's docstring for the mismatch this avoids.
-    # Any other (real, non-snap) browser install still uses Selenium
-    # Manager's normal auto-resolution, which is trustworthy there.
+    from selenium.common.exceptions import WebDriverException
     from selenium.webdriver.chrome.service import Service
-    service = Service(_CHROMIUM_DRIVER) if _CHROMIUM_DRIVER else None
-    return webdriver.Chrome(options=options, service=service)
+    last = None
+    for driver, browser in _driver_choices(_CHROMIUM_BINARY):
+        _kill_stray_chrome_for_profile()
+        options = Options()
+        for arg in ("--headless=new", "--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu", f"--user-data-dir={_CHROMIUM_PROFILE_DIR}",
+                    "--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"):
+            options.add_argument(arg)
+        if browser:
+            options.binary_location = browser
+        try:
+            return webdriver.Chrome(options=options, service=Service(driver) if driver else None)
+        except WebDriverException as exc:                       # this driver/browser pair will not start: try the next one
+            log.warning("browser start failed with driver %s: %s -- trying the next one", driver or "Selenium Manager", str(exc).splitlines()[0][:160])
+            last = exc
+    raise last if last else RuntimeError("no Chromium/Chrome browser found for the Upstox login")
 
 
 def _js_click(driver, element) -> None:

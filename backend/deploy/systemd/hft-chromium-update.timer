@@ -1,0 +1,9 @@
+[Unit]
+Description=First Saturday of each month 10:00 IST: tested Chromium update (markets closed)
+
+[Timer]
+OnCalendar=Sat *-*-01..07 10:00:00 Asia/Kolkata
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -89,6 +89,20 @@ class TestProblems(Base):
         self.assertEqual(M.last_mcx_slot(sat), datetime(2026, 10, 23, 23, 40, tzinfo=IST))
         self.assertEqual(self.check(sat, sh=fake_sh(mcx=("success", FRI_2340)))["problems"], {})
 
+    def test_upstox_login_checked_from_7_on_weekday_mornings(self):
+        """2026-11-19: a Chromium update broke the auto-login at 05:08; the first check was 08:40 and the morning engines ran blind.
+        From 07:00 (after the 06:30 nightly login) every weekday-morning monitor run checks it -- ~2 h to fix before 08:50."""
+        seven = datetime(2026, 11, 19, 7, 0, tzinfo=IST)            # Thursday
+        self.crypto_saved(seven)
+        got = self.check(seven, sh=fake_sh(mcx=("success", FRI_2340)), token_ok=lambda: False)["problems"]
+        self.assertIn("upstox_login", got)
+        self.assertIn("08:50", got["upstox_login"])
+        for quiet in (datetime(2026, 11, 21, 7, 0, tzinfo=IST), datetime(2026, 11, 19, 6, 45, tzinfo=IST)):   # Saturday; before 07:00
+            calls = []
+            self.crypto_saved(quiet)
+            self.check(quiet, sh=fake_sh(mcx=("success", FRI_2340)), token_ok=lambda: calls.append(1) or False)
+            self.assertEqual(calls, [], quiet)
+
     def test_mcx_run_failed(self):
         self.crypto_saved(MON_10)
         self.assertIn("mcx_failed", self.check(MON_10, sh=fake_sh(mcx=("exit-code", MON_0910)))["problems"])

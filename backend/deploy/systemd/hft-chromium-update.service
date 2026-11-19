@@ -1,0 +1,8 @@
+[Unit]
+Description=Monthly tested Chromium update for the Upstox login (refresh, real login, revert if it breaks, hold again)
+
+[Service]
+Environment=PYTHONUNBUFFERED=1
+Type=oneshot
+WorkingDirectory=/var/www/html/hft/backend
+ExecStart=/var/www/html/hft/backend/.venv/bin/python3 -m engine.chromium_update

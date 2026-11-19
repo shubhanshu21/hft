@@ -33,6 +33,7 @@ MCX_GRACE_MIN = 20
 RG_SLOTS = (dtime(9, 30), dtime(9, 40), dtime(15, 20))   # hft-results-gap.timer trading runs, IST, Mon-Fri (09:40 = buy retry)
 BO_START, BO_DUE = dtime(9, 8), dtime(9, 25)       # hft-equity-breakout.timer session start; alert if not started by BO_DUE
 TOKEN_WINDOW_MIN = 30                               # check the Upstox login this long before each MCX slot
+MORNING_LOGIN = (dtime(7, 0), dtime(9, 40))         # ...and all weekday morning (2026-11-19: a 05:08 Chromium update broke it, first seen 10:30)
 REMIND_H = 6
 
 
@@ -218,12 +219,13 @@ def problems(now: datetime, sh=_systemctl, crypto_state: Path = CRYPTO_STATE, to
     if n:
         out["bo_failed"] = (f"Equity breakout engine had {n} failed session(s) today -- stops are not being watched until it runs again. "
                             "Check: journalctl --user -u hft-equity-breakout.service -n 50")
-    # Upstox login, shortly before an MCX run
-    if next_mcx_slot(now) - now <= timedelta(minutes=TOKEN_WINDOW_MIN):
+    # Upstox login: weekday mornings from 07:00 (after the 06:30 nightly login, before the 08:50 equity run) and before every MCX run
+    morning = now.weekday() < 5 and MORNING_LOGIN[0] <= now.time() <= MORNING_LOGIN[1]
+    if morning or next_mcx_slot(now) - now <= timedelta(minutes=TOKEN_WINDOW_MIN):
         ok = token_ok() if token_ok else _upstox_token_ok()
         if not ok:
-            out["upstox_login"] = ("Upstox login is EXPIRED and the automatic refresh failed -- MCX cannot get prices. "
-                                   "Log in: cd backend && python3 -m services.auth.upstox_auth")
+            out["upstox_login"] = ("Upstox login is EXPIRED and the automatic refresh failed -- the equity (08:50) and MCX (09:10) engines "
+                                   "cannot get prices. Log in: cd backend && python3 -m services.auth.upstox_auth")
     return out
 
 
