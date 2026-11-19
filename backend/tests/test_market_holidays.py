@@ -1,6 +1,6 @@
 """services/utils/market_holidays.py -- decides whether a live engine is allowed to trade today.
 
-Three live engines (results_gap, mcx_trend_carry, preopen_recorder) gate on this, so the failure mode matters as much as the happy
+Live engines (results_gap, equity_breakout, preopen_recorder) gate on this, so the failure mode matters as much as the happy
 path: a miss means a trade on a closed exchange, a wrong "holiday" means a silently skipped trading day. No network here.
 """
 import json

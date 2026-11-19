@@ -24,7 +24,7 @@ def fake_summary(aid):
                        "positions": [{"symbol": "ABC", "profit_now": 2000.0, "move_pct": 1.5}],
                        "trades": [{"symbol": "PPLPHARMA", "exit_dt": "2026-10-29T15:20:05+05:30", "net_pnl": 1500.0, "strategy": "results_gap"},
                                   {"symbol": "OLD", "exit_dt": "2026-10-28T15:20:05+05:30", "net_pnl": 15728.0, "strategy": "results_gap"}]}
-    if aid == "MCX_TREND_CARRY":
+    if aid == "EQUITY_BREAKOUT":
         return base | {"account": {"initial_capital": 250000.0, "current_capital": 250000.0},
                        "positions": [{"symbol": "CRUDEOILM", "profit_now": None, "move_pct": None}],       # no live price: not counted, not a crash
                        "trades": []}
@@ -48,18 +48,18 @@ class TestOverview(unittest.TestCase):
         self.assertEqual(rg["today_pnl"], 3500.0)                   # 1500 sold today + 2000 open; yesterday's 15,728 is not today
 
     def test_unpriced_position_counts_as_zero(self):
-        mcx = next(a for a in self.o["accounts"] if a["id"] == "MCX_TREND_CARRY")
+        mcx = next(a for a in self.o["accounts"] if a["id"] == "EQUITY_BREAKOUT")
         self.assertEqual((mcx["open_pnl"], mcx["value"], mcx["open_count"], mcx["unpriced"]), (0.0, 250000.0, 1, 1))
 
     def test_totals(self):
-        self.assertEqual(self.o["totals"], {"start": 550000.0, "value": 567728.0, "today_pnl": 3500.0, "open_count": 2})
+        self.assertEqual(self.o["totals"], {"start": 450000.0, "value": 467728.0, "today_pnl": 3500.0, "open_count": 2})   # 3 accounts since MCX left (2026-11-19)
 
     def test_an_older_position_counts_only_todays_move(self):
         """2026-10-30: 'today' used to add a position's whole profit since entry, so a crude lot bought on 26 Oct showed four days of gain
         as today's. A position from before today now counts (price now - yesterday's close) x units; one opened today, its gain since entry."""
         def summary(aid):
             s = fake_summary(aid)
-            if aid == "MCX_TREND_CARRY":
+            if aid == "EQUITY_BREAKOUT":
                 s["positions"] = [{"symbol": "CRUDEOILM", "direction": "long", "entry_time": "2026-10-26T09:10:17+05:30", "units": 10,
                                    "price_now": 9700.0, "prev_close": 9650.0, "profit_now": 1060.0, "move_pct": 1.1}]
             if aid == "RESULTS_GAP":
@@ -67,7 +67,7 @@ class TestOverview(unittest.TestCase):
                                    "price_now": 120.0, "prev_close": 110.0, "profit_now": 2000.0, "move_pct": 1.5}]
             return s
         o = A.overview(now=NOW, summary=summary)
-        mcx = next(a for a in o["accounts"] if a["id"] == "MCX_TREND_CARRY")
+        mcx = next(a for a in o["accounts"] if a["id"] == "EQUITY_BREAKOUT")
         rg = next(a for a in o["accounts"] if a["id"] == "RESULTS_GAP")
         self.assertEqual((mcx["open_pnl"], mcx["today_pnl"]), (1060.0, 500.0))      # (9700 - 9650) x 10, not the 1,060 since 26 Oct
         self.assertEqual(rg["today_pnl"], 3500.0)                                   # bought today: 1500 sold + 2000 since entry
@@ -76,11 +76,11 @@ class TestOverview(unittest.TestCase):
     def test_older_position_without_yesterdays_close_counts_nothing_for_today(self):
         def summary(aid):
             s = fake_summary(aid)
-            if aid == "MCX_TREND_CARRY":
+            if aid == "EQUITY_BREAKOUT":
                 s["positions"] = [{"symbol": "CRUDEOILM", "direction": "long", "entry_time": "2026-10-26T09:10:17+05:30", "units": 10,
                                    "price_now": 9700.0, "prev_close": None, "profit_now": 1060.0, "move_pct": 1.1}]
             return s
-        mcx = next(a for a in A.overview(now=NOW, summary=summary)["accounts"] if a["id"] == "MCX_TREND_CARRY")
+        mcx = next(a for a in A.overview(now=NOW, summary=summary)["accounts"] if a["id"] == "EQUITY_BREAKOUT")
         self.assertEqual(mcx["today_pnl"], 0.0)
 
     def test_engine_problem_is_passed_through(self):
@@ -92,13 +92,13 @@ class TestOverview(unittest.TestCase):
 
     def test_one_broken_account_does_not_break_the_page(self):
         def flaky(aid):
-            if aid == "MCX_TREND_CARRY":
+            if aid == "EQUITY_BREAKOUT":
                 raise OSError("db locked")
             return fake_summary(aid)
         o = A.overview(now=NOW, summary=flaky)
-        mcx = next(a for a in o["accounts"] if a["id"] == "MCX_TREND_CARRY")
+        mcx = next(a for a in o["accounts"] if a["id"] == "EQUITY_BREAKOUT")
         self.assertIn("unavailable", mcx["error"])
-        self.assertEqual(o["totals"]["value"], 317728.0)            # the other three still add up (EQUITY_BREAKOUT since 2026-11-17)
+        self.assertEqual(o["totals"]["value"], 217728.0)            # the other two still add up
 
 
 class TestLiveFlag(unittest.TestCase):

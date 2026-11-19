@@ -4,7 +4,7 @@
 
 - crypto `dip_reversal`: **RISK_PCT=6%** (scaled 0.6-1.8x by market volatility), crowd rule **off**, 15% target / 7% stop, max 5 open,
   Rs1L, Delta demo orders **off**. The 8% figures in the row are the earlier setting, kept as history.
-- commodity `trend_carry`: Rs2.5L, 1x exposure (1.5x until 2026-11-18, user's choice after the sizing grid), re-checked every 2 weeks (10 trading days).
+- commodity `trend_carry` (MCX, account MCX_TREND_CARRY): **REMOVED 2026-11-19 at the user's request** (low profit by nature: Rs2.5L 1x 2022-Nov 2026 Rs4.27L, worst -13%, almost all from 2025's gold/silver run; an 18-version MCX screen on real daily prices + lookback/carry variants found nothing better). Git history has it.
 - equity `earnings_drift` (swing, since 2026-10-29) in the SAME `RESULTS_GAP` account: Rs1L of its own money (+ its closed trades), up to 10 stocks, 1/10 each (5 x 1/5 until 2026-10-29), never more than the account's free cash; orders planned at 08:50, filled at the official open; results_gap sizes from the cash these holdings do not lock.
 - equity `breakout_pair` (swing, since 2026-11-17, re-added at the user's yes): its OWN account `EQUITY_BREAKOUT`, Rs1L, NR7 (5 stocks) + 55-day breakout (3 stocks), half the money each, 2% risk, trailing stop, healthy market only; re-test Oct 2022-Nov 2026 Rs1L -> Rs2.23L, worst -18%, every year +. **Since 2026-11-19 (user: "inside Breakout, 50/50") the breakout sleeves have 25% each and the other half is `momentum_12_1`.**
 - equity `momentum_12_1` (swing, since 2026-11-19, half of `EQUITY_BREAKOUT`): each month at the first session's open, the 20 stocks with the best 12-month return (skipping the latest month) among the 300 most-traded NSE stocks; kept while in the top 20, no stop, no market filter. Factor study of 12 signals (2023-24 / 2025-26, delivery costs): only 12-1 momentum survived. Rs1L alone Rs2.94L (2 Jan 2023 -> 18 Nov 2026), worst -39% (Jul 2024 -> Mar 2025), 2025 -7%; every neighbour and start month beat NIFTY. Breakout 50% + momentum 50%: Rs1L -> Rs2.49L, worst -26% (breakout alone Rs2.17L / -18%).
@@ -18,7 +18,7 @@ DRYRUN_ACCOUNT), `engine/equity_swing.py`, `hft-dryrun.service`, `hft-equity-swi
 were kept because unrelated research code still needs them (not live strategies): `markets/equity/universe.py` (the NIFTY50 symbol
 list, used by `engine/research_data.py`'s equity-1m/delivery/events jobs) and `markets/currency/costs.py` (lot-size constants, used
 by `engine/live_dryrun.py`/`engine/live_trading.py`'s generic cost-calculation code, which is otherwise dead with nothing left to
-trade in those markets). What paper trading runs now: commodity (`trend_carry`) and crypto (`dip_reversal`).
+trade in those markets). What paper trading runs now: crypto (`dip_reversal`) and equity (`results_gap` + `earnings_drift`, `breakout_pair` + `momentum_12_1`).
 
 ```
 markets/
@@ -36,7 +36,7 @@ markets/
 ```
 
 Add a strategy: create `markets/<market>/strategies/tf_<timeframe>/<name>/strategy.py` with its own `backtest()`/`web_backtest()`,
-then wire it into its paper engine and `engine/backtest_api.py` `catalog()` (see `dip_reversal`/`trend_carry`/`results_gap`). The old
+then wire it into its paper engine and `engine/backtest_api.py` `catalog()` (see `dip_reversal`/`results_gap`/`breakout_pair`). The old
 generic template/registry (`cli.py new-strategy`, `core/registry.py`, `core/scaffold.py`, the daily-bar `run_backtest`) was removed
 2026-11-10 (unused since the old runners went); git history has it. Names must be unique within a market, whatever the timeframe.
 A test (`tests/test_strategy_framework.py`) fails if a strategy sits in a folder that does not match its timeframe (`timeframe`, or
@@ -49,7 +49,7 @@ then paper trading.
 Crypto (the Binance paper trader and its strategies) and the MCX `gold_crude` strategy were removed on 2026-10-14 (user: "remove commodity and
 crypto folders"; git history has them). MCX DATA IS STILL DOWNLOADED (user: "keep mcx nightly jobs ... for downloading data"):
 `commodity/data.py` (nightly "mcx data") and `commodity/daily_series.py` (nightly "commodity daily series"); the order book is recorded by
-`engine/depth_recorder.py`. MCX is TRADED AGAIN (paper) since 2026-10-15 by `commodity/trend_carry` only, on real MCX month-end
+`engine/depth_recorder.py`. MCX was traded (paper) 2026-10-15 -> 2026-11-19 by `commodity/trend_carry` only (removed 2026-11-19), on real MCX month-end
 bhavcopies the user downloaded (2021-12 -> 2026-10) plus the nightly every-expiry top-up `commodity/futures_eod.py` (nightly "mcx futures eod",
 var/archive/commodity/mcx_futures_daily.csv). Earlier deletions: the 5-minute scalpers (2026-10-10), the EURINR/GBPINR parity scalp and the crypto daily breakout (2026-10-12).
 Crypto's `trend_breakout` and `calm_coins` (and the `CRYPTO_CALM` account) were replaced 2026-10-20 by a single `compounder_5lakh` (1-hour, BTC/ETH/SOL),

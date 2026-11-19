@@ -24,7 +24,7 @@ PY = sys.executable
 STEP_TIMEOUT_S = 45 * 60
 STEPS = [                            # (name, argv, exit codes that count as success)
     ("mcx data", [PY, "-m", "markets.commodity.data", "--topup"], {0}),          # nearest-contract MCX candles (research, depth studies)
-    ("mcx futures eod", [PY, "-m", "markets.commodity.futures_eod"], {0}),      # every expiry, daily: commodity trend_carry signals and backtests
+    ("mcx futures eod", [PY, "-m", "markets.commodity.futures_eod"], {0}),      # every expiry, daily (research data; trend_carry removed 2026-11-19)
     ("all nse daily", [PY, "-m", "markets.equity.all_daily", "--max-minutes", "25"], {0}),   # equity/earnings_drift: liquid pool + holdings, then the rest oldest-first
     ("results dates", [PY, "-m", "markets.equity.results_dates"], {0}),          # equity/earnings_drift: NSE results board meetings, all equities
     ("results gap table", [PY, "-m", "markets.equity.strategies.tf_intraday.results_gap.liquid_days"], {0}),   # equity/results_gap: its backtest's new days

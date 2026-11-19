@@ -17,8 +17,6 @@ the account they share the cash).
 from __future__ import annotations
 
 import argparse
-import json
-import os
 import sqlite3
 import sys
 from datetime import date, datetime, timedelta
@@ -36,9 +34,6 @@ def bodies(account: str, capital: float) -> list[dict]:
         from markets.crypto.strategies.tf_5min.dip_reversal import strategy as dr
         return [{"market": "crypto", "strategy": "dip_reversal", "capital": capital, "exposure": 3.0, "symbols": list(dr.COINS),
                  "tax": "business"}]
-    if account == "MCX_TREND_CARRY":
-        return [{"market": "commodity", "strategy": "trend_carry", "capital": capital,
-                 "exposure": float(os.environ.get("MCX_TREND_CARRY_EXPOSURE", 1.5))}]   # validate reads "exposure" (a "leverage" key was ignored)
     if account == "RESULTS_GAP":
         from markets.equity.strategies.tf_daily.earnings_drift import strategy as ed
         from markets.equity.strategies.tf_intraday.results_gap import strategy as rg
@@ -63,12 +58,8 @@ def daily_equity(result: dict) -> dict[str, float]:
 
 def paper_buys(con, account: str) -> list[dict]:
     out = []
-    for sym, entry_time, px, state in con.execute("SELECT symbol, entry_time, entry_price, state FROM positions WHERE account_id = ?", (account,)):
-        try:
-            fam = json.loads(state or "{}").get("family")
-        except ValueError:
-            fam = None
-        out.append({"sym": fam or sym, "day": str(entry_time)[:10], "px": px})   # MCX holds a contract; the backtest names its family
+    for sym, entry_time, px in con.execute("SELECT symbol, entry_time, entry_price FROM positions WHERE account_id = ?", (account,)):
+        out.append({"sym": sym, "day": str(entry_time)[:10], "px": px})
     return out
 
 

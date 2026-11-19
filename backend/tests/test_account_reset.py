@@ -17,10 +17,10 @@ from engine.database import TradingDB
 def _seed(db_path: Path) -> None:
     db = TradingDB(db_path)
     db.init_account("CRYPTO_DIP_REVERSAL", name="crypto", capital=100000.0)
-    db.init_account("MCX_TREND_CARRY", name="mcx", capital=250000.0)
+    db.init_account("RESULTS_GAP", name="rg", capital=250000.0)
     con = sqlite3.connect(db_path)
     with con:
-        for acc, cap in (("CRYPTO_DIP_REVERSAL", 97330.0), ("MCX_TREND_CARRY", 260000.0)):
+        for acc, cap in (("CRYPTO_DIP_REVERSAL", 97330.0), ("RESULTS_GAP", 260000.0)):
             con.execute("UPDATE accounts SET current_capital = ? WHERE account_id = ?", (cap, acc))
             con.execute("INSERT INTO trades (position_id, account_id, symbol, direction, qty, entry_price, exit_price, entry_dt, exit_dt, exit_reason, gross_pnl,"
                         " brokerage, stt, stamp_duty, exchange_txn_fee, sebi_charges, gst, slippage, total_friction, net_pnl, capital_after, created_at)"
@@ -50,7 +50,7 @@ class TestResetAccount(unittest.TestCase):
         self.backups = self.dir / "backups"
         _seed(self.db)
         (self.dir / "crypto_dip_reversal_state.json").write_text(json.dumps({"trading_capital": 97330.0, "open_positions": {}, "completed_trades_count": 1}))
-        (self.dir / "mcx_trend_carry_state.json").write_text(json.dumps({"rebalanced_for": "2026-09-30", "opened": []}))
+        (self.dir / "results_gap_state.json").write_text(json.dumps({"entry_date": "2026-09-30"}))
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -74,10 +74,10 @@ class TestResetAccount(unittest.TestCase):
         self.assertEqual(out["deleted"], {"trades": 1, "positions": 1, "orders": 1, "portfolio_snapshots": 1})
         for t in R.TABLES:
             self.assertEqual(_count(self.db, t, "CRYPTO_DIP_REVERSAL"), 0, t)
-            self.assertEqual(_count(self.db, t, "MCX_TREND_CARRY"), 1, t)          # the other account is untouched
+            self.assertEqual(_count(self.db, t, "RESULTS_GAP"), 1, t)          # the other account is untouched
         acc = TradingDB(self.db).get_account("CRYPTO_DIP_REVERSAL")
         self.assertEqual(acc["current_capital"], 100000.0)
-        self.assertEqual(TradingDB(self.db).get_account("MCX_TREND_CARRY")["current_capital"], 260000.0)
+        self.assertEqual(TradingDB(self.db).get_account("RESULTS_GAP")["current_capital"], 260000.0)
         st = json.loads((self.dir / "crypto_dip_reversal_state.json").read_text())
         self.assertEqual((st["trading_capital"], st["open_positions"], st["completed_trades_count"]), (100000.0, {}, 0))
 
@@ -87,12 +87,6 @@ class TestResetAccount(unittest.TestCase):
         self.assertTrue(backup.exists())
         self.assertTrue(backup.name.startswith("pre_reset_crypto_dip_reversal_"))
         self.assertEqual(_count(backup, "trades", "CRYPTO_DIP_REVERSAL"), 1)
-
-    def test_mcx_reset_clears_the_rebalance_marker_so_it_buys_again(self):
-        self.reset("MCX_TREND_CARRY", " MCX_TREND_CARRY ")
-        st = json.loads((self.dir / "mcx_trend_carry_state.json").read_text())
-        self.assertNotIn("rebalanced_for", st)
-        self.assertEqual(TradingDB(self.db).get_account("MCX_TREND_CARRY")["current_capital"], 250000.0)
 
     def test_open_real_delta_demo_position_blocks_the_reset(self):
         (self.dir / "crypto_dip_reversal_state.json").write_text(json.dumps({"open_positions": {"BTC": {"real": True}}}))
@@ -114,7 +108,7 @@ class TestAccountLock(unittest.TestCase):
     def test_accounts_lock_independently(self):
         with tempfile.TemporaryDirectory() as d:
             with R.account_lock("CRYPTO_DIP_REVERSAL", lock_dir=Path(d)):
-                with R.account_lock("MCX_TREND_CARRY", timeout_s=0.3, lock_dir=Path(d)):
+                with R.account_lock("RESULTS_GAP", timeout_s=0.3, lock_dir=Path(d)):
                     pass
 
 
@@ -142,20 +136,20 @@ class TestResetEndpoint(unittest.TestCase):
     def test_a_wrong_account_name_is_refused(self):
         from engine.account_reset import ResetError
         with mock.patch("engine.account_reset.reset_account", side_effect=ResetError("To reset, type the account name exactly")):
-            status, body = self.post({"account": "MCX_TREND_CARRY", "confirm": "mcx"})
+            status, body = self.post({"account": "RESULTS_GAP", "confirm": "rg"})
         self.assertEqual(status, 400)
         self.assertIn("type the account name", body["error"])
 
     def test_passes_account_and_confirmation_through(self):
-        with mock.patch("engine.account_reset.reset_account", return_value={"account": "MCX_TREND_CARRY", "capital": 250000.0}) as m:
-            status, body = self.post({"account": "MCX_TREND_CARRY", "confirm": "MCX_TREND_CARRY"})
+        with mock.patch("engine.account_reset.reset_account", return_value={"account": "RESULTS_GAP", "capital": 250000.0}) as m:
+            status, body = self.post({"account": "RESULTS_GAP", "confirm": "RESULTS_GAP"})
         self.assertEqual(status, 200)
         self.assertEqual(body["capital"], 250000.0)
-        m.assert_called_once_with("MCX_TREND_CARRY", "MCX_TREND_CARRY")
+        m.assert_called_once_with("RESULTS_GAP", "RESULTS_GAP")
 
     def test_refusal_is_a_400_with_the_reason(self):
         with mock.patch("engine.account_reset.reset_account", side_effect=R.ResetError("To reset, type the account name exactly")):
-            status, body = self.post({"account": "MCX_TREND_CARRY", "confirm": "no"})
+            status, body = self.post({"account": "RESULTS_GAP", "confirm": "no"})
         self.assertEqual(status, 400)
         self.assertIn("type the account name", body["error"])
 

@@ -1,68 +1,11 @@
-"""The two strategies that paper trade now: commodity/trend_carry (ranking, tie-break, lot sizing, MCX costs) and crypto/dip_reversal
-(entry rule, crowd rule, business-income tax)."""
+"""crypto/dip_reversal (entry rule, crowd rule, business-income tax) and the MCX cost model kept for research
+(commodity/trend_carry itself was removed 2026-11-19 at the user's request)."""
 import unittest
 
-import numpy as np
 import pandas as pd
 
 from markets.commodity.costs import compute_mcx_costs
-from markets.commodity.strategies.tf_daily.trend_carry import strategy as TC
 from markets.crypto.strategies.tf_5min.dip_reversal import strategy as DR
-
-
-def _panel(cols, days=300, seed=0):
-    """Daily returns and carry (2026-10-25: trend_carry ranks on 252 trading days of daily data, re-checked every 10 days)."""
-    rng = np.random.default_rng(seed)
-    idx = pd.bdate_range("2025-01-01", periods=days)
-    R = pd.DataFrame(rng.normal(0.0005, 0.015, (days, len(cols))), index=idx, columns=cols)
-    C = pd.DataFrame(rng.normal(0, 0.01, (days, len(cols))), index=idx, columns=cols)
-    return R, C
-
-
-class TestTrendCarryTargets(unittest.TestCase):
-    def test_weights_sum_to_one_and_pick_top_n(self):
-        R, C = _panel(list(TC.SIGNALS))
-        w = TC.targets(R, C, R.index[-1])
-        self.assertEqual(len(w), TC.top_n(len(TC.SIGNALS)))
-        self.assertAlmostEqual(sum(w.values()), 1.0)
-
-    def test_pick_does_not_depend_on_column_order(self):
-        # 2026-10-23 bug: ties went to list order, so the website and the paper engine could hold different contracts
-        R, C = _panel(list(TC.SIGNALS), seed=3)
-        C[:] = 0.0                                     # carry all equal -> many rank-sum ties
-        t = R.index[-1]
-        rev = list(reversed(TC.SIGNALS))
-        self.assertEqual(TC.targets(R, C, t), TC.targets(R[rev], C[rev], t))
-
-    def test_not_enough_history_gives_no_signal(self):
-        R, C = _panel(list(TC.SIGNALS), days=150)          # under ~0.8 x 252 days of trend
-        self.assertEqual(TC.targets(R, C, R.index[-1]), {})
-
-
-class TestTrendCarryRebalanceDue(unittest.TestCase):
-    def test_every_ten_trading_days(self):
-        days = list(pd.bdate_range("2026-10-01", periods=15))
-        self.assertTrue(TC.rebalance_due(None, days, days[0]))                                  # never checked
-        self.assertFalse(TC.rebalance_due(str(days[0].date()), days, days[9]))                 # 9 trading days later
-        self.assertTrue(TC.rebalance_due(str(days[0].date()), days, days[TC.REBALANCE_DAYS]))  # 10 trading days later
-        self.assertEqual(TC.REBALANCE_DAYS, 10)
-
-
-class TestTrendCarryLots(unittest.TestCase):
-    def test_rounds_to_nearest_lot(self):
-        # Rs2.5L x 1.5 x 1/3 = Rs1.25L share; one GOLDTEN lot at 12,000 x 1 unit -> 10.4 lots -> 10
-        self.assertEqual(TC.lots_for(250_000, 1.5, 1 / 3, 12_000, "GOLDM"), 10)
-
-    def test_a_share_over_half_a_lot_buys_one(self):
-        # ZINCMINI lot = 415 x 1000 = Rs4.15L; share 2.5L x 1.5 x 0.6 = Rs2.25L (> half a lot) -> 1 lot, not 0 (2026-10-22 fix)
-        self.assertEqual(TC.lots_for(250_000, 1.5, 0.6, 415, "ZINC"), 1)
-
-    def test_rounding_up_never_goes_past_two_times_the_account(self):
-        # one SILVERMIC lot (Rs3L) is more than half the share, but buying it would exceed 2x a Rs1L account -> stays at 0
-        self.assertEqual(TC.lots_for(100_000, 1.5, 1.0, 300_000, "SILVERM"), 0)
-        # the cap only limits rounding UP: it never cuts below the old round-down lots
-        floor = int(min(250_000 * 10 // 12_000, 250_000 * TC.MAX_MARGIN_USE // (12_000 * TC.MARGIN_PCT["GOLDM"])))
-        self.assertEqual(TC.lots_for(250_000, 10.0, 1.0, 12_000, "GOLDM"), floor)
 
 
 class TestMcxCosts(unittest.TestCase):

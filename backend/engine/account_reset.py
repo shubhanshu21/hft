@@ -10,7 +10,7 @@ A reset deletes that account's trade history, so it is deliberately hard to do b
     an engine run that would then write the old state back.
 
 After a reset: crypto starts again from its starting money at the next 5-minute check; MCX buys the current month's picks at its next
-run (the engine treats "nothing open that it opened" as a reset, see engine/mcx_trend_carry.py)."""
+run (the engine treats "nothing open that it opened" as a reset, as engine/mcx_trend_carry.py did -- removed 2026-11-19)."""
 from __future__ import annotations
 
 import fcntl
@@ -26,7 +26,7 @@ from core.paths import DB_DIR
 IST = timezone(timedelta(hours=5, minutes=30))
 DB_PATH = DB_DIR / "paper_trading.db"
 # account id -> the engine's own state file (kept next to the DB)
-ACCOUNTS = {"CRYPTO_DIP_REVERSAL": "crypto_dip_reversal_state.json", "MCX_TREND_CARRY": "mcx_trend_carry_state.json",
+ACCOUNTS = {"CRYPTO_DIP_REVERSAL": "crypto_dip_reversal_state.json",
             "RESULTS_GAP": "results_gap_state.json", "EQUITY_BREAKOUT": "equity_breakout_state.json"}   # breakout: all its state is in the DB
 TABLES = ("trades", "positions", "orders", "portfolio_snapshots")
 

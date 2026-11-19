@@ -27,8 +27,8 @@ class TestCliDefaults(unittest.TestCase):
 
     def test_reset_db_with_account_reaches_the_command(self):
         with mock.patch.object(cli, "cmd_reset_db") as f:
-            _run("reset-db", "--account", "MCX_TREND_CARRY")
-        self.assertEqual(f.call_args[0][0].account, "MCX_TREND_CARRY")
+            _run("reset-db", "--account", "RESULTS_GAP")
+        self.assertEqual(f.call_args[0][0].account, "RESULTS_GAP")
 
 
 if __name__ == "__main__":

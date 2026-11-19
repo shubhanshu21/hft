@@ -32,14 +32,6 @@ class TestClientGone(unittest.TestCase):
 
 
 class TestNoDeprecatedTimedelta(unittest.TestCase):
-    def test_mcx_roll_check_without_numpy_generic_units(self):
-        from engine.mcx_trend_carry import due_to_roll
-        with warnings.catch_warnings():
-            warnings.simplefilter("error")
-            self.assertTrue(due_to_roll("2026-11-19", date(2026, 11, 16), 3))
-            self.assertFalse(due_to_roll("2026-11-19", date(2026, 11, 15), 3))
-            self.assertFalse(due_to_roll(None, date(2026, 11, 16), 3))
-
     def test_futures_eod_rows_concat_without_future_warning(self):
         from markets.commodity import futures_eod as F
         old = pd.DataFrame([{c: None for c in F.COLS} | {"date": pd.Timestamp("2026-10-01"), "oi": 5.0, "source": "bhavcopy"}], columns=F.COLS)

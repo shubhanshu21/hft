@@ -58,11 +58,7 @@ class TestMatch(Base):
         self.assertEqual(r["expected"], {"2026-11-12": 100_000, "2026-11-13": 102_000})
         self.assertEqual(r["start"], "2026-11-10")
 
-    def test_mcx_contract_matches_its_family_and_crypto_allows_a_day(self):
-        self.account("MCX_TREND_CARRY", 250_000)
-        self.buy("MCX_TREND_CARRY", "CRUDEOILM26DECFUT", "2026-11-16", 8208.0, {"family": "CRUDEOILM"})
-        r = self.check("MCX_TREND_CARRY", lambda body: result(["2026-11-16"], [250_000], {"2026-11-16": [("CRUDEOILM", 8208.0)]}))
-        self.assertEqual(len(r["matched"]), 1)
+    def test_crypto_allows_a_day(self):
         self.account("CRYPTO_DIP_REVERSAL")
         self.buy("CRYPTO_DIP_REVERSAL", "ETH", "2026-11-15", 2000.0)          # IST morning = the previous UTC day in the backtest
         r = self.check("CRYPTO_DIP_REVERSAL", lambda body: result(["2026-11-14"], [100_000], {"2026-11-14": [("ETH", 2001.0)]}))
@@ -83,29 +79,24 @@ class TestMatch(Base):
         b = P.bodies("CRYPTO_DIP_REVERSAL", 100_000)[0]
         from engine import backtest_api as api
         self.assertEqual(api.validate(b | {"start": "2026-11-01", "end": "2026-11-18"})["params"]["tax"], "business")
-        for aid in ("MCX_TREND_CARRY", "RESULTS_GAP", "EQUITY_BREAKOUT"):           # every body passes the website's own validation
+        for aid in ("RESULTS_GAP", "EQUITY_BREAKOUT"):           # every body passes the website's own validation
             for body in P.bodies(aid, 100_000):
                 api.validate(body | {"start": "2026-11-01", "end": "2026-11-18"})
 
     def test_backtest_with_no_trade_is_flat_money_not_an_error(self):
-        """2026-11-19: MCX at 1x made no trade since 24 Oct; the nightly check crashed on it instead of showing paper's extra lot."""
-        self.account("MCX_TREND_CARRY", 250_000)
-        self.buy("MCX_TREND_CARRY", "CRUDEOILM26DECFUT", "2026-11-16", 8208.0, {"family": "CRUDEOILM"})
+        """2026-11-19 (seen on MCX at 1x, since removed): a backtest that made no trade crashed the nightly check instead of showing
+        paper's own buys as differences."""
+        self.account("EQUITY_BREAKOUT")
+        self.buy("EQUITY_BREAKOUT", "SBIN", "2026-11-16", 1148.0)
         def none(body):
-            raise BacktestError("No trade in the chosen dates (trend_carry needs about a year of history)")
-        r = self.check("MCX_TREND_CARRY", none)
-        self.assertEqual(r["expected"], {"2026-11-10": 250_000, "2026-11-18": 250_000})
-        self.assertEqual([x["sym"] for x in r["only_paper"]], ["CRUDEOILM"])
+            raise BacktestError("No trade in the chosen dates")
+        r = self.check("EQUITY_BREAKOUT", none)
+        self.assertEqual(r["expected"], {"2026-11-10": 100_000, "2026-11-18": 100_000})
+        self.assertEqual([x["sym"] for x in r["only_paper"]], ["SBIN"])
         def other(body):
             raise BacktestError("something else broke")
         with self.assertRaises(BacktestError):
-            self.check("MCX_TREND_CARRY", other)
-
-    def test_mcx_size_reaches_the_backtest(self):
-        from engine import backtest_api as api
-        with mock.patch.dict("os.environ", {"MCX_TREND_CARRY_EXPOSURE": "2.0"}):
-            body = P.bodies("MCX_TREND_CARRY", 250_000)[0]
-            self.assertEqual(api.validate(body | {"start": "2026-11-01", "end": "2026-11-18"})["params"]["leverage"], 2.0)
+            self.check("EQUITY_BREAKOUT", other)
 
     def test_recent_differences_only(self):
         r = {"account": "X", "only_paper": [{"sym": "OLD", "day": "2026-10-30"}, {"sym": "NEW", "day": "2026-11-17"}],
@@ -145,5 +136,5 @@ class TestApi(unittest.TestCase):
             r = api.backtest_check("RESULTS_GAP", f)
             self.assertEqual((r["matched"], r["only_paper"][0]["sym"], r["expected"]["2026-11-17"]), (5, "KANOHAR", 101000.0))
             self.assertIn("too few", api.backtest_check("EQUITY_BREAKOUT", f)["note"])
-            self.assertIsNone(api.backtest_check("MCX_TREND_CARRY", f))
-            self.assertIsNone(api.backtest_check("MCX_TREND_CARRY", Path(d) / "missing.json"))
+            self.assertIsNone(api.backtest_check("CRYPTO_DIP_REVERSAL", f))
+            self.assertIsNone(api.backtest_check("CRYPTO_DIP_REVERSAL", Path(d) / "missing.json"))

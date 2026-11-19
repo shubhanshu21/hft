@@ -22,8 +22,8 @@ touches the broker or the database.
 IMPORTANT (2026-10-26): the only runners that implement this contract are
 engine/live_dryrun.py and engine/live_trading.py, and both were REMOVED (2026-10-29) -- equity and
 currency were removed on 2026-10-21, so a strategy written this way is picked up by
-nothing that runs today. The three live engines (crypto_dip_reversal,
-mcx_trend_carry, results_gap) name their strategy module directly and carry their own
+nothing that runs today. The live engines (crypto_dip_reversal, results_gap,
+equity_breakout) name their strategy module directly and carry their own
 sizing, gates and state; there is no shared-gate layer between them. The earlier
 version of this docstring claimed both runners applied the SAME gates -- they never
 shared code, and neither is running.

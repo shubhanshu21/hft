@@ -10,7 +10,7 @@ export default function TopBar() {
   const [clock, setClock] = useState(istNow);
   useEffect(() => { const id = setInterval(() => setClock(istNow()), 1000); return () => clearInterval(id); }, []);
   const mkt = (id) => data?.accounts?.find((a) => a.id === id);
-  const lights = [["NSE", mkt("RESULTS_GAP")], ["MCX", mkt("MCX_TREND_CARRY")], ["Crypto", mkt("CRYPTO_DIP_REVERSAL")]];
+  const lights = [["NSE", mkt("RESULTS_GAP")], ["Crypto", mkt("CRYPTO_DIP_REVERSAL")]];
   return (
     <div className="topbar">
       <Ticker />

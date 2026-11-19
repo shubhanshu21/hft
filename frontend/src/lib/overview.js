@@ -4,8 +4,8 @@ export const pctOf = (value, start) => (start ? Math.round((value / start - 1) *
 export const statusTone = (engine) => (engine?.ok === true ? "good" : engine?.ok === false ? "bad" : "unknown");
 
 /** Account colours shared by the ticker, donut, tables and wallet cards (Look B, 2026-10-29). */
-export const ACCOUNT_COLOR = { MCX_TREND_CARRY: "#d97706", CRYPTO_DIP_REVERSAL: "#7c3aed", RESULTS_GAP: "#059669", EQUITY_BREAKOUT: "#2563eb" };
-export const ACCOUNT_SHORT = { MCX_TREND_CARRY: "MCX", CRYPTO_DIP_REVERSAL: "Crypto", RESULTS_GAP: "Equity", EQUITY_BREAKOUT: "Breakout" };
+export const ACCOUNT_COLOR = { CRYPTO_DIP_REVERSAL: "#7c3aed", RESULTS_GAP: "#059669", EQUITY_BREAKOUT: "#2563eb" };
+export const ACCOUNT_SHORT = { CRYPTO_DIP_REVERSAL: "Crypto", RESULTS_GAP: "Equity", EQUITY_BREAKOUT: "Breakout" };
 
 /** Ticker tape: the total first, then each account and its open trades. */
 export function tickerItems(ov) {

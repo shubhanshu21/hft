@@ -19,15 +19,15 @@ test("engine status tone: ok, problem, unknown", () => {
 import { tickerItems, donutSlices } from "../src/lib/overview.js";
 
 const ov = { totals: { value: 475000, start: 450000 }, accounts: [
-  { id: "MCX_TREND_CARRY", value: 251000, start: 250000, open: [{ symbol: "CRUDEOILM", profit_now: 1000 }] },
+  { id: "EQUITY_BREAKOUT", value: 101000, start: 100000, open: [{ symbol: "SBIN", profit_now: 1000 }] },
   { id: "CRYPTO_DIP_REVERSAL", value: 100000, start: 100000, open: [] },
   { id: "RESULTS_GAP", error: "unavailable" }] };
 
 test("ticker: total, then each account and its open trades; broken accounts skipped", () => {
   const t = tickerItems(ov);
-  assert.deepEqual(t.map((x) => x.label), ["Total", "MCX", "CRUDEOILM", "Crypto"]);
+  assert.deepEqual(t.map((x) => x.label), ["Total", "Breakout", "SBIN", "Crypto"]);
   assert.equal(t[0].change, 25000);
-  assert.equal(t[1].change, 0.4);
+  assert.equal(t[1].change, 1);
   assert.deepEqual(tickerItems(null), []);
 });
 

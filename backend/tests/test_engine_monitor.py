@@ -17,7 +17,7 @@ MON_0910 = datetime(2026, 10, 26, 9, 10, 4, tzinfo=IST)
 
 MON_0930 = datetime(2026, 10, 26, 9, 30, 9, tzinfo=IST)
 MON_0940 = datetime(2026, 10, 26, 9, 40, 6, tzinfo=IST)     # the buy-retry slot added 2026-10-26
-ALL_TIMERS = ("hft-crypto-dip-reversal.timer", "hft-mcx-trend-carry.timer", "hft-results-gap.timer", "hft-equity-breakout.timer")
+ALL_TIMERS = ("hft-crypto-dip-reversal.timer", "hft-results-gap.timer", "hft-equity-breakout.timer")
 
 
 def fake_sh(active=ALL_TIMERS, crypto=("success", None), mcx=("success", MON_0910), rg=("success", MON_0940), bo=("success", None)):
@@ -68,25 +68,13 @@ class TestProblems(Base):
 
     def test_crypto_timer_off_and_failed_run(self):
         self.crypto_saved(MON_10)
-        p = self.check(MON_10, sh=fake_sh(active=("hft-mcx-trend-carry.timer", "hft-results-gap.timer"), crypto=("exit-code", MON_10)))["problems"]
+        p = self.check(MON_10, sh=fake_sh(active=("hft-results-gap.timer", "hft-equity-breakout.timer"), crypto=("exit-code", MON_10)))["problems"]
         self.assertIn("crypto_timer", p)
         self.assertIn("crypto_failed", p)
-
-    def test_mcx_missed_its_morning_run(self):
-        self.crypto_saved(MON_10)
-        p = self.check(MON_10, sh=fake_sh(mcx=("success", FRI_2340)))["problems"]
-        self.assertIn("mcx_missed", p)
-        self.assertIn("09:10", p["mcx_missed"])
-
-    def test_mcx_not_judged_inside_the_grace_period(self):
-        now = datetime(2026, 10, 26, 9, 20, tzinfo=IST)
-        self.crypto_saved(now)
-        self.assertNotIn("mcx_missed", self.check(now, sh=fake_sh(mcx=("success", FRI_2340)))["problems"])
 
     def test_weekend_counts_back_to_friday_night(self):
         sat = datetime(2026, 10, 24, 12, 0, tzinfo=IST)
         self.crypto_saved(sat)
-        self.assertEqual(M.last_mcx_slot(sat), datetime(2026, 10, 23, 23, 40, tzinfo=IST))
         self.assertEqual(self.check(sat, sh=fake_sh(mcx=("success", FRI_2340)))["problems"], {})
 
     def test_upstox_login_checked_from_7_on_weekday_mornings(self):
@@ -103,17 +91,13 @@ class TestProblems(Base):
             self.check(quiet, sh=fake_sh(mcx=("success", FRI_2340)), token_ok=lambda: calls.append(1) or False)
             self.assertEqual(calls, [], quiet)
 
-    def test_mcx_run_failed(self):
-        self.crypto_saved(MON_10)
-        self.assertIn("mcx_failed", self.check(MON_10, sh=fake_sh(mcx=("exit-code", MON_0910)))["problems"])
 
-    def test_upstox_login_checked_only_before_an_mcx_run(self):
-        before = datetime(2026, 10, 26, 8, 50, tzinfo=IST)
-        self.crypto_saved(before)
-        self.assertIn("upstox_login", self.check(before, sh=fake_sh(mcx=("success", FRI_2340)), token_ok=lambda: False)["problems"])
-        calls = []
-        self.check(MON_10, token_ok=lambda: calls.append(1) or False)
-        self.assertEqual(calls, [])                          # 10:00 is not within 30 min of an MCX run
+class TestNoMcx(Base):
+    def test_mcx_removed_2026_11_19_raises_no_mcx_alerts(self):
+        """The user removed MCX trading (2026-11-19): its timer being off must not alert, and nothing mcx_* is ever reported."""
+        self.crypto_saved(MON_10)
+        p = self.check(MON_10, sh=fake_sh(), journal=lambda cmd: "Failed with result 'exit-code'.\n")["problems"]
+        self.assertFalse([k for k in p if k.startswith("mcx")])
 
 
 class TestAlerts(Base):
@@ -153,7 +137,6 @@ class TestFailedRunIsNotMasked(Base):
         p = self.check(MON_10, journal=lambda cmd: self.FAILED)["problems"]       # the 15:20 run itself succeeded
         self.assertIn("rg_failed", p)
         self.assertIn("1 failed run", p["rg_failed"])
-        self.assertIn("mcx_failed", p)
 
     def test_the_real_journal_line_with_the_unit_name_first_counts(self):
         # what journalctl -o cat really prints (seen on this server): the unit name, then the message
@@ -167,7 +150,6 @@ class TestFailedRunIsNotMasked(Base):
         self.crypto_saved(MON_10)
         p = self.check(MON_10, journal=lambda cmd: "Finished with result: success")["problems"]
         self.assertNotIn("rg_failed", p)
-        self.assertNotIn("mcx_failed", p)
 
     def test_an_unreadable_journal_is_not_an_alarm(self):
         self.crypto_saved(MON_10)
@@ -190,19 +172,9 @@ class TestEngineStatus(Base):
     def test_crypto_stale_and_off(self):
         self.crypto_saved(MON_10 - timedelta(hours=1))
         self.assertFalse(M.engine_status("CRYPTO_DIP_REVERSAL", MON_10, sh=fake_sh(), crypto_state=self.crypto)["ok"])
-        off = M.engine_status("CRYPTO_DIP_REVERSAL", MON_10, sh=fake_sh(active=("hft-mcx-trend-carry.timer", "hft-results-gap.timer")), crypto_state=self.crypto)
+        off = M.engine_status("CRYPTO_DIP_REVERSAL", MON_10, sh=fake_sh(active=("hft-results-gap.timer", "hft-equity-breakout.timer")), crypto_state=self.crypto)
         self.assertFalse(off["ok"])
         self.assertIn("OFF", off["text"])
-
-    def test_mcx_running_shows_next_slot(self):
-        st = M.engine_status("MCX_TREND_CARRY", MON_10, sh=fake_sh(mcx=("success", MON_0910)))
-        self.assertTrue(st["ok"])
-        self.assertIn("next at Mon 23:40", st["text"])
-
-    def test_mcx_missed(self):
-        st = M.engine_status("MCX_TREND_CARRY", MON_10, sh=fake_sh(mcx=("success", FRI_2340)))
-        self.assertFalse(st["ok"])
-        self.assertIn("missed", st["text"])
 
 
 class TestResultsGapMonitor(Base):
@@ -268,7 +240,7 @@ class TestEquityBreakout(Base):
         self.assertNotIn("bo_missed", self.problems(MON_10, bo=("success", None)))
 
     def test_timer_off(self):
-        self.assertIn("bo_timer", self.problems(MON_10, active=ALL_TIMERS[:3]))
+        self.assertIn("bo_timer", self.problems(MON_10, active=[t for t in ALL_TIMERS if "breakout" not in t]))
 
     def test_failed_session_today(self):
         self.crypto_saved(MON_10)

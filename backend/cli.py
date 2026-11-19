@@ -8,12 +8,13 @@ accounts EQUITY_SWING/DRYRUN_ACCOUNT, engine/equity_swing.py, hft-dryrun.service
 history). The 5-minute scalpers (commodity, currency, equity) were deleted on 2026-10-10 after losing money once costs and real
 fills were counted, and MCX commodity trading was removed entirely on 2026-10-12, crypto and the gold_crude MCX strategy on
 2026-10-14 (MCX data is still downloaded: markets/commodity/data.py, engine/depth_recorder.py) -- see git history. What paper
-trading runs now: crypto (`dip_reversal`, own account CRYPTO_DIP_REVERSAL) and commodity (`trend_carry`, own account MCX_TREND_CARRY).
+trading runs now: crypto (`dip_reversal`, CRYPTO_DIP_REVERSAL) and equity (RESULTS_GAP, EQUITY_BREAKOUT); MCX trend_carry was
+removed 2026-11-19 at the user's request (git history has it).
 
 Usage Examples:
     # 1. Report / reset the paper-trading database
     python3 cli.py report
-    python3 cli.py reset-db --account MCX_TREND_CARRY --capital 250000   # wipes EVERY account (backup kept first)
+    python3 cli.py reset-db --account CRYPTO_DIP_REVERSAL --capital 100000   # wipes EVERY account (backup kept first)
 
 """
 from __future__ import annotations
@@ -91,7 +92,7 @@ def main():
     # Report Subcommand
     p_rep = subparsers.add_parser("report", help="View SQLite PnL & trade performance dashboard")
     p_rep.add_argument("--db", default=None, help="SQLite DB path")
-    p_rep.add_argument("--account", default="CRYPTO_DIP_REVERSAL", help="Account ID (CRYPTO_DIP_REVERSAL or MCX_TREND_CARRY)")
+    p_rep.add_argument("--account", default="CRYPTO_DIP_REVERSAL", help="Account ID (CRYPTO_DIP_REVERSAL, RESULTS_GAP or EQUITY_BREAKOUT)")
     p_rep.set_defaults(func=cmd_report)
 
     # Reset DB Subcommand
@@ -104,7 +105,7 @@ def main():
     p_rst.set_defaults(func=cmd_reset_db)
 
     p_st = subparsers.add_parser("status", help="One-screen health check: engine status, P&L, open positions, token, last backup")
-    p_st.add_argument("--account", default="CRYPTO_DIP_REVERSAL", help="Account ID (CRYPTO_DIP_REVERSAL or MCX_TREND_CARRY)")
+    p_st.add_argument("--account", default="CRYPTO_DIP_REVERSAL", help="Account ID (CRYPTO_DIP_REVERSAL, RESULTS_GAP or EQUITY_BREAKOUT)")
     p_st.set_defaults(func=cmd_status)
 
     p_rs = subparsers.add_parser("restore-db", help="Restore the paper-trading DB from a backup (daemon must be stopped)")

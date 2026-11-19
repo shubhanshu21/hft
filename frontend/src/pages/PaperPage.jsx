@@ -11,17 +11,16 @@ import { useCountUp } from "../hooks/useCountUp.js";
 import { inr, signed, tone, whyText } from "../lib/format.js";
 import { ACCOUNT_COLOR, ACCOUNT_SHORT } from "../lib/overview.js";
 
-const STRATEGY_LABEL = { trend_carry: "MCX trend + carry", dip_reversal: "Crypto dip-reversal", results_gap: "Results-day gap-up", nr7_breakout: "Quiet-day breakout", d55_breakout: "55-day high", momentum_12_1: "12-month momentum", earnings_drift: "Earnings drift (swing)" };
+const STRATEGY_LABEL = { dip_reversal: "Crypto dip-reversal", results_gap: "Results-day gap-up", nr7_breakout: "Quiet-day breakout", d55_breakout: "55-day high", momentum_12_1: "12-month momentum", earnings_drift: "Earnings drift (swing)" };
 const ABOUT = {
   CRYPTO_DIP_REVERSAL: "Buys a sharp dip on 9 coins' perpetual futures, 5 seconds after every 5-minute candle closes. Exits at +15%, -7%, the middle band or after 24 hours.",
-  MCX_TREND_CARRY: "Holds the best 3 of 8 MCX commodities on trend and carry, re-checked every 10 trading days at 09:10 or 23:40 IST.",
   RESULTS_GAP: "Two strategies share this account. Results gap: at 09:30 it buys liquid stocks that opened 7%+ above the market after results and kept rising, and sells them at 15:20. Earnings drift: buys at the open stocks whose results jumped 4%+ vs the market on 2x volume, and sells them at the open 40 trading days later.",
   EQUITY_BREAKOUT: "Two swing strategies, half the money each (since 19 Nov 2026). Breakouts on the day's 200 most-traded NSE stocks, only while at least half of them are above their 50-day average: a quarter of the money buys quiet-day (NR7) breakouts when the price passes that day's high (up to 5 stocks), a quarter buys stocks that closed at a 55-day high, at the next open (up to 3); each has a trailing stop, and one still below its buy price after 20 trading days is sold. Momentum: on the first trading day of each month, the 20 stocks with the best 12-month return among the 300 most-traded, bought at the open and kept while they stay in the top 20.",
 };
 const when = (s) => (s ? new Date(s).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" }) : "-");
 const qtyFmt = (q) => (q == null ? "-" : Number(q).toLocaleString("en-IN", { maximumFractionDigits: 4 }));
 const pxFmt = (p) => (p == null ? "-" : Number(p).toFixed(Math.abs(p) < 10 ? 4 : 2));   // small coin prices (DOGE 0.09) need more decimals
-const ACCOUNTS = ["MCX_TREND_CARRY", "CRYPTO_DIP_REVERSAL", "RESULTS_GAP", "EQUITY_BREAKOUT"];
+const ACCOUNTS = ["CRYPTO_DIP_REVERSAL", "RESULTS_GAP", "EQUITY_BREAKOUT"];
 const EQUITY = new Set(["RESULTS_GAP", "EQUITY_BREAKOUT"]);
 
 /** Accounts (2026-10-29 layout redesign): one paper account -- a headline strip, the value chart and the engine card side by side,

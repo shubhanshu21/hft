@@ -7,12 +7,10 @@ Checks (each problem is alerted ONCE when it appears, repeated every REMIND_H ho
 clears -- state in var/db/engine_monitor_state.json):
   * crypto  -- hft-crypto-dip-reversal.timer active; the engine saved its state within CRYPTO_STALE_MIN (it saves on every 5-minute run);
                its last run exited successfully.
-  * MCX     -- hft-mcx-trend-carry.timer active; the service finished a run after the latest scheduled slot (Mon-Fri 09:10 and 23:40 IST,
-               MCX_GRACE_MIN allowed) and that run succeeded.
   * equity breakout -- hft-equity-breakout.timer active; on an NSE trading day the 09:08 session started (checked from 09:25 IST);
                no failed run today. The session is one long run 09:08 -> 15:31, so the service is "activating" while it trades.
-  * Upstox  -- in the half hour before each MCX run, the login token is refreshed if needed and must then be valid (MCX prices come
-               from Upstox), so there is time to log in by hand.
+  * Upstox  -- weekday mornings 07:00-09:40 the login token is refreshed if needed and must then be valid (the equity engines' prices
+               come from Upstox), so there is time to log in by hand. (MCX was removed 2026-11-19 at the user's request.)
 It replaced the old hft-dryrun watchdog (both removed: the service 2026-10-21, engine/watchdog.py 2026-10-30)."""
 from __future__ import annotations
 
@@ -28,12 +26,10 @@ IST = timezone(timedelta(hours=5, minutes=30))
 STATE_PATH = DB_DIR / "engine_monitor_state.json"
 CRYPTO_STATE = DB_DIR / "crypto_dip_reversal_state.json"
 CRYPTO_STALE_MIN = 15
-MCX_SLOTS = (dtime(9, 10), dtime(23, 40))          # hft-mcx-trend-carry.timer, IST, Mon-Fri
-MCX_GRACE_MIN = 20
+GRACE_MIN = 20
 RG_SLOTS = (dtime(9, 30), dtime(9, 40), dtime(15, 20))   # hft-results-gap.timer trading runs, IST, Mon-Fri (09:40 = buy retry)
 BO_START, BO_DUE = dtime(9, 8), dtime(9, 25)       # hft-equity-breakout.timer session start; alert if not started by BO_DUE
-TOKEN_WINDOW_MIN = 30                               # check the Upstox login this long before each MCX slot
-MORNING_LOGIN = (dtime(7, 0), dtime(9, 40))         # ...and all weekday morning (2026-11-19: a 05:08 Chromium update broke it, first seen 10:30)
+MORNING_LOGIN = (dtime(7, 0), dtime(9, 40))         # weekday mornings (2026-11-19: a 05:08 Chromium update broke it, first seen 10:30)
 REMIND_H = 6
 
 
@@ -103,19 +99,6 @@ def next_bo_session(now: datetime) -> datetime:
     return datetime.combine(d, BO_START, IST)
 
 
-def last_mcx_slot(now: datetime) -> datetime:
-    """The most recent scheduled MCX run time at or before now (weekdays only)."""
-    d = now.date()
-    for _ in range(8):
-        if d.weekday() < 5:
-            for t in sorted(MCX_SLOTS, reverse=True):
-                slot = datetime.combine(d, t, IST)
-                if slot <= now:
-                    return slot
-        d -= timedelta(days=1)
-    raise RuntimeError("no MCX slot in the last week")
-
-
 def last_slot(now: datetime, slots) -> datetime:
     """The most recent weekday run time in `slots` at or before now."""
     d = now.date()
@@ -141,18 +124,6 @@ def next_slot(now: datetime, slots) -> datetime:
     raise RuntimeError("no slot in the next week")
 
 
-def next_mcx_slot(now: datetime) -> datetime:
-    d = now.date()
-    for _ in range(8):
-        if d.weekday() < 5:
-            for t in sorted(MCX_SLOTS):
-                slot = datetime.combine(d, t, IST)
-                if slot > now:
-                    return slot
-        d += timedelta(days=1)
-    raise RuntimeError("no MCX slot in the next week")
-
-
 def problems(now: datetime, sh=_systemctl, crypto_state: Path = CRYPTO_STATE, token_ok=None, journal=None) -> dict[str, str]:
     """{problem key: plain-words message} for everything wrong right now; {} when all is fine."""
     out: dict[str, str] = {}
@@ -169,24 +140,11 @@ def problems(now: datetime, sh=_systemctl, crypto_state: Path = CRYPTO_STATE, to
     when, result = last_run("hft-crypto-dip-reversal.service", sh)
     if result and result != "success":
         out["crypto_failed"] = f"Crypto engine's last run FAILED ({result}). Check: journalctl --user -u hft-crypto-dip-reversal.service -n 50"
-    # MCX
-    if not unit_active("hft-mcx-trend-carry.timer", sh):
-        out["mcx_timer"] = "MCX engine timer is OFF -- the 2-weekly rebalance will not happen."
-    slot = last_mcx_slot(now)
-    if now - slot > timedelta(minutes=MCX_GRACE_MIN):
-        when, result = last_run("hft-mcx-trend-carry.service", sh)
-        if when is None or when < slot:
-            out["mcx_missed"] = f"MCX engine missed its {slot:%a %d %b %H:%M} IST run."
-        elif result and result != "success":
-            out["mcx_failed"] = f"MCX engine's {when:%a %H:%M} IST run FAILED ({result}). Check: journalctl --user -u hft-mcx-trend-carry.service -n 50"
-    n = failed_runs("hft-mcx-trend-carry.service", _today_start(now), run=journal)      # a failure earlier today is not masked by a
-    if n and "mcx_failed" not in out:                                                   # later successful run
-        out["mcx_failed"] = f"MCX engine had {n} failed run(s) today. Check: journalctl --user -u hft-mcx-trend-carry.service -n 50"
     # results_gap (equity intraday): its 09:30 buy and 15:20 sell runs
     if not unit_active("hft-results-gap.timer", sh):
         out["rg_timer"] = "Results-gap engine timer is OFF -- no results-day trades will be taken."
     slot = last_slot(now, RG_SLOTS)
-    if now - slot > timedelta(minutes=MCX_GRACE_MIN):
+    if now - slot > timedelta(minutes=GRACE_MIN):
         when, result = last_run("hft-results-gap.service", sh)
         if when is not None and when < slot:                       # never run yet (just installed) is not a miss
             out["rg_missed"] = f"Results-gap engine missed its {slot:%a %d %b %H:%M} IST run."
@@ -219,12 +177,11 @@ def problems(now: datetime, sh=_systemctl, crypto_state: Path = CRYPTO_STATE, to
     if n:
         out["bo_failed"] = (f"Equity breakout engine had {n} failed session(s) today -- stops are not being watched until it runs again. "
                             "Check: journalctl --user -u hft-equity-breakout.service -n 50")
-    # Upstox login: weekday mornings from 07:00 (after the 06:30 nightly login, before the 08:50 equity run) and before every MCX run
-    morning = now.weekday() < 5 and MORNING_LOGIN[0] <= now.time() <= MORNING_LOGIN[1]
-    if morning or next_mcx_slot(now) - now <= timedelta(minutes=TOKEN_WINDOW_MIN):
+    # Upstox login: weekday mornings from 07:00 (after the 06:30 nightly login, before the 08:50 equity run)
+    if now.weekday() < 5 and MORNING_LOGIN[0] <= now.time() <= MORNING_LOGIN[1]:
         ok = token_ok() if token_ok else _upstox_token_ok()
         if not ok:
-            out["upstox_login"] = ("Upstox login is EXPIRED and the automatic refresh failed -- the equity (08:50) and MCX (09:10) engines "
+            out["upstox_login"] = ("Upstox login is EXPIRED and the automatic refresh failed -- the equity engines (08:50) "
                                    "cannot get prices. Log in: cd backend && python3 -m services.auth.upstox_auth")
     return out
 
@@ -237,7 +194,7 @@ def _upstox_token_ok() -> bool:
         return False
 
 
-AREA = {"crypto": "Crypto engine", "mcx": "MCX engine", "rg": "Equity engine (results gap)", "bo": "Breakout engine", "upstox": "Upstox login"}
+AREA = {"crypto": "Crypto engine", "rg": "Equity engine (results gap)", "bo": "Breakout engine", "upstox": "Upstox login"}
 
 
 def _area(key: str) -> str:
@@ -320,25 +277,11 @@ def engine_status(account: str, now: datetime | None = None, sh=_systemctl, cryp
             mins = int((now - last).total_seconds() // 60)
             text = f"{'Running' if fresh else 'NOT RUNNING'} · last check {('just now' if mins < 1 else f'{mins} min ago')} · next at {nxt:%H:%M} IST"
         return {"ok": ok, "last": last.isoformat() if last else None, "next": nxt.isoformat() if nxt else None, "text": text}
-    if account == "MCX_TREND_CARRY":
-        on = unit_active("hft-mcx-trend-carry.timer", sh)
-        when, result = last_run("hft-mcx-trend-carry.service", sh)
-        slot = last_mcx_slot(now)
-        missed = now - slot > timedelta(minutes=MCX_GRACE_MIN) and (when is None or when < slot)
-        ok = on and not missed and result in ("", "success")
-        nxt = next_mcx_slot(now) if on else None
-        if not on:
-            text = "Engine is OFF -- the 2-weekly rebalance will not happen"
-        elif not ok:
-            text = f"Last run {'was missed' if missed else 'FAILED'} · next at {nxt:%a %H:%M} IST"
-        else:
-            text = f"Running · last check {when:%a %H:%M} IST · next at {nxt:%a %H:%M} IST" if when else f"Running · next at {nxt:%a %H:%M} IST"
-        return {"ok": ok, "last": when.isoformat() if when else None, "next": nxt.isoformat() if nxt else None, "text": text}
     if account == "RESULTS_GAP":
         on = unit_active("hft-results-gap.timer", sh)
         when, result = last_run("hft-results-gap.service", sh)
         slot = last_slot(now, RG_SLOTS)
-        missed = now - slot > timedelta(minutes=MCX_GRACE_MIN) and when is not None and when < slot
+        missed = now - slot > timedelta(minutes=GRACE_MIN) and when is not None and when < slot
         ok = on and not missed and result in ("", "success")
         nxt = next_slot(now, RG_SLOTS) if on else None
         if not on:

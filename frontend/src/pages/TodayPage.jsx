@@ -11,7 +11,7 @@ import Pane from "../components/ui/Pane.jsx";
 const AccountTowers = lazy(() => import("../components/three/AccountTowers.jsx"));   // three.js only loads here
 const webgl = () => { try { const c = document.createElement("canvas"); return !!(c.getContext("webgl2") || c.getContext("webgl")); } catch { return false; } };
 
-const WHAT = { MCX_TREND_CARRY: "Commodity futures", CRYPTO_DIP_REVERSAL: "Perpetual futures", RESULTS_GAP: "NSE intraday + swing", EQUITY_BREAKOUT: "NSE swing breakouts" };
+const WHAT = { CRYPTO_DIP_REVERSAL: "Perpetual futures", RESULTS_GAP: "NSE intraday + swing", EQUITY_BREAKOUT: "NSE swing breakouts" };
 const when = (s) => (s ? new Date(s).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" }) : "-");
 
 /** Desk (2026-10-29 layout redesign): a headline strip, then a dense grid -- value chart, allocation, open positions, engine schedule,
