@@ -216,6 +216,29 @@ class Session:
         return {"last": last, "dead": dead, "cand": cand, "atr": atr, "mom": {"due": due, "targets": targets, "buying": False}}
 
 
+RELOGIN_EVERY_S = 600
+_last_relogin = [-1e9]
+
+
+def _recover_login(broker, log=print, mono=time.monotonic) -> None:
+    """2026-11-19: a login made by another process cancels this session's, and Upstox then answers 401 for the rest of the day (the
+    session watched nothing 11:02-15:31). When the broker flags a dead login, adopt the newest saved one -- or log in again -- and hand it
+    to the broker; at most once every RELOGIN_EVERY_S so a broken login is not retried every minute."""
+    from services.broker.upstox_broker import token_invalid_event
+    if not token_invalid_event.is_set() or mono() - _last_relogin[0] < RELOGIN_EVERY_S:
+        return
+    _last_relogin[0] = mono()
+    try:
+        from services.auth.upstox_auto_login import ensure_fresh_upstox_token
+        ok = ensure_fresh_upstox_token(on_token_refreshed=broker.set_access_token)
+    except Exception as exc:                                       # a failed refresh must never stop the session
+        log(f"Upstox login recovery failed: {exc!s:.150}")
+        return
+    if ok:
+        token_invalid_event.clear()
+    log(f"Upstox login {'recovered' if ok else 'still failing'} after a 401")
+
+
 def expected_last_day(today: date) -> date:
     from engine.nightly import last_trading_day
     from services.utils.market_holidays import get_trading_holidays
@@ -260,7 +283,8 @@ def session(db, broker, send=None, log=print, sleep=time.sleep, clock=lambda: da
         try:
             q = quotes(broker, keys)
         except Exception as exc:
-            log(f"quote failed: {exc!s:.150}"); sleep(POLL_S); continue
+            log(f"quote failed: {exc!s:.150}"); _recover_login(broker, log); sleep(POLL_S); continue
+        _recover_login(broker, log)
         prices = {s: v["ltp"] for s, v in q.items() if v.get("ltp")}
         if not opened and any(not (q.get(s) or {}).get("open") for s in keys) and ses.now < at(ses.now, (9, 20, 0)):
             sleep(10); continue                                      # opening prices not published yet

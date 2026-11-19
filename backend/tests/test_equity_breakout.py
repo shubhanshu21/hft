@@ -294,3 +294,39 @@ class TestWebBacktestBenchmark(unittest.TestCase):
         with mock.patch.object(BP, "backtest", return_value=fake), mock.patch.object(ED, "nifty_daily", return_value=nifty):
             rep = BP.web_backtest(100_000, "2026-11-17", "2026-11-18")
         self.assertEqual(rep["benchmark"], [100_000, 100_000])
+
+
+class TestLoginRecovery(unittest.TestCase):
+    """2026-11-19: a second login at 11:01 cancelled the running session's Upstox login; every quote after 11:02 failed (401) and the
+    session watched no stops or buy-stops until 15:31. Now, when the broker flags a dead login, the session adopts the newest saved one
+    (or logs in again) -- at most once every 10 minutes."""
+
+    def setUp(self):
+        from services.broker import upstox_broker
+        self.ev = upstox_broker.token_invalid_event
+        self.ev.clear(); self.addCleanup(self.ev.clear)
+        E._last_relogin[0] = -1e9
+
+    def test_dead_login_adopts_the_new_one_and_is_rate_limited(self):
+        broker, calls, t = mock.Mock(), [], [1000.0]
+        def fresh(on_token_refreshed=None):
+            calls.append(1); on_token_refreshed("NEW"); return "NEW"
+        with mock.patch("services.auth.upstox_auto_login.ensure_fresh_upstox_token", side_effect=fresh):
+            E._recover_login(broker, log=lambda *a: None, mono=lambda: t[0])        # nothing flagged: no call
+            self.assertEqual(calls, [])
+            self.ev.set()
+            E._recover_login(broker, log=lambda *a: None, mono=lambda: t[0])
+            broker.set_access_token.assert_called_once_with("NEW")
+            self.assertFalse(self.ev.is_set())
+            self.ev.set(); t[0] += 60                                                  # flagged again a minute later: wait
+            E._recover_login(broker, log=lambda *a: None, mono=lambda: t[0])
+            self.assertEqual(len(calls), 1)
+            t[0] += E.RELOGIN_EVERY_S
+            E._recover_login(broker, log=lambda *a: None, mono=lambda: t[0])
+            self.assertEqual(len(calls), 2)
+
+    def test_a_failing_refresh_never_breaks_the_session(self):
+        self.ev.set()
+        with mock.patch("services.auth.upstox_auto_login.ensure_fresh_upstox_token", side_effect=RuntimeError("chrome died")):
+            E._recover_login(mock.Mock(), log=lambda *a: None, mono=lambda: 5000.0)   # must not raise
+        self.assertTrue(self.ev.is_set())                                             # still flagged for the next try
