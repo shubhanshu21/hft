@@ -235,17 +235,48 @@ def _close(db, broker, p: dict, now: datetime, reason: str, lines: list) -> bool
         lines.append(f"{p['symbol']}: no live price -- kept open, will retry")
         return False
     _record_fill(db, broker, p, now, lines)
+    p = db.get_position(p["position_id"]) or p                 # _record_fill may have corrected the entry price
+    from services.utils import telegram as T
     qty, entry = int(p["qty"]), float(p["entry_price"])
-    c = S.costs(entry, px, qty)
-    gross = (px - entry) * qty
+    keep = swing_keep(db, p) if reason == "end_of_day" else 0
+    if keep:
+        _keep_as_swing(db, p, keep, now)
+        lines.append("KEPT " + T.bought_block(p["symbol"], f"{keep} of {qty} shares", entry, keep * entry,
+                                                f"kept as a swing trade -- strong results-day stocks kept rising in the backtest; sold after "
+                                                f"{ED.S.HOLD_DAYS} trading days with the earnings-drift holdings"))
+    sold = qty - keep
+    if sold <= 0:                                              # the whole position was kept: nothing sold today
+        db.close_position(p["position_id"], px, "kept_as_swing", 0.0, 0.0, 0.0)
+        return True
+    c = S.costs(entry, px, sold)
+    gross = (px - entry) * sold
     net = gross - c["total"]
     cap = float(db.get_account(ACCOUNT)["current_capital"]) + net
     hold = (now - datetime.fromisoformat(p["entry_time"])).total_seconds() / 60
-    db.record_trade(p["position_id"], p["symbol"], "long", qty, entry, px, p["entry_time"], now.isoformat(), hold, reason, gross, c, net, cap,
+    db.record_trade(p["position_id"], p["symbol"], "long", sold, entry, px, p["entry_time"], now.isoformat(), hold, reason, gross, c, net, cap,
                     account_id=ACCOUNT, strategy=NAME, close=True)
-    from services.utils import telegram as T
-    lines.append("SOLD " + T.sold_block(p["symbol"], f"{qty} shares", entry, px, net, c["total"], T.why_text(reason)))
+    lines.append("SOLD " + T.sold_block(p["symbol"], f"{sold} shares", entry, px, net, c["total"], T.why_text(reason)))
     return True
+
+
+def swing_keep(db, p: dict) -> int:
+    """Shares of a results_gap position to keep at 15:20 as a 40-day holding (earnings_drift.KEEP_RESULTS_GAP, 2026-11-18): one 1/10
+    slot of the drift money at the 09:30 price, only while a slot is free and the stock is not held already, never more than held."""
+    if not ED.S.KEEP_RESULTS_GAP:
+        return 0
+    mine = ED._mine(db)
+    if len(mine) >= ED.S.K or any(m["symbol"] == p["symbol"] for m in mine):
+        return 0
+    free = float(db.get_account(ACCOUNT)["current_capital"]) - ED.locked_cash(db)
+    return min(int(p["qty"]), ED.S.share_qty(float(p["entry_price"]), ED.sleeve_value(db) / ED.S.K, free))
+
+
+def _keep_as_swing(db, p: dict, keep: int, now: datetime) -> None:
+    """The kept shares become an earnings_drift holding bought at results_gap's price on the results day, so earnings_drift's own rules
+    (40 trading days from entry_date, its slots, its locked cash) sell and size them -- results_gap only ever sells strategy == results_gap."""
+    db.open_position(f"POS_ED_{now:%Y%m%d}_{p['symbol']}_RG", p["symbol"], "long", keep, float(p["entry_price"]), 0.0, 0.0, float(p["entry_price"]),
+                     account_id=ACCOUNT, instrument_key=p.get("instrument_key"), strategy=ED.S.NAME,
+                     state=json.dumps({"entry_date": str(now.date()), "fill": "kept from the results-gap day trade (its 09:30 price)"}))
 
 
 def exit_all(db, broker, now: datetime, lines: list) -> None:
@@ -303,7 +334,7 @@ def run(db, broker, now: datetime, holidays: set[date], lookup, send=print) -> l
         sold = any(ln.startswith("SOLD ") for ln in lines); bought = sum(ln.startswith("BOUGHT ") for ln in lines)
         icon = T.trade_icon([float(acc["current_capital"]) - capital_before] if sold else [], bought)
         title = "SOLD · Equity" if sold and not bought else "BOUGHT · Equity" if bought and not sold else "Equity"
-        blocks = [ln.split(" ", 1)[1] if ln.startswith(("SOLD ", "BOUGHT ")) else ln for ln in lines]
+        blocks = [("Kept " if ln.startswith("KEPT ") else "") + ln.split(" ", 1)[1] if ln.startswith(("SOLD ", "BOUGHT ", "KEPT ")) else ln for ln in lines]
         send(T.message(icon, title, blocks, value=float(acc["current_capital"]), start=float(acc["initial_capital"])))
     _save_state(_state())                                          # heartbeat for the monitor / paper page
     return lines

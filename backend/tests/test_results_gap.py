@@ -97,7 +97,8 @@ class EngineCase(unittest.TestCase):
         for p in (mock.patch.object(E, "STATE", self.tmp / "state.json"), mock.patch.object(S, "CALENDAR", cal),
                   mock.patch.object(S, "universe", return_value=UNI), mock.patch.object(S, "refresh_calendar", return_value=2),
                   mock.patch.object(E.ED, "STATE", self.tmp / "ed_state.json"), mock.patch.object(E.ED, "plan", return_value=[]),   # earnings_drift: own tests
-                  mock.patch.object(S, "established", return_value=True)):                        # the one-year filter: own tests
+                  mock.patch.object(S, "established", return_value=True),                         # the one-year filter: own tests
+                  mock.patch.object(E.ED.S, "KEEP_RESULTS_GAP", False)):                          # the 15:20 keep: TestKeepAsSwing
             p.start(); self.addCleanup(p.stop)
         self.lookup = lambda s: f"NSE_EQ|{s}"
         cal.touch()
@@ -435,3 +436,49 @@ class TestQuoteBatchPrevClose(unittest.TestCase):
         b = self.broker({"NSE_EQ:A": self.q("NSE_EQ|A", 975.0, None)})
         with mock.patch("services.broker.upstox_broker._circuit_is_open", return_value=False):
             self.assertIsNone(b.get_quote_batch(["NSE_EQ|A"])["NSE_EQ|A"]["prev_close"])
+
+
+class TestKeepAsSwing(EngineCase):
+    """2026-11-18 (user's yes): at 15:20 one 1/10 slot of each results_gap stock is kept as an earnings_drift holding for 40 trading
+    days (backtest Rs1L Oct 2022-Nov 2026: Rs2.10L -> 2.44L, worst fall unchanged); the rest is sold as before."""
+    def setUp(self):
+        super().setUp()
+        p = mock.patch.object(E.ED.S, "KEEP_RESULTS_GAP", True); p.start(); self.addCleanup(p.stop)
+
+    def day(self, ltp=115.0):
+        E.run(self.db, FakeBroker(quotes(BIG)), self.at(9, 30), set(), self.lookup, send=None)
+        return E.run(self.db, FakeBroker(quotes(BIG), ltp={"WIN": ltp}), self.at(15, 20), set(), self.lookup, send=None)
+
+    def test_one_slot_is_kept_the_rest_sold(self):
+        qty = int(100_000 * S.LEVERAGE // 112.0)
+        lines = self.day()
+        pos = self.db.get_open_positions(E.ACCOUNT)
+        self.assertEqual([(p["symbol"], p["strategy"], p["entry_price"]) for p in pos], [("WIN", E.ED.S.NAME, 112.0)])
+        keep = int(pos[0]["qty"])
+        self.assertEqual(keep, int(E.ED.S.SLEEVE_CAPITAL / E.ED.S.K // 112.0))          # one 1/10 slot at the 09:30 price
+        self.assertEqual(json.loads(pos[0]["state"])["entry_date"], "2026-10-26")       # earnings_drift counts its 40 days from here
+        t = self.db.get_trades(account_id=E.ACCOUNT)[0]
+        self.assertEqual(int(t["qty"]), qty - keep)                                     # the rest sold at 15:20 as before
+        self.assertTrue(any(ln.startswith("KEPT ") for ln in lines))
+        self.assertAlmostEqual(E.free_cash(self.db), float(self.db.get_account(E.ACCOUNT)["current_capital"]) - keep * 112.0)   # locked
+
+    def test_no_keep_when_slots_full_or_already_held(self):
+        for i in range(E.ED.S.K):
+            self.db.open_position(f"POS_ED_H{i}", f"H{i}", "long", 1, 10.0, 0.0, 0.0, 10.0, account_id=E.ACCOUNT, strategy=E.ED.S.NAME,
+                                  state=json.dumps({"entry_date": "2026-10-20"}))
+        self.day()
+        self.assertNotIn("WIN", [p["symbol"] for p in self.db.get_open_positions(E.ACCOUNT)])
+        self.db.open_position("POS_ED_WIN", "WIN", "long", 5, 100.0, 0.0, 0.0, 100.0, account_id=E.ACCOUNT, strategy=E.ED.S.NAME,
+                              state=json.dumps({"entry_date": "2026-10-20"}))
+        p = {"symbol": "WIN", "qty": 100, "entry_price": 112.0}
+        self.assertEqual(E.swing_keep(self.db, p), 0)
+
+    def test_the_kept_stock_counts_its_40_trading_days_from_the_results_day(self):
+        """earnings_drift sells a holding once trading_days_held(entry_date, today) reaches HOLD_DAYS; the kept row's entry_date is the
+        results day, so it is due 40 trading days after it (as in the backtest), not 40 days after some later date."""
+        from datetime import date as _d
+        self.day()
+        mine = E.ED._mine(self.db)
+        self.assertEqual(E.ED._entry_day(mine[0]), _d(2026, 10, 26))
+        self.assertLess(E.ED.S.trading_days_held(_d(2026, 10, 26), _d(2026, 12, 18), set()), E.ED.S.HOLD_DAYS)
+        self.assertGreaterEqual(E.ED.S.trading_days_held(_d(2026, 10, 26), _d(2026, 12, 21), set()), E.ED.S.HOLD_DAYS)

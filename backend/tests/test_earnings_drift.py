@@ -281,3 +281,15 @@ class TestBacktestPage(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestKeptResultsGapInBacktest(unittest.TestCase):
+    def test_backtest_buys_the_kept_results_gap_stock_after_the_open_buys(self):
+        ind = make_ind()
+        d = pd.Timestamp("2026-10-23")
+        with mock.patch.object(S, "results_events", return_value=EVENTS.iloc[0:0]):
+            r = S.backtest("2026-10-20", "2026-10-23", 100_000, ind=dict(ind, H=ind["C"], L=ind["C"]), record=True,
+                           extra={d: [("F1", 100.0), ("NOSUCH", 50.0)]})
+        buys = [e for evs in r["replay"]["events"] for e in evs if e["t"] == "buy"]
+        self.assertEqual([(b["sym"], b["q"]) for b in buys], [("F1", 100)])            # a 1/10 slot of Rs1L at Rs100; unknown stock skipped
+        self.assertIn("kept for 40 days", buys[0]["note"])

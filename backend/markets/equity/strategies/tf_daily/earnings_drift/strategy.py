@@ -43,6 +43,10 @@ MIN_REACTION, MIN_VOL_SURGE = 0.04, 2.0
 K, HOLD_DAYS = 10, 40          # 10 stocks since 2026-10-29 (was 5): see the docstring
 MIN_BREADTH_PCT = 50.0
 SLEEVE_CAPITAL = 100_000.0
+KEEP_RESULTS_GAP = True          # 2026-11-18 (user's yes): at 15:20 results_gap keeps one 1/10 slot of each stock as a 40-day holding
+                                 # here. Rs1L Oct 2022-Nov 2026: Rs2.10L -> 2.42L, worst fall -14% -> -13%; better in 2022-24 AND
+                                 # 2025-26; every hold of 30-60 days, every leave-one-year-out and dropping the 3 best extra trades
+                                 # still positive; ~3-4 extra trades a year (few: likely, not proven)
 ONE_SHARE_SLOTS = 2               # 2026-11-16: a share dearer than its slot is still bought (1 share) up to this many slots -- skipping
                                   # a valid signal cost money: Rs1L Oct 2022-Nov 2026 Rs2.03L (-16%) -> Rs2.13L (-14%); only ~3 times in 4 years
 
@@ -194,7 +198,7 @@ def trading_days_held(entry_day: date, today: date, holidays: set[date]) -> int:
 
 
 def backtest(start="2022-10-03", end=None, capital=100_000.0, ind: dict | None = None, slip_bp: float = SLIP_BP, record: bool = False,
-             progress=None) -> dict:
+             progress=None, extra: dict | None = None) -> dict:
     """The research account: Rs1L, up to K stocks, buy at the open after the signal day, sell at the open after HOLD_DAYS.
     record=True also returns the website's replay (days, equity, events, open positions, price bars of the traded stocks)."""
     ind = ind or indicators(load())
@@ -234,6 +238,16 @@ def backtest(start="2022-10-03", end=None, capital=100_000.0, ind: dict | None =
                 r = sig[(sig.sym == s) & (sig.signal_day == idx[i - 1])].iloc[0]
                 evs.append({"t": "buy", "side": "long", "sym": s, "q": q, "px": round(e, 2), "entry": round(e, 2),
                             "note": f"results {r.meeting:%d %b}: {r.reaction:+.1%} vs market on {r.surge:.1f}x volume"})
+        for s, e in (extra or {}).get(d, []):                          # results-gap stocks kept at 15:20 (KEEP_RESULTS_GAP), after the open's buys
+            if len(pos) >= K or s in pos or s not in col or not e > 0:
+                continue
+            equity = cash + sum(p["q"] * p["last"] for p in pos.values())
+            q = share_qty(e, equity / K, cash)
+            if q < 1:
+                continue
+            cash -= q * e; pos[s] = dict(q=q, e=e, i0=i, d0=d, last=e, k=len(rep["days"])); traded.add(s)
+            evs.append({"t": "buy", "side": "long", "sym": s, "q": q, "px": round(e, 2), "entry": round(e, 2),
+                        "note": "results-day jump: a slot of the results-gap day trade kept for 40 days"})
         for s, p in pos.items():
             c = C.iat[i, col[s]]
             if c == c:
@@ -258,10 +272,24 @@ def backtest(start="2022-10-03", end=None, capital=100_000.0, ind: dict | None =
     return out
 
 
+def results_gap_buys(start: str, end: str) -> dict:
+    """{day: [(symbol, 09:30 price)]} of results_gap's backtest buys -- the stocks the live engine keeps a slot of at 15:20."""
+    from markets.equity.strategies.tf_intraday.results_gap import strategy as RG
+    r = RG.backtest(100_000, start, end, leverage=RG.LEVERAGE)
+    out = {}
+    for d, evs in zip(r["days"], r["events"]):
+        for e in evs:
+            if e.get("t") == "buy":
+                out.setdefault(pd.Timestamp(str(d)[:10]), []).append((e["sym"], float(e["px"])))
+    return out
+
+
 def web_backtest(capital: float, start: str, end: str, slippage_bp: float = SLIP_BP, progress=None) -> dict:
-    """The website's replay shape (engine/backtest_api.py, the Backtest page). Daily data: var/archive/equity_all (every NSE stock)."""
+    """The website's replay shape (engine/backtest_api.py, the Backtest page). Daily data: var/archive/equity_all (every NSE stock).
+    With KEEP_RESULTS_GAP the results-gap stocks the live account keeps are bought too, so the page and the nightly check match live."""
     from core.backtester import metrics
-    r = backtest(start, end, capital, ind=cached_indicators(), slip_bp=slippage_bp, record=True, progress=progress)
+    extra = results_gap_buys(start, end) if KEEP_RESULTS_GAP else None
+    r = backtest(start, end, capital, ind=cached_indicators(), slip_bp=slippage_bp, record=True, progress=progress, extra=extra)
     rep = r["replay"]
     if len(rep["days"]) < 2:
         raise ValueError("No trading days in the chosen dates (daily data starts January 2022; signals need ~6 months of history)")
