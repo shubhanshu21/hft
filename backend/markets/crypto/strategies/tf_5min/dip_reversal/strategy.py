@@ -62,7 +62,13 @@ from core.backtester import metrics
 DATA_DIR = ARCHIVE_ROOT / "crypto"
 _VOL_CACHE_FILE = CACHE_DIR / "crypto_vol_scale.json"
 TAX = 0.312
-COINS = ("BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "AVAX", "LTC", "TRX")  # 2026-11-10: DOT + ADA dropped -- Delta India's real spread is
+COINS = ("BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "AVAX", "LTC", "TRX", "ZEC")  # 2026-11-20 ZEC added (user's yes): Rs1L 2022-01 ->
+# 2026-11-19 business income Rs14.3L -> Rs28.2L, dev 2022-24 x9.3 -> x12.4, test 2025-26 x3.5 -> x5.4, worst fall -65% -> -68%; still
+# Rs17.3L at 10bp a side. Watch: 65% of ZEC's own profit is 5 trades and its 2026 trades lost -0.25% each (2026 +77% -> +19%); picked by
+# today's Delta volume (mild hindsight). AAVE/UNI tested the same day and rejected (no edge 2025-26). Remove it if its live trades lose.
+VOL_COINS = ("BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "AVAX", "LTC", "TRX")  # the size scale's basket -- the 9 every result was
+# tested with; ZEC is not in it (its wild moves would shrink every coin's size, an untested change)
+# 2026-11-10: DOT + ADA dropped -- Delta India's real spread is
 # ~6bp (DOT) / ~10bp (ADA) a side, 4-7x the 1.5bp the backtest charged. At real costs x3 (spreads widen in the crashes this buys) all 11
 # coins: Rs1L -> Rs3.95L (-77%), dev 2022-24 Rs2.71L / test 2025-26 Rs1.45L; 9 coins Rs7.54L (-73%), Rs3.50L / Rs2.15L -- better in BOTH
 # windows. DOT was kept 2026-10-22 to avoid picking by results; the reason now is its cost today, not its past P&L.
@@ -89,7 +95,7 @@ MAX_CONCURRENT = 5                                # 2026-10-21 joint sweep: 5 be
 TAKER = 0.0005 * 1.18                              # Delta Exchange India futures market order incl. 18% GST (verified live 2026-10-21 -- same rate as CoinDCX)
 MAKER = 0.0002 * 1.18                              # limit order (the take-profit) incl. GST
 SLIP = {"BTC": 0.00005, "ETH": 0.00005, "SOL": 0.0001, "BNB": 0.00015, "XRP": 0.0001, "DOGE": 0.00015, "AVAX": 0.00045,  # half-spread a side,
-        "LTC": 0.0002, "TRX": 0.00015, "ADA": 0.0010, "DOT": 0.0006}   # Delta India book 2026-11-10; live paper fills (last price) pay it too
+        "LTC": 0.0002, "ZEC": 0.00005, "TRX": 0.00015, "ADA": 0.0010, "DOT": 0.0006}   # Delta India book 2026-11-10; live paper fills (last price) pay it too
 BBDELTA_MULT = 0.008
 CLOSEDELTA_MULT = 0.0175
 TAIL_MULT = 0.25
@@ -162,7 +168,7 @@ def market_vol_scale_series() -> pd.Series:
     one, clipped to [VOL_LO, VOL_HI]. Built from the 5-minute archive's daily close (always present wherever a backtest already runs);
     `current_vol_scale()` below is the one live trading actually calls."""
     daily = {}
-    for c in COINS:
+    for c in VOL_COINS:
         f = DATA_DIR / f"{c}_5m.csv"
         if not f.exists():
             continue
@@ -209,7 +215,7 @@ def current_vol_scale(use_cache: bool = True) -> float:
 def _vol_key() -> list:
     """What the cached scale was built from: every archived 5-minute file's identity, so a top-up invalidates it."""
     key = []
-    for c in COINS:
+    for c in VOL_COINS:
         try:
             st = (DATA_DIR / f"{c}_5m.csv").stat()
         except OSError:

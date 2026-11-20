@@ -275,11 +275,27 @@ class TestVolScaleUsesFinishedDaysOnly(unittest.TestCase):
         closes = pd.Series(100.0, index=idx)
         closes[idx >= pd.Timestamp("2026-02-05")] = [100.0 * (1.2 if i % 2 else 0.8) for i in range((idx >= pd.Timestamp("2026-02-05")).sum())]
         pd.DataFrame({"date": idx, "close": closes.values}).to_csv(tmp / "BTC_5m.csv", index=False)
-        with mock.patch.object(S, "DATA_DIR", tmp), mock.patch.object(S, "COINS", ("BTC",)):
+        with mock.patch.object(S, "DATA_DIR", tmp), mock.patch.object(S, "VOL_COINS", ("BTC",)):
             s = S.market_vol_scale_series()
         # 2026-02-05 is the first wild day: its own close must not shrink its own size, only the NEXT day's
         self.assertAlmostEqual(s[pd.Timestamp("2026-02-05")], S.VOL_HI)
         self.assertLess(s[pd.Timestamp("2026-02-06")], S.VOL_HI)
+
+
+    def test_a_traded_coin_outside_the_basket_does_not_change_the_scale(self):
+        """2026-11-20: ZEC trades but the size scale stays the 9-coin basket's (the tested setup)."""
+        tmp = Path(tempfile.mkdtemp())
+        idx = pd.date_range("2026-01-01", periods=40 * 288, freq="5min")
+        pd.DataFrame({"date": idx, "close": 100.0 + (idx.dayofyear % 3)}).to_csv(tmp / "BTC_5m.csv", index=False)
+        pd.DataFrame({"date": idx, "close": 100.0 * (1 + 0.3 * (idx.dayofyear % 2))}).to_csv(tmp / "ZEC_5m.csv", index=False)
+        with mock.patch.object(S, "DATA_DIR", tmp), mock.patch.object(S, "VOL_COINS", ("BTC",)), \
+                mock.patch.object(S, "COINS", ("BTC", "ZEC")):
+            with_zec = S.market_vol_scale_series()
+            key = S._vol_key()
+        with mock.patch.object(S, "DATA_DIR", tmp), mock.patch.object(S, "VOL_COINS", ("BTC",)), mock.patch.object(S, "COINS", ("BTC",)):
+            alone = S.market_vol_scale_series()
+        self.assertTrue(with_zec.equals(alone))
+        self.assertEqual([k[0] for k in key], ["BTC"])
 
 
 class TestPortfolioCaps(unittest.TestCase):
@@ -338,7 +354,7 @@ class TestVolScaleIsCached(unittest.TestCase):
             return pd.Series([1.25])
 
         for p in (mock.patch.object(S, "DATA_DIR", self.tmp),
-                  mock.patch.object(S, "COINS", ("BTC", "ETH")),
+                  mock.patch.object(S, "VOL_COINS", ("BTC", "ETH")),
                   mock.patch.object(S, "_VOL_CACHE_FILE", self.cache),
                   mock.patch.object(S, "_VOL_MEMO", {}),
                   mock.patch.object(S, "market_vol_scale_series", side_effect=fake_series)):

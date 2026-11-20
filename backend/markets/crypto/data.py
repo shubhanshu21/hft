@@ -18,7 +18,7 @@ import requests
 
 from core.paths import ARCHIVE_ROOT
 DATA_DIR = ARCHIVE_ROOT / "crypto"
-COINS = ("BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "AVAX", "LINK", "DOT", "LTC", "TRX")
+COINS = ("BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "AVAX", "LINK", "DOT", "LTC", "TRX", "ZEC")   # ZEC 2026-11-20
 
 DAY_MS = 86_400_000
 LOOKBACK_DAYS = 30

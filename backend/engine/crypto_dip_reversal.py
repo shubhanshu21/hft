@@ -1,4 +1,4 @@
-"""Paper trading engine: crypto / dip_reversal -- 5-minute dip-buy reversal on 9 coins' perpetual futures (one shared capital pool, up
+"""Paper trading engine: crypto / dip_reversal -- 5-minute dip-buy reversal on 10 coins' perpetual futures (one shared capital pool, up
 to markets.crypto.strategies.tf_5min.dip_reversal.strategy.MAX_CONCURRENT positions open together). Rules, costs and the backtest live
 in that module; this file just runs the same rule live every 5 minutes against fresh Binance candles.
 
@@ -38,7 +38,8 @@ from services.broker.delta_broker import DeltaDemoBroker, PRODUCTS as DELTA_COIN
 
 # Delta Exchange India live perpetuals trade in WHOLE contracts of this many coins each (api.india.delta.exchange/v2/products,
 # checked 2026-10-23). The simulated fill buys a whole number of contracts, like a real order, instead of a fractional coin amount.
-CONTRACT_VALUE = {"BTC": 0.001, "ETH": 0.01, "SOL": 1, "BNB": 0.1, "XRP": 1, "DOGE": 100, "ADA": 1, "AVAX": 1, "DOT": 1, "LTC": 0.1, "TRX": 1}
+CONTRACT_VALUE = {"BTC": 0.001, "ETH": 0.01, "SOL": 1, "BNB": 0.1, "XRP": 1, "DOGE": 100, "ADA": 1, "AVAX": 1, "DOT": 1, "LTC": 0.1, "TRX": 1,
+                  "ZEC": 0.1}   # ZECUSD checked 2026-11-20
 
 _log = logging.getLogger("crypto_dip_reversal")
 
@@ -471,7 +472,7 @@ def print_status(db: TradingDB) -> None:
     state = load_state(db)
     wr = state["winning_trades_count"] / max(1, state["completed_trades_count"]) * 100
     print("=" * 70)
-    print("CRYPTO DIP-REVERSAL STATUS (9-coin 5m perps)")
+    print("CRYPTO DIP-REVERSAL STATUS (10-coin 5m perps)")
     print("=" * 70)
     print(f"Trading capital:   {_inr(state['trading_capital'])}")
     print(f"Completed trades:  {state['completed_trades_count']} (win rate {wr:.1f}%)")
@@ -487,7 +488,7 @@ def main(argv=None) -> int:
     import engine.config  # noqa: F401 -- loads .env
     from services.utils import telegram
 
-    parser = argparse.ArgumentParser(description="Crypto dip-reversal (5-min, 9-coin perps) paper trader")
+    parser = argparse.ArgumentParser(description="Crypto dip-reversal (5-min, 10-coin perps) paper trader")
     parser.add_argument("--status", action="store_true")
     parser.add_argument("--no-telegram", action="store_true")
     args = parser.parse_args(argv)

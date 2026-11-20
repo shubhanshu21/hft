@@ -15,10 +15,11 @@ class CatalogTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Unknown market or strategy"):
             api.validate({"market": "equity", "strategy": "trend_ema_cross", "start": "2024-01-01", "end": "2025-01-01"})
 
-    def test_the_crypto_page_lists_nine_coins(self):
+    def test_the_crypto_page_lists_ten_coins(self):
         row = next(r for r in api.catalog() if r["name"] == "dip_reversal")
         self.assertNotIn("DOT", row["default_symbols"])
-        self.assertEqual(len(row["default_symbols"]), 9)
+        self.assertEqual(len(row["default_symbols"]), 10)
+        self.assertIn("ZEC", row["default_symbols"])                # added 2026-11-20
 
     def test_breakout_pair_takes_money_risk_slippage_and_dates(self):
         run = api.validate({"market": "equity", "strategy": "breakout_pair", "capital": 100000, "risk_pct": 2, "slippage_bp": 5,
