@@ -176,7 +176,7 @@ class TradingDB:
     # Account Management
     # -------------------------------------------------------------------------
     def init_account(self, account_id: str = "DRYRUN_ACCOUNT",
-                     name: str = "Live Dry Run Scalper",
+                     name: Optional[str] = None,
                      capital: float = 100000.0,
                      leverage: float = 4.0,
                      risk_pct: float = 5.0,
@@ -191,7 +191,7 @@ class TradingDB:
                 conn.execute("""
                 INSERT INTO accounts (account_id, name, initial_capital, current_capital, leverage, risk_pct, created_at, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """, (account_id, name, capital, capital, leverage, risk_pct, now_str, now_str))
+                """, (account_id, name or "Live Dry Run Scalper", capital, capital, leverage, risk_pct, now_str, now_str))
             else:
                 if force_capital or (trade_count == 0 and pos_count == 0):
                     conn.execute("""
@@ -203,6 +203,8 @@ class TradingDB:
                     UPDATE accounts SET leverage = ?, risk_pct = ?, updated_at = ?
                     WHERE account_id = ?
                     """, (leverage, risk_pct, now_str, account_id))
+                if name:                                    # an engine's own name follows its code; a nameless call (cli) keeps it
+                    conn.execute("UPDATE accounts SET name = ? WHERE account_id = ?", (name, account_id))
 
     def get_account(self, account_id: str = "DRYRUN_ACCOUNT") -> Optional[dict]:
         with self._get_conn() as conn:

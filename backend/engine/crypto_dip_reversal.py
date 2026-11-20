@@ -160,7 +160,7 @@ def save_state(state: dict) -> None:
 
 
 def init_account(db: TradingDB) -> None:
-    db.init_account(account_id=ACCOUNT_ID, name="Crypto Dip-Reversal (9-coin 5m Perps)", capital=INITIAL_CAPITAL_INR,
+    db.init_account(account_id=ACCOUNT_ID, name=f"Crypto Dip-Reversal ({len(S.COINS)}-coin 5m Perps)", capital=INITIAL_CAPITAL_INR,
                     leverage=MAX_LEVERAGE, risk_pct=S.RISK_PCT * 100)
 
 
