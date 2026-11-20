@@ -77,6 +77,11 @@ def plan(db, today: date, holidays: set[date]) -> list[str]:
         # every candidate, strongest first: fill() buys down the list until the slots are full, so one it must skip (a share dearer
         # than 2 slots) is replaced by the next -- as the backtest does (2026-11-18; the slot used to stay empty)
         buy = [s for s in cands if s not in held] if slots > 0 else []
+        from core import switches
+        if not switches.on("EARNINGS_DRIFT"):                    # 2026-11-19: switched off in .env -- planned sells still happen
+            if buy:
+                lines.append(f"Earnings drift is switched off (STRATEGY_EARNINGS_DRIFT=off in backend/.env): not buying {', '.join(buy[:slots])}")
+            buy = []
         if float(ind["breadth"].iloc[-1]) < S.MIN_BREADTH_PCT:
             lines.append(f"Earnings drift: no buys -- the market is weak ({float(ind['breadth'].iloc[-1]):.0f}% of the 200 most-traded stocks are above their 50-day average, needs 50%)")
         for s in buy[:slots]:

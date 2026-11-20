@@ -121,6 +121,12 @@ def enter(db, broker, now: datetime, holidays: set[date], lookup, lines: list) -
         return
     if st.get("entry_date") != str(today):                     # a new day: the attempt counter starts over
         st["entry_date"], st["entry_attempts"] = str(today), 0
+    from core import switches
+    if not switches.on("RESULTS_GAP"):                           # 2026-11-19: switched off in .env -- no new buys (holdings still sell at 15:20)
+        st["entered_on"] = str(today)
+        _save_state(st)
+        lines.append("Results gap is switched off (STRATEGY_RESULTS_GAP=off in backend/.env): no new buys today.")
+        return
     for p in _own(db):                                             # a sale the engine missed (e.g. a failed 15:20 run): sell it now --
         if _entry_day(p) < str(today):                              # but never this morning's own buys (a retry after a crash, 2026-10-29)
             _close(db, broker, p, now, "missed_exit", lines)
@@ -262,7 +268,8 @@ def _close(db, broker, p: dict, now: datetime, reason: str, lines: list) -> bool
 def swing_keep(db, p: dict) -> int:
     """Shares of a results_gap position to keep at 15:20 as a 40-day holding (earnings_drift.KEEP_RESULTS_GAP, 2026-11-18): one 1/10
     slot of the drift money at the 09:30 price, only while a slot is free and the stock is not held already, never more than held."""
-    if not ED.S.KEEP_RESULTS_GAP:
+    from core import switches
+    if not ED.S.KEEP_RESULTS_GAP or not switches.on("EARNINGS_DRIFT"):       # earnings drift switched off: keep nothing
         return 0
     mine = ED._mine(db)
     if len(mine) >= ED.S.K or any(m["symbol"] == p["symbol"] for m in mine):

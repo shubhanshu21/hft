@@ -236,6 +236,22 @@ class TestMomentumSleeve(TestSession):
             self.run_day(make_ind())
         self.assertEqual(json.loads(E.MOM_STATE.read_text()), {"month": "2026-11", "targets": ["MOMA", "MOMB"]})
 
+    def test_breakout_off_buys_no_breakouts_but_stops_still_sell(self):
+        with mock.patch.dict("os.environ", {"STRATEGY_BREAKOUT": "off"}), self.scores(MOMA=0.9):
+            self.run_day(make_ind())
+        held = {p["symbol"] for p in self.db.get_open_positions(E.ACCOUNT)}
+        self.assertNotIn("DFIVE", held); self.assertNotIn("NRSEVEN", held)
+        self.assertIn("MOMA", held)                                          # momentum is still on
+        self.assertEqual(self.trades(), [("HELD", 93.5, "stop")])            # the existing holding still follows its stop
+        self.assertEqual(json.loads(E.STATE.read_text())["off"], ["breakout"])
+
+    def test_momentum_off_buys_no_momentum(self):
+        with mock.patch.dict("os.environ", {"STRATEGY_MOMENTUM": "off"}), self.scores(MOMA=0.9, MOMB=0.5):
+            self.run_day(make_ind())
+        self.assertEqual(self.mom(), {})
+        self.assertIn("DFIVE", {p["symbol"] for p in self.db.get_open_positions(E.ACCOUNT)})   # breakout still on
+        self.assertFalse(E.MOM_STATE.exists())                               # the month is not marked done while off
+
     def test_stale_data_waits_for_the_next_session(self):
         with mock.patch.object(E, "expected_last_day", return_value=date(2026, 11, 17)), self.scores(MOMA=0.9):
             clock = Clock(datetime(2026, 11, 17, 9, 8, tzinfo=IST))

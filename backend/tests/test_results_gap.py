@@ -484,6 +484,18 @@ class TestKeepAsSwing(EngineCase):
         self.assertGreaterEqual(E.ED.S.trading_days_held(_d(2026, 10, 26), _d(2026, 12, 21), set()), E.ED.S.HOLD_DAYS)
 
 
+class TestSwitchedOff(EngineCase):
+    def test_off_buys_nothing_and_says_so(self):
+        with mock.patch.dict("os.environ", {"STRATEGY_RESULTS_GAP": "off"}):
+            out = E.run(self.db, FakeBroker(quotes(BIG)), self.at(9, 30), set(), self.lookup, send=None)
+        self.assertEqual(self.db.get_open_positions(E.ACCOUNT), [])
+        self.assertIn("switched off", " ".join(out))
+
+    def test_earnings_drift_off_keeps_nothing_at_1520(self):
+        with mock.patch.dict("os.environ", {"STRATEGY_EARNINGS_DRIFT": "off"}), mock.patch.object(E.ED.S, "KEEP_RESULTS_GAP", True):
+            self.assertEqual(E.swing_keep(self.db, {"symbol": "WIN", "qty": 100, "entry_price": 100.0}), 0)
+
+
 class TestLiveReview(unittest.TestCase):
     """2026-11-19: back to 3x at the user's choice. The nightly job tells Telegram ONCE when 5+ live day trades since the switch average
     below zero (no stop or cap -- the user's rule), and again only after more trades."""

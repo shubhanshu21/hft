@@ -266,15 +266,21 @@ def session(db, broker, send=None, log=print, sleep=time.sleep, clock=lambda: da
         plan = ses.prepare(ind)
     fresh = plan["last"].date() >= expected_last_day(clock().date())
     cand = plan["cand"]
-    buying = fresh and cand["healthy"]
-    plan["mom"]["buying"] = fresh                                  # momentum has no market filter, but needs current prices
+    from core import switches
+    sw = {"breakout": switches.on("BREAKOUT"), "momentum": switches.on("MOMENTUM")}     # 2026-11-19: .env STRATEGY_BREAKOUT / STRATEGY_MOMENTUM
+    buying = fresh and cand["healthy"] and sw["breakout"]
+    plan["mom"]["buying"] = fresh and sw["momentum"]                # momentum has no market filter, but needs current prices
+    for k, v in sw.items():
+        if not v:
+            log(f"{k} is switched off (STRATEGY_{k.upper()}=off in backend/.env): no new {k} buys; holdings still follow their rules")
     log(f"last day {plan['last'].date()} (fresh={fresh}), breadth {cand['breadth']:.1f}%, d55 {cand['d55'][:8]}, nr7 {[s for s, _ in cand['nr7']][:8]}, dead {plan['dead']}")
     if not fresh:
         ses.send(T.problem("Breakout", f"Price data ends {plan['last'].date()}, it should reach {expected_last_day(clock().date())}. "
                                          "No new buys today; stops are still watched.", "journalctl --user -u hft-daily-data-topup.service -n 40"))
     write_json(STATE, {"day": str(clock().date()), "breadth": round(cand["breadth"], 1), "healthy": bool(cand["healthy"]), "fresh": bool(fresh),
                        "last_day": str(plan["last"].date()), "d55": cand["d55"][:8], "nr7": [[s, round(t, 2)] for s, t in cand["nr7"][:8]],
-                       "dead": plan["dead"], "momentum": {"due": plan["mom"]["due"], "targets": plan["mom"]["targets"], "topup": plan["mom"]["topup"]}})
+                       "dead": plan["dead"], "momentum": {"due": plan["mom"]["due"], "targets": plan["mom"]["targets"], "topup": plan["mom"]["topup"]},
+                       "off": [k for k, v in sw.items() if not v]})
     pending_nr7 = dict(cand["nr7"]) if buying else {}
     d55 = list(cand["d55"]) if buying else []
     opened = False

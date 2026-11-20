@@ -293,3 +293,14 @@ class TestKeptResultsGapInBacktest(unittest.TestCase):
         buys = [e for evs in r["replay"]["events"] for e in evs if e["t"] == "buy"]
         self.assertEqual([(b["sym"], b["q"]) for b in buys], [("F1", 100)])            # a 1/10 slot of Rs1L at Rs100; unknown stock skipped
         self.assertIn("kept for 40 days", buys[0]["note"])
+
+
+class TestSwitchedOff(Base):
+    def test_off_plans_no_buys_but_still_sells_at_40_days(self):
+        self.hold("OLD", 100, 100.0, "2026-08-31")
+        with mock.patch.dict("os.environ", {"STRATEGY_EARNINGS_DRIFT": "off"}), mock.patch.object(E, "_indicators", return_value=make_ind()):
+            lines = E.plan(self.db, self.at(8, 50).date(), set())
+        self.assertIn("switched off", " ".join(lines))
+        E.fill(self.db, Broker({"GOOD": 200.0, "OLD": 120.0}), self.at(9, 30), self.lookup, [])
+        self.assertEqual(self.db.get_open_positions(E.ACCOUNT), [])                   # GOOD not bought, OLD sold as planned
+        self.assertEqual(self.db.get_trades(account_id=E.ACCOUNT)[0]["symbol"], "OLD")

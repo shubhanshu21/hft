@@ -342,6 +342,8 @@ def today_plan(account: str, now: datetime | None = None, state_dir=None) -> lis
             out.append(f"Buying today ({_health(st.get('breadth') or 0)}): " + (", ".join(would) if would else "no stock gave a signal") + ".")
         if st.get("dead"):
             out.append("Selling at the open (still below the buy price after 20 trading days): " + ", ".join(st["dead"]) + ".")
+        for k in st.get("off") or []:
+            out.append(f"{k.capitalize()} is switched off (STRATEGY_{k.upper()}=off in backend/.env): no new {k} buys; its holdings still follow their rules.")
         m = st.get("momentum") or {}
         if m.get("due") and st.get("fresh", True):
             out.append("Momentum (half the money): monthly refresh at the open -- the top 20 by 12-month return: "
