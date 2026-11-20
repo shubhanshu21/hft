@@ -130,6 +130,7 @@ WHY = {   # stored exit reasons -> plain words
     "rebalance": "no longer in the top 3", "rebalance_next_contract": "moved to the next month's contract",
     "roll_before_expiry": "contract about to expire, moved to the next month", "trimmed": "position made smaller at the re-check",
     "momentum_out": "left the top 20 by 12-month momentum (monthly check)",
+    "strategy_closed": "strategy closed (one equity account), sold at the open",
 }
 
 

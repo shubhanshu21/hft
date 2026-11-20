@@ -28,6 +28,20 @@ BIG = {"WIN": {"ltp": 112.0, "prev_close": 100.0, "today_open": 110.0, "today_hi
        "CHEAP": {"ltp": 15.0, "prev_close": 12.0, "today_open": 14.0, "today_high": 15.5, "today_low": 13.9}}        # under Rs20
 
 
+
+_ENV = None
+
+
+def setUpModule():
+    """The live backend/.env may switch strategies off (2026-11-20: breakout + momentum are); tests start from all-on and set their own."""
+    global _ENV
+    from core import switches
+    _ENV = mock.patch.dict("os.environ", {f"STRATEGY_{n}": "on" for n in switches.NAMES}); _ENV.start()
+
+
+def tearDownModule():
+    _ENV.stop()
+
 class TestSignals(unittest.TestCase):
     def test_only_big_gap_that_keeps_rising_and_is_tradable(self):
         with mock.patch.object(S, "universe", return_value=UNI):

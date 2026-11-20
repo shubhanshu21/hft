@@ -140,6 +140,17 @@ class Session:
         self.send(msg); self.log(msg)
         return msg
 
+    def close_out(self, q: dict, sleeves: set) -> None:
+        """STRATEGY_*=close (2026-11-20): sell every holding of these sleeves at today's open, one SOLD message."""
+        sold = [self.sell(p, op, "strategy_closed", quiet=True) for p in self.positions()
+                if p["st"].get("sleeve") in sleeves and (op := (q.get(p["symbol"]) or {}).get("open"))]
+        if sold:
+            acc = self.db.get_account(ACCOUNT)
+            msg = T.message("✅" if float(acc["current_capital"]) >= float(acc["initial_capital"]) else "❌", "SOLD · Breakout account closed",
+                            ["Selling everything at the open: equity now runs in one account (RESULTS_GAP)."] + sold,
+                            value=float(acc["current_capital"]), start=float(acc["initial_capital"]))
+            self.send(msg); self.log(msg)
+
     def momentum_open(self, q: dict, plan: dict, keys_all: dict) -> None:
         """At the open. First session of the month: sell momentum holdings that left the top N, buy the new ones (1/N of the momentum
         half each, never more than its cash or the account's free cash), one SOLD and one BOUGHT message; save the month and its list.
@@ -271,6 +282,7 @@ def session(db, broker, send=None, log=print, sleep=time.sleep, clock=lambda: da
     buying = fresh and cand["healthy"] and sw["breakout"]
     plan["mom"]["buying"] = fresh and sw["momentum"]                # momentum has no market filter, but needs current prices
     plan["mom"]["selling"] = fresh                                  # off = no buys, but holdings still leave at the monthly refresh
+    close = ({"nr7", "d55"} if switches.closing("BREAKOUT") else set()) | ({"mom"} if switches.closing("MOMENTUM") else set())
     for k, v in sw.items():
         if not v:
             log(f"{k} is switched off (STRATEGY_{k.upper()}=off in backend/.env): no new {k} buys; holdings still follow their rules")
@@ -302,6 +314,8 @@ def session(db, broker, send=None, log=print, sleep=time.sleep, clock=lambda: da
             sleep(10); continue                                      # opening prices not published yet
         with lock():
             if not opened:
+                if close:
+                    ses.close_out(q, close)                         # STRATEGY_*=close: sell all of it at the open
                 ses.momentum_open(q, plan, keys_all)               # sales first: they free cash for the open's buys
             opened = _step(ses, q, prices, plan, d55, pending_nr7, keys_all, opened)
         sleep(POLL_S)

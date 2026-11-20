@@ -18,3 +18,12 @@ class TestSwitches(unittest.TestCase):
 
     def test_status_lists_every_equity_strategy(self):
         self.assertEqual(set(switches.status()), {"RESULTS_GAP", "EARNINGS_DRIFT", "BREAKOUT", "MOMENTUM"})
+
+class TestClose(unittest.TestCase):
+    def test_close_is_off_and_closing(self):
+        from core import switches
+        with mock.patch.dict("os.environ", {"STRATEGY_MOMENTUM": "close"}):
+            self.assertFalse(switches.on("MOMENTUM"))
+            self.assertTrue(switches.closing("MOMENTUM"))
+        with mock.patch.dict("os.environ", {"STRATEGY_MOMENTUM": "off"}):
+            self.assertFalse(switches.closing("MOMENTUM"))

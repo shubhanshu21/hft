@@ -36,6 +36,20 @@ def make_ind(good_jump=0.10, weak_jump=0.01, healthy=True):
 EVENTS = pd.DataFrame({"sym": ["GOOD", "WEAK"], "d": pd.to_datetime(["2026-10-22", "2026-10-22"])})
 
 
+
+_ENV = None
+
+
+def setUpModule():
+    """The live backend/.env may switch strategies off (2026-11-20: breakout + momentum are); tests start from all-on and set their own."""
+    global _ENV
+    from core import switches
+    _ENV = mock.patch.dict("os.environ", {f"STRATEGY_{n}": "on" for n in switches.NAMES}); _ENV.start()
+
+
+def tearDownModule():
+    _ENV.stop()
+
 class TestStrategy(unittest.TestCase):
     def test_only_strong_reaction_on_heavy_volume(self):
         sig = S.signals(make_ind(), EVENTS)

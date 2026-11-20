@@ -27,6 +27,20 @@ def make_ind(breadth=80.0):
             "d55": mask("DFIVE"), "nr7": mask("NRSEVEN")}
 
 
+
+_ENV = None
+
+
+def setUpModule():
+    """The live backend/.env may switch strategies off (2026-11-20: breakout + momentum are); tests start from all-on and set their own."""
+    global _ENV
+    from core import switches
+    _ENV = mock.patch.dict("os.environ", {f"STRATEGY_{n}": "on" for n in switches.NAMES}); _ENV.start()
+
+
+def tearDownModule():
+    _ENV.stop()
+
 class Clock:
     def __init__(self, t): self.t = t
     def __call__(self): return self.t
@@ -262,6 +276,27 @@ class TestMomentumSleeve(TestSession):
         self.assertIn(("MOMC", 100.0, "momentum_out"), self.trades())
         self.assertFalse(any("BOUGHT · Breakout momentum" in x for x in sent))
         self.assertEqual(json.loads(E.MOM_STATE.read_text())["month"], "2026-11")   # sold once this month, not every day
+
+    def test_close_sells_every_holding_at_the_open_and_buys_nothing(self):
+        """2026-11-20 (user: one real Upstox account, "sell all at next open"): STRATEGY_*=close empties that strategy at the open."""
+        E.MOM_STATE.write_text(json.dumps({"month": "2026-11", "targets": ["MOMA"]}))
+        self.add_mom("MOMC", entry=90.0)
+        env = {"STRATEGY_BREAKOUT": "close", "STRATEGY_MOMENTUM": "close"}
+        with mock.patch.dict("os.environ", env), self.scores(MOMA=0.9, MOMB=0.5, MOMC=0.8):
+            sent, _ = self.run_day(make_ind())
+        self.assertEqual(self.db.get_open_positions(E.ACCOUNT), [])
+        self.assertEqual(sorted(self.trades()), [("HELD", 100.0, "strategy_closed"), ("MOMC", 100.0, "strategy_closed")])
+        closed = [x for x in sent if "strategy closed" in x]
+        self.assertEqual(len(closed), 1)                                     # one message for the whole close-out
+        self.assertIn("<b>HELD</b>", closed[0]); self.assertIn("<b>MOMC</b>", closed[0])
+
+    def test_close_only_touches_its_own_strategy(self):
+        self.add_mom("MOMC", entry=90.0)
+        E.MOM_STATE.write_text(json.dumps({"month": "2026-11", "targets": ["MOMC"]}))
+        with mock.patch.dict("os.environ", {"STRATEGY_MOMENTUM": "close", "STRATEGY_BREAKOUT": "off"}), self.scores(MOMC=0.9):
+            self.run_day(make_ind())
+        self.assertIn(("MOMC", 100.0, "strategy_closed"), self.trades())
+        self.assertIn(("HELD", 93.5, "stop"), self.trades())                # breakout (off) still follows its stop, not closed
 
     def test_stale_data_waits_for_the_next_session(self):
         with mock.patch.object(E, "expected_last_day", return_value=date(2026, 11, 17)), self.scores(MOMA=0.9):
