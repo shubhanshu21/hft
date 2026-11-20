@@ -233,7 +233,7 @@ class TestTenSlots(Base):
 
 
 class TestSharedAccount(Base):
-    """results_gap must not touch earnings_drift's holdings, and sizes its 3x trades from the cash they do not lock."""
+    """results_gap must not touch earnings_drift's holdings, and (since 2026-11-20) sizes its 3x from the whole account -- free_cash stays what a delivery buy may spend."""
     def test_1520_and_morning_sweep_leave_swing_stocks_alone(self):
         self.hold("SWING", 10, 100.0, "2026-10-20")
         RGE.exit_all(self.db, Broker(ltp={"SWING": 110.0}), self.at(15, 20), [])

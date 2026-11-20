@@ -20,7 +20,8 @@ instead of skipping smoothed the strategy alone but cut the shared account (Rs5.
 
 Paper (2026-10-29, user: "add this strategy and use same equity 1 lakh account"): it shares the RESULTS_GAP account with the intraday
 results_gap strategy (engine/earnings_drift.py). Its money is SLEEVE_CAPITAL plus its own closed trades; a buy is also capped by the
-account's free cash. results_gap sizes its 3x intraday trades from the cash these holdings do not lock. Simulated together on Rs1L
+account's free cash. results_gap sized its 3x intraday trades from the cash these holdings do not lock until 2026-11-20; since then from
+the whole account (holdings pledged as margin at Upstox, engine/results_gap.margin_money). Simulated together on Rs1L
 (Oct 2022 -> Oct 2026): results_gap alone Rs5.75L (worst fall -26%), with earnings_drift Rs6.19L (-23%).
 The orders are decided before the open (08:50) and fill at the official open price, as an order placed in NSE's 09:00-09:08 pre-open
 auction does -- the price the backtest uses.

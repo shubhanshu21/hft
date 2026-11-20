@@ -274,6 +274,44 @@ class TestUpstoxLeverageCap(EngineCase):
         self.assertIsNone(E.stock_leverage(b, "NSE_EQ|WIN", 0))
 
 
+class TestSizesFromTheWholeAccount(EngineCase):
+    """2026-11-20 (user: "true 3x now"): earnings-drift holdings are pledged at Upstox, so results gap sizes its 3x from the whole account
+    (booked money), not only the cash those holdings leave -- capped by the margin that pledge really gives (free cash + holdings after the
+    haircut) x Upstox's leverage for the stock, and charged 0.05%/day on any cash below half the margin used."""
+
+    def hold(self, qty, px=100.0):
+        self.db.open_position("POS_ED_X", "SWING", "long", qty, px, 0.0, 0.0, px, account_id=E.ACCOUNT, instrument_key="NSE_EQ|SWING",
+                              strategy="earnings_drift", state=json.dumps({"entry_date": "2026-10-20"}))
+
+    def buy(self, lev):
+        with mock.patch.object(S, "LEVERAGE", 3.0):
+            E.run(self.db, MarginBroker(quotes(BIG), {"WIN": lev}), self.at(9, 30), set(), self.lookup, send=None)
+        return next(p for p in self.db.get_open_positions(E.ACCOUNT) if p["symbol"] == "WIN")
+
+    def test_3x_of_the_whole_account_while_drift_holds_stocks(self):
+        self.hold(600)                                                       # Rs60k in drift stocks, Rs40k cash
+        p = self.buy(5.0)
+        self.assertEqual(int(p["qty"]), int(100_000 * 3 // 112.0))         # not 40k x 3
+        # margin used Rs60k (3L / 5x); cash 40k is below half of it (30k)? no -> no interest
+        self.assertEqual(json.loads(p["state"])["pledge_interest"], 0.0)
+
+    def test_capped_by_the_margin_the_pledge_really_gives(self):
+        self.hold(1000)                                                      # all Rs1L in drift stocks: margin = 0 + 75% x 1L = 75k
+        p = self.buy(3.0)                                                    # Upstox gives 3x -> 75k x 3 = 2.25L, below the 3L wanted
+        self.assertEqual(int(p["qty"]), int(75_000 * 3 // 112.0))
+
+    def test_cash_shortfall_interest_is_charged_on_the_sale(self):
+        self.hold(1000)                                                      # no cash: half the margin used is short
+        p = self.buy(5.0)
+        margin = int(p["qty"]) * 112.0 / 5.0
+        st = json.loads(p["state"])
+        self.assertAlmostEqual(st["pledge_interest"], round(0.5 * margin * 0.0005, 2))
+        E.exit_all(self.db, FakeBroker(quotes(BIG), ltp={"WIN": 112.0, "SWING": 100.0}), self.at(15, 20), [])
+        t = next(t for t in self.db.get_trades(account_id=E.ACCOUNT) if t["symbol"] == "WIN")
+        sold = int(t["qty"])
+        self.assertAlmostEqual(t["total_friction"], S.costs(112.0, 112.0, sold)["total"] + st["pledge_interest"] * sold / int(p["qty"]), places=2)
+
+
 class CandleBroker(FakeBroker):
     """FakeBroker plus today's 5-minute candles (Upstox: newest first)."""
     def __init__(self, q, candles, ltp=None):

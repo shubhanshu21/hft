@@ -8,7 +8,7 @@
 
 Stocks: every NSE stock with >= Rs10 cr median daily turnover over the previous 20 days (S.universe, from NSE's bhavcopy, refreshed at
 08:50; 2026-10-29 -- the fixed 414-stock list was hindsight). Account RESULTS_GAP, Rs1L, notional = RESULTS_GAP_LEVERAGE (3x; it was 5x
-for one day on 2026-10-29) x the account, split equally across the
+for one day on 2026-10-29) x the WHOLE account (since 2026-11-20: earnings_drift's holdings count, pledged as margin -- margin_money), split equally across the
 morning's signals -- but never more than Upstox's own intraday leverage for that stock (stock_leverage: most get 5x, stocks on the
 exchanges' watch lists only 1x), so a paper buy is always one Upstox would really accept.
 Prices come from Upstox's live OHLC quote (09:15 open, previous close, last price). Rules and costs live in the strategy module.
@@ -57,6 +57,20 @@ def _save_state(st: dict) -> None:
 def free_cash(db) -> float:
     """The account's booked money minus what earnings_drift's delivery holdings lock up (they share this account since 2026-10-29)."""
     return float(db.get_account(ACCOUNT)["current_capital"]) - ED.locked_cash(db)
+
+
+# 2026-11-20 (user: "true 3x now"): earnings_drift's holdings are pledged at Upstox, so they count as intraday margin and results gap sizes
+# its 3x from the WHOLE account. Sizing from free cash only made "3x" ~1.5x (drift is ~half invested). Rs1L Jan 2023-Nov 2026 blend:
+# Rs10.05L / worst -16.7% -> Rs16.93L / -24.3%. Upstox: pledge usable for intraday; cash below 50% of the margin costs 0.05%/day.
+PLEDGE_HAIRCUT = 0.25        # shortcut: one haircut for every pledged stock (Upstox's is per stock, ~15-30% for liquid ones), holdings at cost not market value; read the real ones from Upstox before real money
+CASH_SHARE, SHORTFALL_RATE = 0.5, 0.0005
+
+
+def margin_money(db) -> tuple[float, float, float]:
+    """(account money results gap sizes from, free cash, margin Upstox would give = free cash + pledged holdings after the haircut)."""
+    booked, held = float(db.get_account(ACCOUNT)["current_capital"]), ED.locked_cash(db)
+    free = booked - held
+    return booked, free, max(free, 0.0) + (1 - PLEDGE_HAIRCUT) * held
 
 
 def _own(db) -> list[dict]:
@@ -173,8 +187,8 @@ def enter(db, broker, now: datetime, holidays: set[date], lookup, lines: list) -
     mkt15 = round(nq["ltp"] / nq["today_open"] - 1, 5) if nq.get("ltp") and nq.get("today_open") else None
     if mkt15 is not None:
         lines.append(f"Nifty 09:15->now {mkt15:+.2%} (buys on falling mornings did better in the backtest; recorded, not used)")
-    cap = free_cash(db)                                         # not the cash earnings_drift's holdings lock up
-    share = cap / len(buys)                                     # each signal's slice of the account
+    cap, free, margin = margin_money(db)                        # the whole account: drift's holdings are pledged as margin
+    share, free_share, margin_share = cap / len(buys), max(free, 0.0) / len(buys), margin / len(buys)   # each signal's slice
     held = {p["symbol"] for p in db.get_open_positions(ACCOUNT)}
     for b in buys:
         if b["symbol"] in held:                                     # already bought this morning before a crash: don't buy it twice
@@ -185,7 +199,7 @@ def enter(db, broker, now: datetime, holidays: set[date], lookup, lines: list) -
             lines.append(f"{b['symbol']}: Upstox margin check unavailable -- sized at the configured {S.LEVERAGE:g}x")
         elif allowed < S.LEVERAGE:
             lines.append(f"{b['symbol']}: Upstox allows only {allowed:g}x on this stock -- sized at {lev:g}x, not {S.LEVERAGE:g}x")
-        qty = int(share * lev // b["ltp"])
+        qty = int(min(share * lev, margin_share * (allowed or 5.0)) // b["ltp"])   # never more than the pledge + cash margin allows
         if qty < 1:
             lines.append(f"{b['symbol']}: one share costs more than its share of the money -- skipped")
             continue
@@ -194,7 +208,8 @@ def enter(db, broker, now: datetime, holidays: set[date], lookup, lines: list) -
                          strategy=NAME, state=json.dumps({"gap_vs_mkt": b["gap_vs_mkt"], "open": b["open"], "prev_close": b["prev_close"],
                                                           "entry_slot": f"{now:%H:%M}", "entry_date": str(today), "late": late,
                                                           "mkt_first15": mkt15, "runup20": _runup(b["symbol"], today),
-                                                          "leverage": lev, "upstox_leverage": allowed}))
+                                                          "leverage": lev, "upstox_leverage": allowed,
+                                                          "pledge_interest": round(SHORTFALL_RATE * max(0.0, CASH_SHARE * qty * b["ltp"] / (allowed or 5.0) - free_share), 2)}))
         from services.utils import telegram as T
         why = (f"results day: opened {b['gap_vs_mkt']:+.1%} above the market and still rising at {now:%H:%M} · day trade, sold at 15:20"
                + (" · DELAYED: 09:30 prices failed, bought at the retry" if late else ""))
@@ -255,6 +270,9 @@ def _close(db, broker, p: dict, now: datetime, reason: str, lines: list) -> bool
         db.close_position(p["position_id"], px, "kept_as_swing", 0.0, 0.0, 0.0)
         return True
     c = S.costs(entry, px, sold)
+    pi = float(json.loads(p.get("state") or "{}").get("pledge_interest") or 0.0) * sold / qty         # Upstox's 0.05%/day on cash below half the margin used
+    if pi:
+        c["pledge_interest"], c["total"] = round(pi, 2), round(c["total"] + pi, 2)
     gross = (px - entry) * sold
     net = gross - c["total"]
     cap = float(db.get_account(ACCOUNT)["current_capital"]) + net
