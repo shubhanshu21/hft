@@ -250,7 +250,18 @@ class TestMomentumSleeve(TestSession):
             self.run_day(make_ind())
         self.assertEqual(self.mom(), {})
         self.assertIn("DFIVE", {p["symbol"] for p in self.db.get_open_positions(E.ACCOUNT)})   # breakout still on
-        self.assertFalse(E.MOM_STATE.exists())                               # the month is not marked done while off
+
+    def test_momentum_off_still_sells_at_the_monthly_refresh(self):
+        """2026-11-20: off used to skip the whole refresh, so holdings (no stop) would never be sold. Off = sells only."""
+        E.MOM_STATE.write_text(json.dumps({"month": "2026-10"}))
+        self.add_mom("MOMC", entry=90.0)
+        self.add_mom("MOMA", entry=95.0)
+        with mock.patch.dict("os.environ", {"STRATEGY_MOMENTUM": "off"}), self.scores(MOMA=0.9, MOMB=0.5, MOMC=0.1):
+            sent, _ = self.run_day(make_ind())
+        self.assertEqual(sorted(self.mom()), ["MOMA"])                       # MOMC left the top 20 -> sold; MOMB not bought
+        self.assertIn(("MOMC", 100.0, "momentum_out"), self.trades())
+        self.assertFalse(any("BOUGHT · Breakout momentum" in x for x in sent))
+        self.assertEqual(json.loads(E.MOM_STATE.read_text())["month"], "2026-11")   # sold once this month, not every day
 
     def test_stale_data_waits_for_the_next_session(self):
         with mock.patch.object(E, "expected_last_day", return_value=date(2026, 11, 17)), self.scores(MOMA=0.9):

@@ -145,7 +145,7 @@ class Session:
         half each, never more than its cash or the account's free cash), one SOLD and one BOUGHT message; save the month and its list.
         Later sessions (2026-11-19): buy any of that month's list still missing when cash has freed up -- buys only, no re-ranking."""
         m = plan["mom"]
-        if not (m["buying"] and m["targets"]):
+        if not ((m["buying"] or m.get("selling")) and m["targets"]):   # switched off: still sells at the refresh (2026-11-20)
             return
         sold = [self.sell(p, op, "momentum_out", quiet=True) for p in self.positions("mom")
                 if m["due"] and p["symbol"] not in m["targets"] and (op := (q.get(p["symbol"]) or {}).get("open"))]
@@ -153,7 +153,7 @@ class Session:
         equity, cash = self.sleeve_value("mom", prices)
         held = {p["symbol"] for p in self.positions()}
         bought = []
-        for s in m["targets"]:
+        for s in (m["targets"] if m["buying"] else []):
             op = (q.get(s) or {}).get("open")
             if s in held or not op or s not in keys_all:
                 continue
@@ -270,6 +270,7 @@ def session(db, broker, send=None, log=print, sleep=time.sleep, clock=lambda: da
     sw = {"breakout": switches.on("BREAKOUT"), "momentum": switches.on("MOMENTUM")}     # 2026-11-19: .env STRATEGY_BREAKOUT / STRATEGY_MOMENTUM
     buying = fresh and cand["healthy"] and sw["breakout"]
     plan["mom"]["buying"] = fresh and sw["momentum"]                # momentum has no market filter, but needs current prices
+    plan["mom"]["selling"] = fresh                                  # off = no buys, but holdings still leave at the monthly refresh
     for k, v in sw.items():
         if not v:
             log(f"{k} is switched off (STRATEGY_{k.upper()}=off in backend/.env): no new {k} buys; holdings still follow their rules")

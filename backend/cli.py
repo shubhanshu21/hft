@@ -75,6 +75,19 @@ def cmd_reset_db(args):
     print(f"\033[92mPaper trading DB reset at {db.db_path} with initial capital ₹{args.capital:,.2f}\033[0m")
 
 
+def cmd_add_money(args):
+    """Money put into an account (2026-11-20): counted as money in, not profit; every strategy sizes from it from its next run."""
+    from engine import account_reset
+    from engine import backup_db
+    db = TradingDB(args.db)
+    backup_db.backup_once(db.db_path, kind="pre_add_money")
+    with account_reset.account_lock(args.account, timeout_s=120):        # never between an engine's read and write of the money
+        db.add_money(args.account, args.amount, note=args.note or "")
+    a = db.get_account(args.account)
+    print(f"Added Rs{args.amount:,.0f} to {args.account}: money put in Rs{a['initial_capital']:,.0f}, booked Rs{a['current_capital']:,.0f}, "
+          f"profit so far Rs{a['current_capital'] - a['initial_capital']:,.0f}")
+
+
 def cmd_status(args):
     from engine.status import main as status_main
     status_main(args.account)
@@ -103,6 +116,13 @@ def main():
     p_rst.add_argument("--risk-pct", type=float, default=float(_env("DRYRUN_RISK_PCT", "5.0")), help="Risk %% per trade")
     p_rst.add_argument("--leverage", type=float, default=float(_env("INTRADAY_LEVERAGE", "4.0")), help="Margin leverage")
     p_rst.set_defaults(func=cmd_reset_db)
+
+    p_add = subparsers.add_parser("add-money", help="Put more money into a paper account (counted as money in, not profit)")
+    p_add.add_argument("--account", default="RESULTS_GAP")
+    p_add.add_argument("--amount", type=float, required=True)
+    p_add.add_argument("--note", default="")
+    p_add.add_argument("--db", default=None)
+    p_add.set_defaults(func=cmd_add_money)
 
     p_st = subparsers.add_parser("status", help="One-screen health check: engine status, P&L, open positions, token, last backup")
     p_st.add_argument("--account", default="CRYPTO_DIP_REVERSAL", help="Account ID (CRYPTO_DIP_REVERSAL, RESULTS_GAP or EQUITY_BREAKOUT)")

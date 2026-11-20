@@ -44,8 +44,8 @@ def locked_cash(db) -> float:
 
 
 def sleeve_value(db) -> float:
-    """The strategy's money: SLEEVE_CAPITAL plus everything its closed trades made or lost."""
-    return S.SLEEVE_CAPITAL + sum(float(t["net_pnl"] or 0) for t in db.get_trades(limit=100_000, account_id=ACCOUNT) if t.get("strategy") == S.NAME)
+    """The strategy's money: SLEEVE_CAPITAL plus money added to the account (2026-11-20) plus everything its closed trades made or lost."""
+    return S.SLEEVE_CAPITAL + db.deposits_total(ACCOUNT) + sum(float(t["net_pnl"] or 0) for t in db.get_trades(limit=100_000, account_id=ACCOUNT) if t.get("strategy") == S.NAME)
 
 
 def _entry_day(p: dict) -> date:

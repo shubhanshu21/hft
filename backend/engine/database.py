@@ -129,6 +129,14 @@ class TradingDB:
                 created_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS deposits (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_id TEXT NOT NULL,
+                at TEXT NOT NULL,
+                amount REAL NOT NULL,
+                note TEXT
+            );
+
             CREATE TABLE IF NOT EXISTS portfolio_snapshots (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 account_id TEXT DEFAULT 'DRYRUN_ACCOUNT',
@@ -194,10 +202,11 @@ class TradingDB:
                 """, (account_id, name or "Live Dry Run Scalper", capital, capital, leverage, risk_pct, now_str, now_str))
             else:
                 if force_capital or (trade_count == 0 and pos_count == 0):
+                    added = conn.execute("SELECT COALESCE(SUM(amount), 0) FROM deposits WHERE account_id = ?", (account_id,)).fetchone()[0]
                     conn.execute("""
                     UPDATE accounts SET initial_capital = ?, current_capital = ?, leverage = ?, risk_pct = ?, updated_at = ?
                     WHERE account_id = ?
-                    """, (capital, capital, leverage, risk_pct, now_str, account_id))
+                    """, (capital + added, capital + added, leverage, risk_pct, now_str, account_id))   # money added later is kept
                 else:
                     conn.execute("""
                     UPDATE accounts SET leverage = ?, risk_pct = ?, updated_at = ?
@@ -205,6 +214,28 @@ class TradingDB:
                     """, (leverage, risk_pct, now_str, account_id))
                 if name:                                    # an engine's own name follows its code; a nameless call (cli) keeps it
                     conn.execute("UPDATE accounts SET name = ? WHERE account_id = ?", (name, account_id))
+
+    def add_money(self, account_id: str, amount: float, note: str = "", at: Optional[str] = None) -> None:
+        """Money the user puts in (2026-11-20): raises the money put in AND the booked money, so profit (booked - put in) is unchanged
+        and every strategy sizes from the bigger account. Recorded in `deposits` for the paper-vs-backtest check."""
+        amount = float(amount)
+        if not amount > 0:
+            raise ValueError("amount must be more than 0")
+        at = at or datetime.now(IST).isoformat()
+        with self._get_conn() as conn:
+            if conn.execute("SELECT 1 FROM accounts WHERE account_id = ?", (account_id,)).fetchone() is None:
+                raise ValueError(f"no account {account_id}")
+            conn.execute("INSERT INTO deposits (account_id, at, amount, note) VALUES (?, ?, ?, ?)", (account_id, at, amount, note))
+            conn.execute("UPDATE accounts SET initial_capital = initial_capital + ?, current_capital = current_capital + ?, updated_at = ? "
+                         "WHERE account_id = ?", (amount, amount, at, account_id))
+
+    def deposits(self, account_id: str) -> list:
+        """[(day, amount)] in the order they were added."""
+        with self._get_conn() as conn:
+            return [(r[0][:10], float(r[1])) for r in conn.execute("SELECT at, amount FROM deposits WHERE account_id = ? ORDER BY at, id", (account_id,))]
+
+    def deposits_total(self, account_id: str) -> float:
+        return sum(a for _, a in self.deposits(account_id))
 
     def get_account(self, account_id: str = "DRYRUN_ACCOUNT") -> Optional[dict]:
         with self._get_conn() as conn:

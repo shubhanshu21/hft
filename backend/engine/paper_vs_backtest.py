@@ -85,7 +85,11 @@ def check_account(con, account: str, today: date, run=None) -> dict:
     row = con.execute("SELECT initial_capital, created_at FROM accounts WHERE account_id = ?", (account,)).fetchone()
     if not row:
         return {"account": account, "error": "no account yet"}
-    capital, start = float(row[0]), str(row[1])[:10]
+    try:                                                                   # money the user added later (2026-11-20)
+        deps = [(str(d)[:10], float(a)) for d, a in con.execute("SELECT at, amount FROM deposits WHERE account_id = ? ORDER BY at", (account,))]
+    except sqlite3.OperationalError:
+        deps = []
+    capital, start = float(row[0]) - sum(a for _, a in deps), str(row[1])[:10]   # the backtest starts from the first money only
     if start >= str(today):
         return {"account": account, "start": start, "note": "started today -- nothing to compare yet"}
     buys, curves = [], []
@@ -110,6 +114,13 @@ def check_account(con, account: str, today: date, run=None) -> dict:
             last = max((k for k in c if k <= d), default=None)
             total += (c[last] - cap) if last else 0.0
         expected[d] = round(total, 2)
+    base = dict(expected)
+    for dd, amt in deps:                                                   # each deposit grows at the account's backtest rate from its day
+        last = max((k for k in base if k <= dd), default=None)
+        ref = base[last] if last else capital
+        for d in expected:
+            if d >= dd:
+                expected[d] = round(expected[d] + amt * base[d] / ref, 2)
     m = match(paper_buys(con, account), buys, 1 if account.startswith("CRYPTO") else 0)
     gaps = [x["gap_pct"] for x in m["matched"] if x["gap_pct"] is not None]
     return {"account": account, "start": start, "end": str(today), "expected": expected, **m,
