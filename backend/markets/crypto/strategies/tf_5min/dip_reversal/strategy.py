@@ -253,8 +253,45 @@ def entry_signal(df: pd.DataFrame) -> pd.Series:
     return cond1 | cond2
 
 
+# 2026-11-21 open-interest filter (user's yes, research scratch cr_oi*.py): skip a buy when Binance open interest ROSE during the dip
+# by more than OI_SKIP_RATIO x the size of the coin's 1-hour price drop -- new positions piling in, not forced selling. Those dips
+# earned ~0 per trade in 2022-24 AND 2025-26 (deep dips +0.41/-0.30%, shallow -0.03/-0.07%) while dips where OI collapsed made
+# +1.2/+1.3%; OI change is unrelated to the size of the drop (corr -0.05). Skips ~15% of buys. Rs1L 2022-01 -> 2026-11-19 business tax:
+# Rs28.2L / worst -68% -> Rs40.8L / -62%, 2025-26 x5.4 -> x7.4, 2026 +19% -> +70%; thresholds 0.15 / 0.40 also better (34.8 / 33.4L);
+# better on profit, worst fall and 2025-26 under 4 random coin orders. Freshness matters: OI at the bar close (what live reads, real
+# time) 50.3L; at the bar start (this backtest, 5 min older) 40.8L; 10 min stale 32.3L with 2025-26 below the old rule.
+# Data: Binance USD-M "metrics" (5-min OI), var/archive/crypto/metrics/, topped up nightly (markets/crypto/data.topup_metrics).
+OI_SKIP_RATIO = 0.25
+OI_DIR = DATA_DIR / "metrics"
+_OI_CACHE: dict = {}
+
+
+def oi_blocks(oi_change, price_change) -> bool:
+    """True = skip this buy: open interest rose by more than OI_SKIP_RATIO x the size of the 1-hour price move. No data never blocks."""
+    if oi_change is None or not np.isfinite(oi_change) or not np.isfinite(price_change):
+        return False
+    return bool(oi_change > OI_SKIP_RATIO * abs(price_change))
+
+
+def oi_change_1h(coin: str, index: pd.DatetimeIndex) -> np.ndarray:
+    """Open-interest change over the hour to each 5-minute bar's START (Binance metrics snapshots, <= 15 min old), NaN without data."""
+    if coin not in _OI_CACHE:
+        p = OI_DIR / f"{coin}_metrics.csv.gz"
+        if p.exists():
+            m = pd.read_csv(p, usecols=["create_time", "sum_open_interest"])
+            m["t"] = pd.to_datetime(m["create_time"])
+            _OI_CACHE[coin] = m.drop_duplicates("t").set_index("t")["sum_open_interest"].astype(float).sort_index()
+        else:
+            _OI_CACHE[coin] = None
+    s = _OI_CACHE[coin]
+    if s is None:
+        return np.full(len(index), np.nan)
+    s = s.reindex(index, method="ffill", tolerance=pd.Timedelta(minutes=15))
+    return (s / s.shift(12) - 1).to_numpy()
+
+
 def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None = None, leverage: float = 3.0, tax: str = "business",
-                  risk_pct: float | None = None, progress=None, crowd_k: int | None = CROWD_K, **kwargs) -> dict:
+                  risk_pct: float | None = None, progress=None, crowd_k: int | None = CROWD_K, oi_filter: bool = True, **kwargs) -> dict:
     base_risk = RISK_PCT if risk_pct is None else risk_pct   # the module default (8%, the user's choice), or a one-off for this run
     coins = [c.upper() for c in (symbols or list(COINS)) if c.upper() in COINS]
     if not coins:
@@ -268,6 +305,8 @@ def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None
         d = data[c].set_index("date").reindex(rng)
         arr[c] = {k: d[k].to_numpy() for k in ("open", "high", "low", "close")}
         arr[c]["sig"] = entry_signal(d).fillna(False).to_numpy()
+        pc = (d["close"] / d["close"].shift(12) - 1).to_numpy()            # the coin's 1-hour price move to the signal bar's close
+        arr[c]["oi_ok"] = ~(np.nan_to_num(oi_change_1h(c, rng), nan=-np.inf) > OI_SKIP_RATIO * np.abs(pc)) if oi_filter else np.ones(len(rng), bool)
         arr[c]["mid20"] = d["bb_mid20"].to_numpy()
         arr[c]["fund"] = _funding(c)
     n = len(rng); cap = float(capital); cap_strict = float(capital); open_pos: dict = {}; closed: list = []; daily_equity = {}; strict_equity = {}
@@ -310,7 +349,7 @@ def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None
             for c in coins:
                 if c in open_pos or len(open_pos) >= MAX_CONCURRENT:
                     continue
-                if arr[c]["sig"][i] and not np.isnan(arr[c]["open"][i + 1]):
+                if arr[c]["sig"][i] and arr[c]["oi_ok"][i] and not np.isnan(arr[c]["open"][i + 1]):
                     e = arr[c]["open"][i + 1]
                     sl = e * (1 - STOPLOSS)
                     risk_pct = base_risk * vol_scale[i]                   # dynamic: size up in a calmer-than-usual market, down in a wilder one

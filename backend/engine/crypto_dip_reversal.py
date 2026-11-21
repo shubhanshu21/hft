@@ -224,6 +224,22 @@ def fetch_5m_candles(coin: str, limit: int = 300) -> pd.DataFrame:
 
 
 BAR_MS = S.BAR_MIN * 60 * 1000
+
+
+def fetch_oi_change(coin: str, bar_close_ms: int) -> float | None:
+    """Binance open interest NOW (real time) vs its 5-minute snapshot one hour before the signal bar's close (2026-11-21 filter,
+    S.oi_blocks). None when either call fails -- the buy then goes ahead as before the filter."""
+    try:
+        now = requests.get("https://fapi.binance.com/fapi/v1/openInterest", params={"symbol": f"{coin}USDT"}, timeout=5)
+        now.raise_for_status()
+        t0 = bar_close_ms - 3_600_000
+        hist = requests.get("https://fapi.binance.com/futures/data/openInterestHist",
+                            params={"symbol": f"{coin}USDT", "period": "5m", "startTime": t0 - 600_000, "endTime": t0, "limit": 5}, timeout=5)
+        hist.raise_for_status()
+        rows = [r for r in hist.json() if int(r["timestamp"]) <= t0]
+        return float(now.json()["openInterest"]) / float(rows[-1]["sumOpenInterest"]) - 1 if rows else None
+    except Exception:
+        return None
 STOP_WHY, TARGET_WHY = f"STOP LOSS ({S.STOPLOSS:.0%})", f"TAKE PROFIT ({S.ROI:.0%})"
 SIGNAL_WHY, TIME_WHY = "EXIT SIGNAL (close > 20-candle mid-band)", "TIME STOP (24h)"
 
@@ -361,6 +377,14 @@ def process_entries(db: TradingDB, state: dict, candles_map: dict, live_info: di
         df = candles_map.get(coin)
         if not signals[coin]:
             continue
+        oi = fetch_oi_change(coin, int(df["t"].iloc[-1]) + BAR_MS)
+        move = float(df["close"].iloc[-1] / df["close"].iloc[-13] - 1) if len(df) >= 13 else float("nan")
+        if S.oi_blocks(oi, move):
+            lines.append(f"{coin}: dip signal, but open interest rose {oi:+.1%} in the last hour while the price moved {move:+.1%} "
+                         f"(new sellers piling in, not forced selling -- such dips made ~0 in the backtest) -- skipped")
+            continue
+        if oi is None:
+            lines.append(f"{coin}: open-interest check unavailable (Binance did not answer) -- bought without it")
         last = df.iloc[-1]
         entry_px = live_info["prices"].get(coin, float(last["close"]))     # live price for a fresher fill than the closed candle
         sl_px = entry_px * (1 - S.STOPLOSS)

@@ -7,11 +7,15 @@ future daily use). 5-minute candles: Binance USDT-M futures klines, for crypto/d
 2022 -> 2026-10-16 depth was seeded once from an earlier 1-minute archive; this keeps it current). Funding: Binance USDT-M perpetual funding
 history summed per UTC day (Delta Exchange India's futures track the same market and funding interval -- 8-hourly, verified 2026-10-21 -- and have no simple historical-range public endpoint). Only COMPLETED candles/days
 are kept, so a decision never reads one still forming. Re-fetches a short recent window each run, so a missed night heals itself.
+Open interest (2026-11-21): Binance USD-M "metrics" daily files (5-min open interest, long/short and taker ratios) from data.binance.vision
+-> metrics/<COIN>_metrics.csv.gz, for dip_reversal's open-interest filter in the backtest (the live engine reads Binance in real time).
 """
 from __future__ import annotations
 
+import io
 import sys
 import time
+import zipfile
 
 import pandas as pd
 import requests
@@ -20,6 +24,8 @@ from core.paths import ARCHIVE_ROOT
 DATA_DIR = ARCHIVE_ROOT / "crypto"
 COINS = ("BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "AVAX", "LINK", "DOT", "LTC", "TRX", "ZEC")   # ZEC 2026-11-20
 
+METRICS_DIR = DATA_DIR / "metrics"
+METRICS_URL = "https://data.binance.vision/data/futures/um/daily/metrics/{c}USDT/{c}USDT-metrics-{d}.zip"
 DAY_MS = 86_400_000
 LOOKBACK_DAYS = 30
 MIN_MS = 60_000
@@ -87,6 +93,42 @@ def funding(coin: str, days: int = LOOKBACK_DAYS) -> pd.DataFrame:
     return df.assign(fundingRate=df["fundingRate"].astype(float)).groupby("date", as_index=False)["fundingRate"].sum()
 
 
+def _fetch_zip(url: str) -> bytes | None:
+    r = requests.get(url, timeout=30, headers={"User-Agent": "research-client"})
+    if r.status_code == 404:                                   # that day is not published yet (it appears a day later)
+        return None
+    r.raise_for_status()
+    return r.content
+
+
+def topup_metrics(coins=None, today: pd.Timestamp | None = None, fetch=_fetch_zip, max_days: int = 40) -> dict:
+    """Append each missing UTC day (after the file's last row, up to yesterday) of Binance's 5-minute metrics. Zips are read in memory
+    as data, never extracted. Returns rows added per coin."""
+    if coins is None:
+        from markets.crypto.strategies.tf_5min.dip_reversal.strategy import COINS as coins
+    METRICS_DIR.mkdir(parents=True, exist_ok=True)
+    today = (today or _today_utc()).normalize()
+    out = {}
+    for c in coins:
+        path = METRICS_DIR / f"{c}_metrics.csv.gz"
+        have = pd.read_csv(path) if path.exists() else pd.DataFrame()
+        last = pd.Timestamp(have["create_time"].max()).normalize() if len(have) else today - pd.Timedelta(days=max_days + 1)
+        frames = []
+        for d in pd.date_range(last + pd.Timedelta(days=1), today - pd.Timedelta(days=1), freq="D")[-max_days:]:
+            raw = fetch(METRICS_URL.format(c=c, d=d.strftime("%Y-%m-%d")))
+            if raw is None:
+                continue
+            z = zipfile.ZipFile(io.BytesIO(raw))
+            frames.append(pd.read_csv(z.open(z.namelist()[0])).drop(columns=["symbol"], errors="ignore"))
+        if frames:
+            new = pd.concat([have, *frames], ignore_index=True).drop_duplicates("create_time").sort_values("create_time")
+            new.to_csv(path, index=False, compression="gzip")
+            out[c] = len(new) - len(have)
+        else:
+            out[c] = 0
+    return out
+
+
 def topup() -> dict:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     added, errors = {}, []
@@ -104,6 +146,10 @@ def topup() -> dict:
         except Exception as e:
             errors.append(f"{c} 5m candles: {e}")
         time.sleep(0.3)
+    try:
+        added["open_interest"] = topup_metrics()
+    except Exception as e:
+        errors.append(f"open-interest metrics: {e}")
     return {"added": added, "errors": errors}
 
 
