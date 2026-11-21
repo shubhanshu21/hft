@@ -413,7 +413,7 @@ def web_backtest(capital: float, start: str, end: str, symbols: list[str] | None
             events[i1].append({"t": "sell", "side": "long", "sym": x["symbol"], "q": x["qty"], "px": x["exit_price"], "hours": hours,
                                 "entry": x["entry_price"], "pnl": x["pnl"], "fees": x["fees"], "slip": 0.0, "why": x["exit_reason"]})
         if i0 is not None:
-            for di in range(i0, (i1 if i1 is not None else len(days) - 1) + 1):
+            for di in range(i0, i1 if i1 is not None else len(days)):      # held at the close of each day BEFORE the sale day (2026-11-21)
                 pos_by_day[di].append({"sym": x["symbol"], "q": x["qty"], "e": x["entry_price"], "px": x["exit_price"], "start": i0})
     for c, p in open_pos.items():
         i0 = day_idx.get(str(p["entry_time"])[:10])

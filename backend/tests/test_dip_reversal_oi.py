@@ -61,6 +61,12 @@ class TestBacktestUsesIt(unittest.TestCase):
             def trades(oi):
                 with mock.patch.object(S, "oi_change_1h", return_value=np.full(len(pd.date_range("2026-01-01", "2026-01-03", freq="5min")), oi)):
                     return S.web_backtest(100_000, "2026-01-01", "2026-01-02", symbols=["BTC"], tax="none")["trades"]
+            # 2026-11-21: a trade sold the same day is NOT open at that day's close (the results page said "loss on 6 open trades"
+            # for a run whose 6 last trades were all sold on its last day)
+            with mock.patch.object(S, "oi_change_1h", return_value=np.full(577, -0.02)):
+                r = S.web_backtest(100_000, "2026-01-01", "2026-01-02", symbols=["BTC"], tax="none")
+            self.assertEqual(r["trades"][0]["exit_time"][:10], "2026-01-01")
+            self.assertEqual(r["pos"][0], [])
             self.assertEqual(len(trades(-0.02)), 1)           # OI fell: bought
             self.assertEqual(len(trades(+0.02)), 0)           # OI rose on a flat price: skipped
             with mock.patch.object(S, "oi_change_1h", return_value=np.full(577, 0.02)):

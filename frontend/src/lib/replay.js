@@ -11,6 +11,18 @@ export function tally(result, upto) {
   return { n, wins, profit, fees, slippage };
 }
 
+/** The change since the start on day `at`, split into sold trades, open trades and tax (2026-11-21). Without tax in the result the open
+ *  trades are simply whatever is not sold profit (as before). With tax (crypto: metrics.tax_mode business/strict) the open trades are
+ *  valued at that day's close from the candles, and the rest of the gap is the tax -- it used to show as a "loss on open trades". */
+export function splitChange(result, at) {
+  const start = result.metrics?.start_capital ?? result.equity[0];
+  const change = result.equity[at] - start, sold = tally(result, at).profit, held = result.pos[at] ?? [];
+  const taxed = ["business", "strict"].includes(result.metrics?.tax_mode);
+  if (!taxed) return { sold, open: change - sold, tax: 0, nOpen: held.length };
+  const open = held.reduce((s, p) => { const c = result.bars?.[p.sym]?.[at]?.[3]; return s + (c != null ? p.q * (c - p.e) : 0); }, 0);
+  return { sold, open, tax: change - sold - open, nOpen: held.length };
+}
+
 /** Symbols that have candles in this result. */
 export const symbolsWithBars = (result) => Object.keys(result.bars ?? {});
 

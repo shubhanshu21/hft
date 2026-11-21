@@ -15,7 +15,7 @@ import YearTable from "../analysis/YearTable.jsx";
 import StockTable from "../analysis/StockTable.jsx";
 import { usePlayer } from "../../hooks/usePlayer.js";
 import { inr, longDate, pct, signed, tone } from "../../lib/format.js";
-import { tally, unitNoun } from "../../lib/replay.js";
+import { splitChange, tally, unitNoun } from "../../lib/replay.js";
 import { download, tradesCsv } from "../../lib/analysis.js";
 
 export default function ReplayView({ result, title, blurb, params, live = false, fileName = "trades.csv" }) {
@@ -27,8 +27,8 @@ export default function ReplayView({ result, title, blurb, params, live = false,
   const start = result.metrics?.start_capital ?? result.equity[0];
   const eq = result.equity[player.cur], change = eq - start;
   const bench = result.benchmark?.[player.cur];
-  const totals = tally(result, player.cur), nOpen = result.pos[player.cur].length;
-  const openPnl = change - totals.profit;                 // what the still-open trades are worth today versus their buy price, after costs so far
+  const totals = tally(result, player.cur);
+  const { open: openPnl, tax, nOpen } = splitChange(result, player.cur);   // sold + open + tax = the change (2026-11-21: tax was shown as an open loss)
   return (
     <>
       <section className="verdict">
@@ -37,8 +37,11 @@ export default function ReplayView({ result, title, blurb, params, live = false,
           <div className="v-date">{live ? "Running: " : ""}{longDate(result.days[player.cur])}</div>
           <div className="v-big">{inr(eq)}</div>
           <div className="v-chg"><span className={`v-delta ${change >= 0 ? "is-up" : "is-down"}`}>{change >= 0 ? "▲" : "▼"} {signed(change)} ({pct(change / start * 100)})</span> since {inr(start)}</div>
-          {nOpen > 0 && Math.abs(openPnl) >= 1 && (
-            <div className="v-note">= {signed(totals.profit)} from sold trades {openPnl >= 0 ? "+" : "−"} {inr(Math.abs(openPnl))} {openPnl >= 0 ? "gain" : "loss"} on {nOpen} open trade{nOpen > 1 ? "s" : ""} (not sold yet)</div>
+          {((nOpen > 0 && Math.abs(openPnl) >= 1) || Math.abs(tax) >= 1) && (
+            <div className="v-note">= {signed(totals.profit)} from sold trades
+              {Math.abs(tax) >= 1 && <> {tax <= 0 ? "−" : "+"} {inr(Math.abs(tax))} income tax</>}
+              {nOpen > 0 && Math.abs(openPnl) >= 1 && <> {openPnl >= 0 ? "+" : "−"} {inr(Math.abs(openPnl))} {openPnl >= 0 ? "gain" : "loss"} on {nOpen} open trade{nOpen > 1 ? "s" : ""} (not sold yet)</>}
+            </div>
           )}
           {bench != null && (() => {
             const b = (bench / start - 1) * 100, gap = change / start * 100 - b;
