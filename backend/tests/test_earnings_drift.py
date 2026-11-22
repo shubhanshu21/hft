@@ -121,7 +121,7 @@ class TestEngine(Base):
         E.fill(self.db, Broker({"GOOD": 200.0}), self.at(9, 30), self.lookup, [])
         pos = self.db.get_open_positions(E.ACCOUNT)
         self.assertEqual([(p["symbol"], p["strategy"], p["entry_price"]) for p in pos], [("GOOD", S.NAME, 200.0)])
-        self.assertEqual(pos[0]["qty"], int(S.SLEEVE_CAPITAL / S.K // 200.0))      # 1/5 of the drift money
+        self.assertEqual(pos[0]["qty"], int(100_000 * E.ACCOUNT_SHARE / S.K // 200.0))   # 1/10 of drift's half of the account (2026-11-22)
         E.fill(self.db, Broker({"GOOD": 200.0}), self.at(9, 40), self.lookup, [])  # a retry slot does not buy it twice
         self.assertEqual(len(self.db.get_open_positions(E.ACCOUNT)), 1)
 
@@ -214,7 +214,7 @@ class TestTenSlots(Base):
         """2026-11-16: DIVISLAB (Rs11,760) was skipped for a Rs10k slot. One share up to 2 slots is bought (backtest Rs2.03L -> 2.13L)."""
         with mock.patch.object(E, "_indicators", return_value=make_ind()):
             E.plan(self.db, self.at(8, 50).date(), set())
-        E.fill(self.db, Broker({"GOOD": 15_000.0}), self.at(9, 30), self.lookup, [])     # Rs1L free, slot Rs10k
+        E.fill(self.db, Broker({"GOOD": 7_500.0}), self.at(9, 30), self.lookup, [])      # Rs1L free, slot Rs5k (half the account / 10)
         self.assertEqual([p["qty"] for p in self.db.get_open_positions(E.ACCOUNT)], [1])
 
     def test_a_share_dearer_than_two_slots_says_so(self):

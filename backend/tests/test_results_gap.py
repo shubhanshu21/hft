@@ -111,6 +111,7 @@ class EngineCase(unittest.TestCase):
         for p in (mock.patch.object(E, "STATE", self.tmp / "state.json"), mock.patch.object(S, "CALENDAR", cal),
                   mock.patch.object(S, "universe", return_value=UNI), mock.patch.object(S, "refresh_calendar", return_value=2),
                   mock.patch.object(E.ED, "STATE", self.tmp / "ed_state.json"), mock.patch.object(E.ED, "plan", return_value=[]),   # earnings_drift: own tests
+                  mock.patch.object(E.MO, "STATE", self.tmp / "mo_state.json"), mock.patch.object(E.MO, "plan", return_value=[]),   # momentum: own tests
                   mock.patch.object(S, "established", return_value=True),                         # the one-year filter: own tests
                   mock.patch.object(E.ED.S, "KEEP_RESULTS_GAP", False)):                          # the 15:20 keep: TestKeepAsSwing
             p.start(); self.addCleanup(p.stop)
@@ -507,7 +508,7 @@ class TestKeepAsSwing(EngineCase):
         pos = self.db.get_open_positions(E.ACCOUNT)
         self.assertEqual([(p["symbol"], p["strategy"], p["entry_price"]) for p in pos], [("WIN", E.ED.S.NAME, 112.0)])
         keep = int(pos[0]["qty"])
-        self.assertEqual(keep, int(E.ED.S.SLEEVE_CAPITAL / E.ED.S.K // 112.0))          # one 1/10 slot at the 09:30 price
+        self.assertEqual(keep, int(100_000 * E.ED.ACCOUNT_SHARE / E.ED.S.K // 112.0))    # one 1/10 slot of drift's half (Rs1L booked at 15:20), 09:30 price
         self.assertEqual(json.loads(pos[0]["state"])["entry_date"], "2026-10-26")       # earnings_drift counts its 40 days from here
         t = self.db.get_trades(account_id=E.ACCOUNT)[0]
         self.assertEqual(int(t["qty"]), qty - keep)                                     # the rest sold at 15:20 as before

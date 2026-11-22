@@ -15,6 +15,17 @@ from engine import results_gap as RG
 from engine.database import TradingDB
 
 
+def setUpModule():
+    """The live backend/.env may switch strategies off; these tests start from all-on (2026-11-22: drift's share depends on RG_MOMENTUM)."""
+    global _ENV
+    from core import switches
+    _ENV = mock.patch.dict("os.environ", {f"STRATEGY_{n}": "on" for n in switches.NAMES}); _ENV.start()
+
+
+def tearDownModule():
+    _ENV.stop()
+
+
 class Base(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(); self.path = Path(self.tmp.name) / "t.db"
@@ -54,10 +65,10 @@ class TestStrategiesSizeFromIt(Base):
     def test_earnings_drift_money_includes_deposits(self):
         before = ED.sleeve_value(self.db)
         self.db.add_money("RESULTS_GAP", 20_000)
-        self.assertEqual(ED.sleeve_value(self.db), before + 20_000)
+        self.assertEqual(ED.sleeve_value(self.db), before + 20_000 * ED.ACCOUNT_SHARE)   # drift's half of the account (2026-11-22)
 
     def test_results_gap_free_cash_includes_deposits(self):
-        with mock.patch.object(RG, "ED", mock.Mock(locked_cash=lambda db: 0.0)):
+        with mock.patch.object(RG, "ED", mock.Mock(account_locked=lambda db: 0.0)):
             before = RG.free_cash(self.db)
             self.db.add_money("RESULTS_GAP", 10_000)
             self.assertEqual(RG.free_cash(self.db), before + 10_000)
@@ -73,7 +84,7 @@ class TestPaperVsBacktest(Base):
 
         def run(body):
             seen.append(body["capital"])
-            eq = [100_000, 110_000, 121_000] if body["strategy"] == "results_gap" else [100_000] * 3
+            eq = [100_000, 110_000, 121_000] if body["strategy"] == "results_gap" else [body["capital"]] * 3   # the swing sleeves flat
             return {"days": days, "equity": eq, "events": [[], [], []]}
         with sqlite3.connect(self.path) as con:
             r = P.check_account(con, "RESULTS_GAP", date(2026, 11, 18), run)

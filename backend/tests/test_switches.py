@@ -17,7 +17,7 @@ class TestSwitches(unittest.TestCase):
                 self.assertTrue(switches.on("MOMENTUM"), v)
 
     def test_status_lists_every_equity_strategy(self):
-        self.assertEqual(set(switches.status()), {"RESULTS_GAP", "EARNINGS_DRIFT", "BREAKOUT", "MOMENTUM"})
+        self.assertEqual(set(switches.status()), {"RESULTS_GAP", "EARNINGS_DRIFT", "BREAKOUT", "MOMENTUM", "RG_MOMENTUM"})
 
 class TestClose(unittest.TestCase):
     def test_close_is_off_and_closing(self):

@@ -11,8 +11,8 @@ Then every buy is matched by stock and day:
   only_paper     -- paper bought it, the backtest did not (a rule or data difference, or a trade from before a settings change)
 The expected account value by day goes to the account page's chart next to the real one. Telegram only hears about differences from
 the last RECENT_DAYS days, so an old, explained one (e.g. DOT/ADA bought before they were dropped on 2026-11-10) does not repeat nightly.
-RESULTS_GAP runs two strategies on one Rs1L: each is backtested on its own money and their profits are added (an approximation -- in
-the account they share the cash).
+RESULTS_GAP runs three strategies on one account (since 2026-11-22: results gap on all of it, earnings drift and momentum on half each):
+each is backtested on that money and their profits are added (an approximation -- in the account they share the cash).
 """
 from __future__ import annotations
 
@@ -37,8 +37,10 @@ def bodies(account: str, capital: float) -> list[dict]:
     if account == "RESULTS_GAP":
         from markets.equity.strategies.tf_daily.earnings_drift import strategy as ed
         from markets.equity.strategies.tf_intraday.results_gap import strategy as rg
+        from engine import earnings_drift as EDE, momentum as MOE         # 2026-11-22: drift + momentum on half the account each
         return [{"market": "equity", "strategy": "results_gap", "capital": capital, "exposure": rg.LEVERAGE},
-                {"market": "equity", "strategy": "earnings_drift", "capital": ed.SLEEVE_CAPITAL, "slippage_bp": 5}]
+                {"market": "equity", "strategy": "earnings_drift", "capital": capital * EDE.ACCOUNT_SHARE, "slippage_bp": 5},
+                {"market": "equity", "strategy": "momentum_12_1", "capital": capital * MOE.SHARE, "slippage_bp": 5}]
     if account == "EQUITY_BREAKOUT":                                     # since 2026-11-19: half breakout_pair, half momentum_12_1
         from engine.equity_breakout import BREAKOUT_SHARE
         return [{"market": "equity", "strategy": "breakout_pair", "capital": capital * BREAKOUT_SHARE, "risk_pct": 2, "slippage_bp": 5},

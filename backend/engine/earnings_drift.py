@@ -7,7 +7,9 @@ Driven by engine/results_gap.py's timer runs (no timer of its own):
   * 09:30  fill():  books those sells and buys at today's official open (the quote's today_open), sells first, BEFORE results_gap sizes its
                     intraday trades from the cash left over. 09:40 retries what had no price; buys still unfilled after 09:45 are dropped,
                     sells are retried at every run until they go through.
-Money: the strategy's own SLEEVE_CAPITAL plus its closed trades, 1/K per stock, never more than the account's free cash.
+Money (since 2026-11-22, user: "Drift grows + momentum 50/50"): ACCOUNT_SHARE of the account's booked money (all of it while the momentum
+sleeve, engine/momentum.py, is switched off), 1/K per stock, never more than the account's free cash. Before, it was SLEEVE_CAPITAL plus its
+own closed trades, so results-gap profits sat as idle cash: joint backtest Rs1L Jan 2023-Nov 2026 Rs11.40L -> Rs15.65L with drift alone.
 """
 from __future__ import annotations
 
@@ -43,9 +45,18 @@ def locked_cash(db) -> float:
     return sum(float(p["qty"]) * float(p["entry_price"]) for p in _mine(db))
 
 
+ACCOUNT_SHARE = 0.5               # of the account's booked money; momentum (engine/momentum.py) has the other half
+
+
+def account_locked(db) -> float:
+    """Cash ALL swing holdings in the account take out (earnings drift + momentum, bought outright); results gap's own trades excluded."""
+    return sum(float(p["qty"]) * float(p["entry_price"]) for p in db.get_open_positions(ACCOUNT) if p.get("strategy") != "results_gap")
+
+
 def sleeve_value(db) -> float:
-    """The strategy's money: SLEEVE_CAPITAL plus money added to the account (2026-11-20) plus everything its closed trades made or lost."""
-    return S.SLEEVE_CAPITAL + db.deposits_total(ACCOUNT) + sum(float(t["net_pnl"] or 0) for t in db.get_trades(limit=100_000, account_id=ACCOUNT) if t.get("strategy") == S.NAME)
+    """The strategy's money (2026-11-22): its share of the account's booked money -- so results-gap profits and top-ups get invested too."""
+    from core import switches
+    return (ACCOUNT_SHARE if switches.on("RG_MOMENTUM") else 1.0) * float(db.get_account(ACCOUNT)["current_capital"])
 
 
 def _entry_day(p: dict) -> date:
@@ -138,7 +149,7 @@ def fill(db, broker, now: datetime, lookup, lines: list) -> None:
             buys.remove(s); continue
         if s not in px:
             continue
-        free, slot = float(db.get_account(ACCOUNT)["current_capital"]) - locked_cash(db), sleeve_value(db) / S.K
+        free, slot = float(db.get_account(ACCOUNT)["current_capital"]) - account_locked(db), sleeve_value(db) / S.K
         qty = S.share_qty(px[s], slot, free)
         buys.remove(s)
         if qty < 1:

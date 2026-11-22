@@ -15,6 +15,16 @@ from engine import nightly
 from engine.database import TradingDB
 from markets.crypto.strategies.tf_5min.dip_reversal import strategy as S
 
+
+def setUpModule():
+    # no live Binance call in these tests: a real "open interest rose" answer skipped the buy before the cap could (2026-11-22)
+    global _oi
+    _oi = mock.patch.object(E, "fetch_oi_change", return_value=None); _oi.start()
+
+
+def tearDownModule():
+    _oi.stop()
+
 T0 = 1_792_761_300_000          # a 5-minute candle start (ms)
 BAR = E.BAR_MS
 

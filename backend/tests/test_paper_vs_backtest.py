@@ -64,12 +64,13 @@ class TestMatch(Base):
         r = self.check("CRYPTO_DIP_REVERSAL", lambda body: result(["2026-11-14"], [100_000], {"2026-11-14": [("ETH", 2001.0)]}))
         self.assertEqual(len(r["matched"]), 1)
 
-    def test_two_strategies_in_one_account_add_their_profits(self):
+    def test_three_strategies_in_one_account_add_their_profits(self):
+        # 2026-11-22: results gap on the whole account, earnings drift and momentum on half each
         self.account("RESULTS_GAP")
         runs = {"results_gap": result(["2026-11-12", "2026-11-13"], [100_000, 103_000], {}),
-                "earnings_drift": result(["2026-11-13"], [99_000], {})}
+                "earnings_drift": result(["2026-11-13"], [49_000], {}), "momentum_12_1": result(["2026-11-13"], [50_500], {})}
         r = self.check("RESULTS_GAP", lambda body: runs[body["strategy"]])
-        self.assertEqual(r["expected"], {"2026-11-12": 100_000, "2026-11-13": 102_000})   # +3,000 - 1,000
+        self.assertEqual(r["expected"], {"2026-11-12": 100_000, "2026-11-13": 102_500})   # +3,000 - 1,000 + 500
 
     def test_new_account_and_live_settings(self):
         self.account("EQUITY_BREAKOUT", created="2026-11-17T19:34:00+05:30")

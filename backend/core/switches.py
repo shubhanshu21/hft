@@ -3,7 +3,8 @@ profitable"). In backend/.env, STRATEGY_<NAME>=off stops that strategy's NEW buy
 what it already holds is still sold by its own rules, so switching off never strands a position. Anything other than off/0/false/no/close = on; close = off + sell all at the next open (breakout, momentum)."""
 import os
 
-NAMES = ("RESULTS_GAP", "EARNINGS_DRIFT", "BREAKOUT", "MOMENTUM")
+NAMES = ("RESULTS_GAP", "EARNINGS_DRIFT", "BREAKOUT", "MOMENTUM", "RG_MOMENTUM")   # RG_MOMENTUM (2026-11-22): momentum inside RESULTS_GAP;
+# MOMENTUM stays the old EQUITY_BREAKOUT momentum half (set to close)
 
 
 def _value(name: str) -> str:

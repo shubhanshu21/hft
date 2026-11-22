@@ -29,6 +29,7 @@ import engine.config  # noqa: F401  -- loads backend/.env FIRST: the strategy re
 from core.atomic_io import read_json, write_json
 from core.paths import DB_DIR
 from engine import earnings_drift as ED
+from engine import momentum as MO
 from markets.equity.strategies.tf_intraday.results_gap import strategy as S
 
 IST = timezone(timedelta(hours=5, minutes=30))
@@ -56,7 +57,7 @@ def _save_state(st: dict) -> None:
 
 def free_cash(db) -> float:
     """The account's booked money minus what earnings_drift's delivery holdings lock up (they share this account since 2026-10-29)."""
-    return float(db.get_account(ACCOUNT)["current_capital"]) - ED.locked_cash(db)
+    return float(db.get_account(ACCOUNT)["current_capital"]) - ED.account_locked(db)
 
 
 # 2026-11-20 (user: "true 3x now"): earnings_drift's holdings are pledged at Upstox, so they count as intraday margin and results gap sizes
@@ -68,7 +69,7 @@ CASH_SHARE, SHORTFALL_RATE = 0.5, 0.0005
 
 def margin_money(db) -> tuple[float, float, float]:
     """(account money results gap sizes from, free cash, margin Upstox would give = free cash + pledged holdings after the haircut)."""
-    booked, held = float(db.get_account(ACCOUNT)["current_capital"]), ED.locked_cash(db)
+    booked, held = float(db.get_account(ACCOUNT)["current_capital"]), ED.account_locked(db)      # drift + momentum holdings
     free = booked - held
     return booked, free, max(free, 0.0) + (1 - PLEDGE_HAIRCUT) * held
 
@@ -292,7 +293,7 @@ def swing_keep(db, p: dict) -> int:
     mine = ED._mine(db)
     if len(mine) >= ED.S.K or any(m["symbol"] == p["symbol"] for m in mine):
         return 0
-    free = float(db.get_account(ACCOUNT)["current_capital"]) - ED.locked_cash(db)
+    free = float(db.get_account(ACCOUNT)["current_capital"]) - ED.account_locked(db)
     return min(int(p["qty"]), ED.S.share_qty(float(p["entry_price"]), ED.sleeve_value(db) / ED.S.K, free))
 
 
@@ -340,15 +341,23 @@ def run(db, broker, now: datetime, holidays: set[date], lookup, send=print) -> l
             ed = ED.plan(db, now.date(), holidays)
         except Exception as e:
             ed = [f"earnings drift: plan FAILED ({type(e).__name__}: {e!s:.100}) -- no swing orders today"]
+        try:                                                          # 2026-11-22: momentum, the other half of the swing money
+            ed += MO.plan(db, now.date(), holidays)
+        except Exception as e:
+            ed.append(f"momentum: plan FAILED ({type(e).__name__}: {e!s:.100}) -- no momentum orders today")
         if ed and send:
             from services.utils import telegram as T
-            send(T.message("🗓", "Equity · plan for today's open (earnings drift)", ed))
+            send(T.message("🗓", "Equity · plan for today's open (earnings drift + momentum)", ed))
         return [msg, *ed]
     capital_before = float(db.get_account(ACCOUNT)["current_capital"])
     try:                                           # earnings_drift's opening fills first: results_gap sizes from the cash left
         ED.fill(db, broker, now, lookup, lines)
     except Exception as e:
         lines.append(f"earnings drift: fill FAILED ({type(e).__name__}: {e!s:.100}) -- retried at the next run")
+    try:
+        MO.fill(db, broker, now, lookup, lines)
+    except Exception as e:
+        lines.append(f"momentum: fill FAILED ({type(e).__name__}: {e!s:.100}) -- retried at the next run")
     if t < dtime(15, 0):
         enter(db, broker, now, holidays, lookup, lines)
     elif t >= dtime(15, 15):
