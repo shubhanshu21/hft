@@ -11,8 +11,9 @@ Then every buy is matched by stock and day:
   only_paper     -- paper bought it, the backtest did not (a rule or data difference, or a trade from before a settings change)
 The expected account value by day goes to the account page's chart next to the real one. Telegram only hears about differences from
 the last RECENT_DAYS days, so an old, explained one (e.g. DOT/ADA bought before they were dropped on 2026-11-10) does not repeat nightly.
-RESULTS_GAP runs three strategies on one account (since 2026-11-22: results gap on all of it, earnings drift and momentum on half each):
-each is backtested on that money and their profits are added (an approximation -- in the account they share the cash).
+RESULTS_GAP runs three strategies on one account (results gap on all of it, earnings drift on half, momentum on 75% since 2026-11-23):
+each is backtested on that money from the day it joined the account (bodies' live_from) and their profits are added (an approximation
+-- in the account they share the cash).
 """
 from __future__ import annotations
 
@@ -29,7 +30,9 @@ RECENT_DAYS = 5
 
 
 def bodies(account: str, capital: float) -> list[dict]:
-    """The website backtest(s) that ARE this account, with its live settings (validated by backtest_api.validate)."""
+    """The website backtest(s) that ARE this account, with its live settings (validated by backtest_api.validate).
+    live_from = the day a strategy joined an account that already existed (2026-11-23): it is backtested from then, not from the
+    account's start -- otherwise its earlier buys show as 'paper missed' and profit it never had goes into the expected value."""
     if account == "CRYPTO_DIP_REVERSAL":
         from markets.crypto.strategies.tf_5min.dip_reversal import strategy as dr
         return [{"market": "crypto", "strategy": "dip_reversal", "capital": capital, "exposure": 3.0, "symbols": list(dr.COINS),
@@ -39,12 +42,15 @@ def bodies(account: str, capital: float) -> list[dict]:
         from markets.equity.strategies.tf_intraday.results_gap import strategy as rg
         from engine import earnings_drift as EDE, momentum as MOE         # drift on half the account (2026-11-22), momentum on 75% (2026-11-23)
         return [{"market": "equity", "strategy": "results_gap", "capital": capital, "exposure": rg.LEVERAGE},
-                {"market": "equity", "strategy": "earnings_drift", "capital": capital * EDE.ACCOUNT_SHARE, "slippage_bp": 5},
-                {"market": "equity", "strategy": "momentum_12_1", "capital": capital * MOE.SHARE, "slippage_bp": 5}]
+                {"market": "equity", "strategy": "earnings_drift", "capital": capital * EDE.ACCOUNT_SHARE, "slippage_bp": 5,
+                 "live_from": "2026-10-29"},
+                {"market": "equity", "strategy": "momentum_12_1", "capital": capital * MOE.SHARE, "slippage_bp": 5,
+                 "live_from": "2026-11-23"}]
     if account == "EQUITY_BREAKOUT":                                     # since 2026-11-19: half breakout_pair, half momentum_12_1
         from engine.equity_breakout import BREAKOUT_SHARE
         return [{"market": "equity", "strategy": "breakout_pair", "capital": capital * BREAKOUT_SHARE, "risk_pct": 2, "slippage_bp": 5},
-                {"market": "equity", "strategy": "momentum_12_1", "capital": capital * (1 - BREAKOUT_SHARE), "slippage_bp": 5}]
+                {"market": "equity", "strategy": "momentum_12_1", "capital": capital * (1 - BREAKOUT_SHARE), "slippage_bp": 5,
+                 "live_from": "2026-11-20"}]
     return []
 
 
@@ -97,16 +103,21 @@ def check_account(con, account: str, today: date, run=None) -> dict:
     buys, curves = [], []
     from core.backtester import BacktestError
     for body in bodies(account, capital):
+        own = max(start, body.pop("live_from", start))
+        if own >= str(today):                                            # joined today or later: nothing of it to compare yet
+            continue
         try:
-            res = run(body | {"start": start, "end": str(today)})
+            res = run(body | {"start": own, "end": str(today)})
         except BacktestError as e:
-            if "No trading days" in str(e):                             # a brand-new account: nothing to compare yet
+            if "No trading days" in str(e):
+                if own > start:                                          # a strategy that joined only days ago
+                    continue
                 return {"account": account, "start": start, "note": "too few trading days yet to compare"}
             if "No trade in the chosen dates" not in str(e):
                 raise
             # 2026-11-19: MCX at 1x buys nothing since 24 Oct (Rs2.5L is below most lots) -- the backtest's answer is "no trades,
             # money unchanged", not an error; paper's own buys then show as differences
-            res = {"days": [start, str(today)], "equity": [float(body["capital"])] * 2, "events": [[], []]}
+            res = {"days": [own, str(today)], "equity": [float(body["capital"])] * 2, "events": [[], []]}
         buys += backtest_buys(res)
         curves.append((float(body["capital"]), daily_equity(res)))
     expected: dict[str, float] = {}

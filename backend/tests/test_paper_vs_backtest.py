@@ -68,10 +68,34 @@ class TestMatch(Base):
         # results gap on the whole account, earnings drift on half (2026-11-22), momentum on 75% (2026-11-23): each adds its own profit
         from engine import momentum as MO
         self.account("RESULTS_GAP")
-        runs = {"results_gap": result(["2026-11-12", "2026-11-13"], [100_000, 103_000], {}),
-                "earnings_drift": result(["2026-11-13"], [49_000], {}), "momentum_12_1": result(["2026-11-13"], [100_000 * MO.SHARE + 500], {})}
-        r = self.check("RESULTS_GAP", lambda body: runs[body["strategy"]])
-        self.assertEqual(r["expected"], {"2026-11-12": 100_000, "2026-11-13": 102_500})   # +3,000 - 1,000 + 500
+        runs = {"results_gap": result(["2026-11-24", "2026-11-25"], [100_000, 103_000], {}),
+                "earnings_drift": result(["2026-11-25"], [49_000], {}), "momentum_12_1": result(["2026-11-25"], [100_000 * MO.SHARE + 500], {})}
+        with sqlite3.connect(self.path) as con:                            # after momentum's first day (2026-11-23)
+            r = P.check_account(con, "RESULTS_GAP", date(2026, 11, 26), lambda body: runs[body["strategy"]])
+        self.assertEqual(r["expected"], {"2026-11-24": 100_000, "2026-11-25": 102_500})   # +3,000 - 1,000 + 500
+
+    def test_a_strategy_added_later_is_backtested_from_its_own_first_day(self):
+        """2026-11-23: momentum joined RESULTS_GAP on 23 Nov, but was backtested from the account's 24 Oct start -- its October buys
+        showed as 'paper missed' and a month of profit it never had went into the dashed line."""
+        self.account("RESULTS_GAP", created="2026-10-24T09:00:00+05:30")
+        seen = {}
+        def run(body):
+            seen[body["strategy"]] = body["start"]
+            if body["strategy"] == "momentum_12_1":
+                raise AssertionError("momentum starts on 2026-11-23, after this check's day")
+            return result([body["start"], "2026-11-18"], [body["capital"]] * 2, {})
+        r = self.check("RESULTS_GAP", run)
+        self.assertEqual(seen, {"results_gap": "2026-10-24", "earnings_drift": "2026-10-29"})
+        self.assertEqual(r["start"], "2026-10-24")
+        self.assertNotIn("live_from", P.bodies("RESULTS_GAP", 1.0)[0])     # only strategies that joined later carry a date
+        sent = []
+        def later(body):
+            sent.append(body)
+            return result([body["start"]], [body["capital"]], {})
+        with sqlite3.connect(self.path) as con:
+            P.check_account(con, "RESULTS_GAP", date(2026, 11, 25), later)
+        self.assertEqual({b["strategy"]: b["start"] for b in sent}["momentum_12_1"], "2026-11-23")
+        self.assertTrue(all("live_from" not in b for b in sent))           # the website backtest gets only its own fields
 
     def test_new_account_and_live_settings(self):
         self.account("EQUITY_BREAKOUT", created="2026-11-17T19:34:00+05:30")
