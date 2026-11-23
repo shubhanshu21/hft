@@ -21,7 +21,7 @@ export default function CommandPalette({ open, setOpen }) {
     return () => window.removeEventListener("keydown", key);
   }, [setOpen]);
   useEffect(() => { if (open) { setQ(""); setSel(0); listRuns().then((r) => setRuns(r.filter((x) => x.status === "done"))).catch(() => {}); setTimeout(() => input.current?.focus(), 0); } }, [open]);
-  const items = useMemo(() => filterItems(paletteItems(data?.accounts ?? [], runs), q), [data, runs, q]);
+  const items = useMemo(() => filterItems(paletteItems(data?.accounts ?? [], runs, data?.closed ?? []), q), [data, runs, q]);
   if (!open) return null;
   const go = (it) => { if (it) { window.location.hash = it.href; setOpen(false); } };
   return (
@@ -31,7 +31,7 @@ export default function CommandPalette({ open, setOpen }) {
           <input ref={input} autoFocus value={q} placeholder="Jump to a page, account or saved backtest…" aria-label="Search"
             onChange={(e) => { setQ(e.target.value); setSel(0); }}
             onKeyDown={(e) => { if (e.key === "ArrowDown") { e.preventDefault(); setSel((s) => Math.min(s + 1, items.length - 1)); }
-              if (e.key === "ArrowUp") { e.preventDefault(); setSel((s) => Math.max(s - 1, 0)); } if (e.key === "Enter") go((e.target.value === q ? items : filterItems(paletteItems(data?.accounts ?? [], runs), e.target.value))[sel]); }} />
+              if (e.key === "ArrowUp") { e.preventDefault(); setSel((s) => Math.max(s - 1, 0)); } if (e.key === "Enter") go((e.target.value === q ? items : filterItems(paletteItems(data?.accounts ?? [], runs, data?.closed ?? []), e.target.value))[sel]); }} />
           <kbd>Esc</kbd></div>
         <ul className="pal-list">
           {items.length ? items.map((it, i) => (

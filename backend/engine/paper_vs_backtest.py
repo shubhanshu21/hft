@@ -154,7 +154,10 @@ def run_all(db_path=None, today: date | None = None, run=None, accounts=None) ->
     con = sqlite3.connect(str(db_path or TradingDB().db_path), timeout=30)
     try:
         out = {}
+        from core import switches
         for account, _ in (accounts or api.PAPER_ACCOUNTS):
+            if switches.account_closed(account):                       # closed: nothing trades there any more (2026-11-23)
+                continue
             try:
                 out[account] = check_account(con, account, today, run)
             except Exception as e:                                     # one account failing must not hide the others

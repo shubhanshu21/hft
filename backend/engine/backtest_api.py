@@ -235,9 +235,9 @@ def _live_prices(keys: list[str]) -> dict:
     return prices
 
 
-PAPER_ACCOUNTS = [("CRYPTO_DIP_REVERSAL", "Crypto dip-reversal"), ("RESULTS_GAP", "Results gap + earnings drift"),
+PAPER_ACCOUNTS = [("CRYPTO_DIP_REVERSAL", "Crypto dip-reversal"), ("RESULTS_GAP", "Equity: results gap, drift, momentum"),
                   ("EQUITY_BREAKOUT", "Equity breakout pair")]
-ACCOUNT_STRATEGIES = {"CRYPTO_DIP_REVERSAL": "dip_reversal", "RESULTS_GAP": "results_gap, earnings_drift",
+ACCOUNT_STRATEGIES = {"CRYPTO_DIP_REVERSAL": "dip_reversal", "RESULTS_GAP": "results_gap, earnings_drift, momentum_12_1",
                       "EQUITY_BREAKOUT": "breakout_pair, momentum_12_1"}
 LIVE_STRATEGIES = {n.strip() for v in ACCOUNT_STRATEGIES.values() for n in v.split(",")}      # RESULTS_GAP runs two (2026-10-29)
 
@@ -440,7 +440,10 @@ def paper_summary(account: str = "CRYPTO_DIP_REVERSAL") -> dict:
         if account not in dict(PAPER_ACCOUNTS):
             account = "CRYPTO_DIP_REVERSAL"
         tabs = []
+        from core import switches
         for aid, label in PAPER_ACCOUNTS:
+            if aid != account and switches.account_closed(aid):          # a closed account: no tab (its page still opens)
+                continue
             r = con.execute("SELECT initial_capital, current_capital FROM accounts WHERE account_id = ?", (aid,)).fetchone()
             n = con.execute("SELECT COUNT(*) FROM positions WHERE account_id = ? AND status = 'OPEN'", (aid,)).fetchone()[0]
             if r:
@@ -511,8 +514,12 @@ def overview(now: datetime | None = None, summary=None) -> dict:
     now = now or datetime.now(IST)
     summary = summary or paper_summary
     today = now.date().isoformat()
-    accounts, recent = [], []
+    from core import switches
+    accounts, recent, closed = [], [], []
     for aid, label in PAPER_ACCOUNTS:
+        if switches.account_closed(aid):                                # history only (2026-11-23): Ctrl+K still finds it
+            closed.append({"id": aid, "label": label, "strategy": ACCOUNT_STRATEGIES.get(aid, "")})
+            continue
         try:
             s = summary(aid)
         except Exception as e:                                     # a locked DB or a broker hiccup: show the account as unavailable
@@ -535,7 +542,7 @@ def overview(now: datetime | None = None, summary=None) -> dict:
     totals = {"start": round(sum(a["start"] for a in ok), 2), "value": round(sum(a["value"] for a in ok), 2),
               "today_pnl": round(sum(a["today_pnl"] for a in ok), 2), "open_count": sum(a["open_count"] for a in ok)}
     recent.sort(key=lambda t: str(t.get("exit_dt") or ""), reverse=True)
-    return {"as_of": now.isoformat(timespec="seconds"), "accounts": accounts, "totals": totals, "recent": recent[:12]}
+    return {"as_of": now.isoformat(timespec="seconds"), "accounts": accounts, "closed": closed, "totals": totals, "recent": recent[:12]}
 
 
 def run_strategy(market: str, strategy: str, p: dict, progress=lambda i, n: None) -> dict:

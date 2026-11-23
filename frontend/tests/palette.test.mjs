@@ -37,3 +37,9 @@ test("sidebar collapse is remembered, and a broken storage never crashes", () =>
   saveCollapsed(broken, true);
   assert.equal(readCollapsed(null), false);
 });
+
+test("a closed account is still found by search, marked closed (2026-11-23)", () => {
+  const all = paletteItems([], [], [{ id: "EQUITY_BREAKOUT", label: "Equity breakout pair", strategy: "breakout_pair, momentum_12_1" }]);
+  const hit = filterItems(all, "breakout");
+  assert.deepEqual(hit.map((i) => [i.href, i.hint]), [["#/paper/EQUITY_BREAKOUT", "closed · breakout_pair, momentum_12_1"]]);
+});

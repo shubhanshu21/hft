@@ -1,6 +1,7 @@
 """engine/backtest_api.py -- GET /api/overview (the website's Today page, 2026-10-29) and the `live` flag on saved runs.
 paper_summary is replaced by a fake per account, so no database or live prices are touched."""
 import json
+import os
 import tempfile
 import threading
 import unittest
@@ -13,6 +14,17 @@ from unittest import mock
 from engine import backtest_api as A
 
 NOW = datetime(2026, 10, 29, 14, 0, tzinfo=A.IST)
+
+
+def setUpModule():
+    # the live .env sets breakout + momentum to close (EQUITY_BREAKOUT closed, 2026-11-23); these tests are about an open account
+    global _env
+    from core import switches
+    _env = mock.patch.dict(os.environ, {f"STRATEGY_{n}": "on" for n in switches.NAMES}); _env.start()
+
+
+def tearDownModule():
+    _env.stop()
 
 
 def fake_summary(aid):

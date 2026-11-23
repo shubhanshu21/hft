@@ -166,14 +166,16 @@ def problems(now: datetime, sh=_systemctl, crypto_state: Path = CRYPTO_STATE, to
                                    "stock. Check: journalctl --user -u hft-results-gap.service -n 30")
     except (OSError, ValueError, TypeError):
         pass
-    # equity breakout (swing): one long session a trading day, 09:08 -> 15:31 IST
-    if not unit_active("hft-equity-breakout.timer", sh):
+    # equity breakout (swing): one long session a trading day, 09:08 -> 15:31 IST -- unless the account is closed (2026-11-23)
+    from core import switches
+    bo_closed = switches.account_closed("EQUITY_BREAKOUT")
+    if not bo_closed and not unit_active("hft-equity-breakout.timer", sh):
         out["bo_timer"] = "Equity breakout engine timer is OFF -- no breakout buys and NO STOPS are being watched."
-    elif now.time() >= BO_DUE and _bo_session_day(now):
+    elif not bo_closed and now.time() >= BO_DUE and _bo_session_day(now):
         start = last_start("hft-equity-breakout.service", sh)
         if start is not None and start < datetime.combine(now.date(), BO_START, IST) - timedelta(minutes=5):   # never run yet is not a miss
             out["bo_missed"] = f"Equity breakout engine did not start today's {BO_START:%H:%M} IST session -- stops are not being watched."
-    n = failed_runs("hft-equity-breakout.service", _today_start(now), run=journal)
+    n = 0 if bo_closed else failed_runs("hft-equity-breakout.service", _today_start(now), run=journal)
     if n:
         out["bo_failed"] = (f"Equity breakout engine had {n} failed session(s) today -- stops are not being watched until it runs again. "
                             "Check: journalctl --user -u hft-equity-breakout.service -n 50")
@@ -294,6 +296,9 @@ def engine_status(account: str, now: datetime | None = None, sh=_systemctl, cryp
             text = (f"Running · last check {when:%a %H:%M} IST · next at {nxt:%a %H:%M} IST" if when else f"Running · next at {nxt:%a %H:%M} IST")
         return {"ok": ok, "last": when.isoformat() if when else None, "next": nxt.isoformat() if nxt else None, "text": text}
     if account == "EQUITY_BREAKOUT":
+        from core import switches
+        if switches.account_closed(account):
+            return {"ok": True, "last": None, "next": None, "text": "Closed -- holds nothing, buys nothing (history only)"}
         on = unit_active("hft-equity-breakout.timer", sh)
         running = sh("is-active", "hft-equity-breakout.service") in ("active", "activating")
         start, (_, result) = last_start("hft-equity-breakout.service", sh), last_run("hft-equity-breakout.service", sh)

@@ -20,5 +20,15 @@ def closing(name: str) -> bool:
     return _value(name) == "close"
 
 
+ACCOUNT_SWITCHES = {"EQUITY_BREAKOUT": ("BREAKOUT", "MOMENTUM")}
+
+
+def account_closed(account: str) -> bool:
+    """2026-11-23: every strategy of the account set to close = the account is closed (history only: off the Desk and the left list,
+    out of the nightly check and the monitor). Its rows stay; set a switch back to on to open it again."""
+    names = ACCOUNT_SWITCHES.get(account)
+    return bool(names) and all(closing(n) for n in names)
+
+
 def status() -> dict[str, bool]:
     return {n: on(n) for n in NAMES}

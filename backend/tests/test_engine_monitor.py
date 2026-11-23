@@ -1,5 +1,6 @@
 """engine/engine_monitor.py -- alerts when a paper engine stops (2026-10-24). systemctl is faked; state files live in a temp folder."""
 import json
+import os
 import tempfile
 import unittest
 from datetime import datetime, timedelta
@@ -10,6 +11,17 @@ from unittest import mock
 from engine import engine_monitor as M
 
 IST = M.IST
+
+
+def setUpModule():
+    # the live .env sets breakout + momentum to close (EQUITY_BREAKOUT closed, 2026-11-23); these tests are about an open account
+    global _env
+    from core import switches
+    _env = mock.patch.dict(os.environ, {f"STRATEGY_{n}": "on" for n in switches.NAMES}); _env.start()
+
+
+def tearDownModule():
+    _env.stop()
 MON_10 = datetime(2026, 10, 26, 10, 0, tzinfo=IST)          # Monday 10:00 IST
 FRI_2340 = datetime(2026, 10, 23, 23, 40, 5, tzinfo=IST)
 MON_0910 = datetime(2026, 10, 26, 9, 10, 4, tzinfo=IST)

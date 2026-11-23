@@ -1,11 +1,12 @@
 /** Ctrl+K quick search: every page, account and saved backtest as one list, filtered by the words typed (all must match). */
-export function paletteItems(accounts = [], runs = []) {
+export function paletteItems(accounts = [], runs = [], closed = []) {
   return [
     { label: "Desk", hint: "All accounts at a glance", href: "#/today", group: "Pages" },
     { label: "Accounts", hint: "Paper trading accounts", href: "#/paper", group: "Pages" },
     { label: "Research", hint: "Backtest results", href: "#/results", group: "Pages" },
     { label: "Backtest", hint: "Run a new backtest", href: "#/new", group: "Pages" },
     ...accounts.map((a) => ({ label: a.label, hint: a.strategy, href: `#/paper/${a.id}`, group: "Accounts" })),
+    ...closed.map((a) => ({ label: a.label, hint: `closed · ${a.strategy}`, href: `#/paper/${a.id}`, group: "Accounts" })),   // history only (2026-11-23)
     ...runs.map((r) => ({ label: r.label || `${r.strategy} on ${r.market}`, hint: `${r.params?.start ?? ""} to ${r.params?.end ?? ""}`, href: `#/results/${r.id}`, group: "Backtests" })),
   ];
 }
