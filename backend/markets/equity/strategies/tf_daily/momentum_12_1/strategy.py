@@ -19,7 +19,7 @@ its half; no stop, no time limit (a holding stays while it is in the top 20). In
 momentum 50%) made Rs1L -> Rs2.49L, worst fall -26% (breakout alone Rs2.17L / -18%). Live, a stock is held once per account: a top-20
 name that a breakout sleeve already holds is skipped and the next one taken.
 Since 2026-11-22 (user: "Drift grows + momentum 50/50") it runs in the ONE equity account RESULTS_GAP instead (engine/momentum.py):
-half the account's money, next to earnings drift (other half) and results gap (3x the whole account intraday). EQUITY_BREAKOUT is being closed.
+half the account's money (75% since 2026-11-23), next to earnings drift (half) and results gap (3x the whole account intraday). EQUITY_BREAKOUT is being closed.
 """
 from __future__ import annotations
 

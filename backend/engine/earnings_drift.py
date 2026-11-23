@@ -45,7 +45,7 @@ def locked_cash(db) -> float:
     return sum(float(p["qty"]) * float(p["entry_price"]) for p in _mine(db))
 
 
-ACCOUNT_SHARE = 0.5               # of the account's booked money; momentum (engine/momentum.py) has the other half
+ACCOUNT_SHARE = 0.5               # of the account's booked money; momentum (engine/momentum.py) sizes from 75% (since 2026-11-23), drift buys first
 
 
 def account_locked(db) -> float:

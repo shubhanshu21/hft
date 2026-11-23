@@ -130,7 +130,10 @@ class TestFill(Base):
 class TestSharedAccount(Base):
     def test_each_swing_sleeve_sizes_from_half_the_account(self):
         self.assertEqual(ED.sleeve_value(self.db), 100_000 * ED.ACCOUNT_SHARE)
-        self.assertEqual(MO.SHARE + ED.ACCOUNT_SHARE, 1.0)
+        # 2026-11-23 (user's yes): momentum 75%, drift 50% -- together over 100% on purpose (idle cash gets used); free cash caps
+        # every buy and drift buys first each morning (shared_cash.py, Rs71.6k 2023-Nov 2026: Rs11.1L/-26% -> Rs13.2L/-29%)
+        self.assertEqual((MO.SHARE, ED.ACCOUNT_SHARE), (0.75, 0.5))
+        self.assertEqual(MO.sleeve_value(self.db), 75_000.0)
         with mock.patch.dict(os.environ, {"STRATEGY_RG_MOMENTUM": "off"}):
             self.assertEqual(ED.sleeve_value(self.db), 100_000.0)            # momentum off: drift may use the whole account
 

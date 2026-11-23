@@ -374,13 +374,13 @@ def today_plan(account: str, now: datetime | None = None, state_dir=None) -> lis
                 out.append("Earnings drift: buying at the open " + ", ".join(ed["buy"]) + ".")
             else:
                 out.append("Earnings drift: no stock beat the market by 4%+ on 2x volume after results, so no buy.")
-        mo = _read_state("momentum_state.json", state_dir)              # 2026-11-22: momentum, the other half of the swing money
+        mo = _read_state("momentum_state.json", state_dir)              # 2026-11-22: momentum (75% of the account since 2026-11-23)
         if mo.get("day") == today:
             if mo.get("fresh") is False:
                 out.append("Momentum: price data not up to date, no orders today.")
             elif mo.get("due"):
                 n = len(mo.get("sell") or {})
-                out.append("Momentum (half the swing money): monthly refresh at the open -- top 20 by 12-month return: "
+                out.append("Momentum (75% of the account): monthly refresh at the open -- top 20 by 12-month return: "
                            + (", ".join(mo.get("targets") or []) or "none") + (f". Selling {n} that dropped out." if n else "."))
             elif mo.get("buy"):
                 out.append("Momentum: buying the rest of this month's top 20 at the open as cash frees up: " + ", ".join(mo["buy"]) + ".")

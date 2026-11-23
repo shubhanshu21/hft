@@ -8,8 +8,9 @@
   1-hour price drop (new sellers, not forced selling; those dips made ~0 in 2022-24 and 2025-26). Rs1L 2022-Nov 2026 after tax
   Rs28.2L / -75% -> Rs40.8L / -71%, 1,529 -> 1,294 trades; better under 4 random coin orders. Data: var/archive/crypto/metrics/ (nightly).
 - commodity `trend_carry` (MCX, account MCX_TREND_CARRY): **REMOVED 2026-11-19 at the user's request** (low profit by nature: Rs2.5L 1x 2022-Nov 2026 Rs4.27L, worst -13%, almost all from 2025's gold/silver run; an 18-version MCX screen on real daily prices + lookback/carry variants found nothing better). Git history has it.
-- equity `momentum_12_1` in the SAME `RESULTS_GAP` account since 2026-11-22 (`engine/momentum.py`, switch `STRATEGY_RG_MOMENTUM`): half the account's
-  money, top 20 by 12-1 momentum refreshed the first session of each month at the open; earnings drift has the other half. Joint backtest
+- equity `momentum_12_1` in the SAME `RESULTS_GAP` account since 2026-11-22 (`engine/momentum.py`, switch `STRATEGY_RG_MOMENTUM`): 75% of the
+  account's money (half until 2026-11-23: one-pot test at Rs71.6k 2023-Nov 2026 Rs11.1L/-26% -> Rs13.2L/-29%; drift keeps its half and buys first,
+  free cash caps every buy), top 20 by 12-1 momentum refreshed the first session of each month at the open. Joint backtest
   Rs1L Jan 2023-Nov 2026: results gap 3x + drift Rs11.40L / -23% -> + momentum, sleeves growing with the account, Rs17.13L / -28%.
 - equity `earnings_drift` (swing, since 2026-10-29) in the SAME `RESULTS_GAP` account: Rs1L of its own money (+ its closed trades), up to 10 stocks, 1/10 each (5 x 1/5 until 2026-10-29), never more than the account's free cash; orders planned at 08:50, filled at the official open; results_gap sizes its 3x from the WHOLE account since 2026-11-20 (holdings pledged as margin at Upstox, capped by that margin; cash below half the margin costs 0.05%/day) -- before, sizing from free cash made 3x ~1.5x.
 - equity `breakout_pair` (swing, since 2026-11-17, re-added at the user's yes): its OWN account `EQUITY_BREAKOUT`, Rs1L, NR7 (5 stocks) + 55-day breakout (3 stocks), half the money each, 2% risk, trailing stop, healthy market only; re-test Oct 2022-Nov 2026 Rs1L -> Rs2.23L, worst -18%, every year +. **Since 2026-11-19 (user: "inside Breakout, 50/50") the breakout sleeves have 25% each and the other half is `momentum_12_1`.**

@@ -65,10 +65,11 @@ class TestMatch(Base):
         self.assertEqual(len(r["matched"]), 1)
 
     def test_three_strategies_in_one_account_add_their_profits(self):
-        # 2026-11-22: results gap on the whole account, earnings drift and momentum on half each
+        # results gap on the whole account, earnings drift on half (2026-11-22), momentum on 75% (2026-11-23): each adds its own profit
+        from engine import momentum as MO
         self.account("RESULTS_GAP")
         runs = {"results_gap": result(["2026-11-12", "2026-11-13"], [100_000, 103_000], {}),
-                "earnings_drift": result(["2026-11-13"], [49_000], {}), "momentum_12_1": result(["2026-11-13"], [50_500], {})}
+                "earnings_drift": result(["2026-11-13"], [49_000], {}), "momentum_12_1": result(["2026-11-13"], [100_000 * MO.SHARE + 500], {})}
         r = self.check("RESULTS_GAP", lambda body: runs[body["strategy"]])
         self.assertEqual(r["expected"], {"2026-11-12": 100_000, "2026-11-13": 102_500})   # +3,000 - 1,000 + 500
 

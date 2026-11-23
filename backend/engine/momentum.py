@@ -11,6 +11,7 @@ Money: SHARE of the account's booked money, 1/N per stock, whole shares, never m
 results gap trades 3x the whole account intraday against these pledged holdings). No stop, no time limit.
 Joint backtest (scratch joint.py / joint50.py), Rs1L Jan 2023-Nov 2026, results gap 3x + earnings drift 50% + momentum 50%, each sleeve
 growing with the account: Rs17.13L / worst -28.0% (with Rs50k-sized sleeves), against Rs11.40L / -23.0% for results gap + drift alone.
+2026-11-23 (user's yes): SHARE 0.5 -> 0.75 after the first live refresh bought only 10 of 20 (Rs1,791 slots) -- see SHARE.
 """
 from __future__ import annotations
 
@@ -27,7 +28,9 @@ from services.utils import telegram as T
 
 ACCOUNT = "RESULTS_GAP"
 STATE = DB_DIR / "momentum_state.json"
-SHARE = 0.5                       # of the account's booked money; earnings drift has the other half (ED.ACCOUNT_SHARE)
+SHARE = 0.75                      # of the booked money (2026-11-23, user's yes; was 0.5): drift keeps its half, so the two add to 125% --
+                                  # idle cash gets used; free cash caps every buy and drift buys first (scratch shared_cash.py:
+                                  # Rs71.6k 2023-Nov 2026 Rs11.1L / -26% -> Rs13.2L / -29%; whole account Rs14.5L / -30% starved drift)
 BUY_UNTIL = dtime(9, 45)
 
 
@@ -74,7 +77,7 @@ def plan(db, today: date, holidays: set[date]) -> list[str]:
     for pid in sell:
         lines.append(f"SELL {db.get_position(pid)['symbol']} at the open -- left the top {M.N} (monthly check)")
     if buy:
-        lines.append(f"BUY at the open (momentum, 1/{M.N} of half the account each): {', '.join(buy)}")
+        lines.append(f"BUY at the open (momentum, 1/{M.N} of {SHARE:.0%} of the account each): {', '.join(buy)}")
     write_json(STATE, {"day": str(today), "month": month, "targets": targets, "sell": sell, "buy": buy, "due": due, "fresh": True,
                        "last_day": str(last.date())})
     return lines

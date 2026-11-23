@@ -37,7 +37,7 @@ def bodies(account: str, capital: float) -> list[dict]:
     if account == "RESULTS_GAP":
         from markets.equity.strategies.tf_daily.earnings_drift import strategy as ed
         from markets.equity.strategies.tf_intraday.results_gap import strategy as rg
-        from engine import earnings_drift as EDE, momentum as MOE         # 2026-11-22: drift + momentum on half the account each
+        from engine import earnings_drift as EDE, momentum as MOE         # drift on half the account (2026-11-22), momentum on 75% (2026-11-23)
         return [{"market": "equity", "strategy": "results_gap", "capital": capital, "exposure": rg.LEVERAGE},
                 {"market": "equity", "strategy": "earnings_drift", "capital": capital * EDE.ACCOUNT_SHARE, "slippage_bp": 5},
                 {"market": "equity", "strategy": "momentum_12_1", "capital": capital * MOE.SHARE, "slippage_bp": 5}]
