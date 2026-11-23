@@ -13,7 +13,7 @@ import { ACCOUNT_COLOR, ACCOUNT_SHORT } from "../lib/overview.js";
 
 const STRATEGY_LABEL = { dip_reversal: "Crypto dip-reversal", results_gap: "Results-day gap-up", nr7_breakout: "Quiet-day breakout", d55_breakout: "55-day high", momentum_12_1: "12-month momentum", earnings_drift: "Earnings drift (swing)" };
 const ABOUT = {
-  CRYPTO_DIP_REVERSAL: "Buys a sharp dip on 9 coins' perpetual futures, 5 seconds after every 5-minute candle closes. Exits at +15%, -7%, the middle band or after 24 hours.",
+  CRYPTO_DIP_REVERSAL: "Buys a sharp dip on 10 coins' perpetual futures, 5 seconds after every 5-minute candle closes -- but skips it when Binance open interest rose during the dip (new sellers piling in). Exits at +15%, -7%, the middle band or after 24 hours.",
   RESULTS_GAP: "Your one equity account: three strategies share it. Results gap (3x of the whole account, same day): at 09:30 it buys liquid stocks that opened 7%+ above the market after results and kept rising, and sells them at 15:20. Earnings drift (half the account): buys at the open stocks whose results jumped 4%+ vs the market on 2x volume, and sells them at the open 40 trading days later. Momentum (75% of the account, since 23 Nov 2026): on the first trading day of each month, the 20 stocks with the best 12-month return among the 300 most-traded, bought at the open and kept while they stay in the top 20. Swing holdings are cash only.",
   EQUITY_BREAKOUT: "Closed on 23 Nov 2026 (one equity account now): everything was sold at that day's open and it buys nothing; this page is history only. It ran two swing strategies, half the money each (since 19 Nov 2026). Breakouts on the day's 200 most-traded NSE stocks, only while at least half of them are above their 50-day average: a quarter of the money buys quiet-day (NR7) breakouts when the price passes that day's high (up to 5 stocks), a quarter buys stocks that closed at a 55-day high, at the next open (up to 3); each has a trailing stop, and one still below its buy price after 20 trading days is sold. Momentum: on the first trading day of each month, the 20 stocks with the best 12-month return among the 300 most-traded, bought at the open and kept while they stay in the top 20.",
 };
@@ -118,7 +118,7 @@ export default function PaperPage({ accountId }) {
 
         <Pane title="Today" meta="what the engine decided this morning, and why" className="g-pos">
           {d.plan?.length ? <div className="today-plan"><ul>{d.plan.map((line) => <li key={line}>{line}</li>)}</ul></div>
-            : <p className="none">{crypto ? "Checks all 9 coins after every 5-minute candle; a buy shows up under open positions." : "Nothing decided yet today -- the box fills after the engine's morning run."}</p>}
+            : <p className="none">{crypto ? "Checks all 10 coins after every 5-minute candle; a buy shows up under open positions." : "Nothing decided yet today -- the box fills after the engine's morning run."}</p>}
         </Pane>
         <Pane title="Paper vs backtest" meta="checked every night" className="g-sched">
           {d.vs_backtest ? <VsBacktest v={d.vs_backtest} /> : <p className="none">The first check runs tonight at 00:30.</p>}

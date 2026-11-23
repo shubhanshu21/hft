@@ -6,6 +6,7 @@ import { chromium } from "playwright-core";
 const BASE = process.argv[2] || "https://127.0.0.1/";
 const PAGES = [
   ["today", ["Total value", "Portfolio value", "Open positions", "Engine schedule", "Latest fills", "Paper accounts"]],
+  ["paper/CRYPTO_DIP_REVERSAL", ["Crypto dip-reversal", "10 coins", "Account value", "Open positions", "Closed trades"]],
   ["paper/RESULTS_GAP", ["Equity: results gap, drift, momentum", "Account value", "Open positions", "Closed trades"]],
   ["paper/EQUITY_BREAKOUT", ["Equity breakout pair", "history only", "Account value", "Open positions", "Closed trades"]],
   ["results", ["Saved results", ["Where the money went", "Play from start"]]],   // [a, b] = either text: with no saved runs the page shows the shipped example (2026-11-18)
